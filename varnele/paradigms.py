@@ -58,7 +58,10 @@ NOUN = {
     "is_m": ("is", ["is", "ies", "iui", "į", "imi", "yje", "ie"], None),
 }
 
+FEMININE = {"a", "ia", "i", "ė", "is_f"}   # paradigm -> grammatical gender (rest masculine)
+
 # Plural-only nouns (marškiniai, durys, Trakai, Kėdainiai, ...).
+PLURALIA_GENDER = {"iai": "m", "ai": "m", "ūs": "m", "ios": "f", "os": "f", "ės": "f"}
 PLURALIA = [("iai", PL_IAS), ("ai", PL_AS), ("ios", PL_IA), ("os", PL_A),
             ("ės", PL_E), ("ūs", PL_US)]
 
@@ -73,34 +76,36 @@ def noun(lemma, flags=""):
         fem = "M" in flags
         stem = lemma[:-2] if lemma.endswith("uo") else lemma[:-1]
         stem += "er" if fem else "en"
-        out.append((lemma, "N.sg.nom"))
+        g = "f" if fem else "m"
+        out.append((lemma, f"N.{g}.sg.nom"))
         sg = ([None, "s", "iai", "į", ("imi", "ia"), "yje", "ie"] if fem else
               [None, "s", "iui", "į", "iu", "yje", "ie"])
-        _decline(out, stem, sg, "N.sg")
-        _decline(out, stem, _pl_istem(("ų", "ių")), "N.pl")
+        _decline(out, stem, sg, f"N.{g}.sg")
+        _decline(out, stem, _pl_istem(("ų", "ių")), f"N.{g}.pl")
         return out
 
     if lemma.endswith("is") and ("M" in flags or "V" in flags):
         name = "is_f" if "M" in flags else "is_m"
         _, sg, _ = NOUN[name]
         stem = lemma[:-2]
-        _decline(out, stem, sg, "N.sg")
-        _decline(out, stem, _pl_istem(genpl), "N.pl")
+        g = "f" if name == "is_f" else "m"
+        _decline(out, stem, sg, f"N.{g}.sg")
+        _decline(out, stem, _pl_istem(genpl), f"N.{g}.pl")
         return out
 
     for end, pl in PLURALIA:
         if lemma.endswith(end) and len(lemma) > len(end) + 1:
             stem = underlying(lemma[:-len(end)]) if end[0] == "i" else lemma[:-len(end)]
-            _decline(out, stem, pl, "N.pl")
+            _decline(out, stem, pl, f"N.{PLURALIA_GENDER[end]}.pl")
             return out
 
     if lemma.endswith("ys") and len(lemma) > 4:
         # durys, kepenys, smegenys are plural i-stems; arklys is singular -ys.
-        _decline(out, lemma[:-2], _pl_istem("ų"), "N.pl")
+        _decline(out, lemma[:-2], _pl_istem("ų"), "N.f.pl")
     if lemma.endswith("ias"):
         name = "ias"
     elif lemma.endswith("ijas"):
-        _decline(out, lemma[:-2], [None, None, None, None, None, "uje", None], "N.sg")  # radijuje
+        _decline(out, lemma[:-2], [None, None, None, None, None, "uje", None], "N.m.sg")  # radijuje
         name = "jas"
     elif lemma.endswith("jas"):
         name = "jas"
@@ -129,8 +134,9 @@ def noun(lemma, flags=""):
     stem = lemma[:-len(end)]
     if end[0] == "i":
         stem = underlying(stem)
-    _decline(out, stem, sg, "N.sg")
-    _decline(out, stem, pl, "N.pl")
+    g = "f" if name in FEMININE else "m"
+    _decline(out, stem, sg, f"N.{g}.sg")
+    _decline(out, stem, pl, f"N.{g}.pl")
     return out
 
 

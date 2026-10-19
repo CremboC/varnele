@@ -115,6 +115,8 @@ class Suggester:
         def score(c):
             base = spoken.get(c)
             sc = self._score(lower, c)
-            return min(sc, self._score(base, c) + 0.05) if base else sc
+            sc = min(sc, self._score(base, c) + 0.05) if base else sc
+            # a lowercase word is rarely a misspelt name: dvara -> dvarą, not Dvarą
+            return sc + (0.15 if c[:1].isupper() and word[:1].islower() else 0)
         ranked = sorted(good, key=lambda c: (score(c), c))
         return [c[0].upper() + c[1:] if cap else c for c in ranked[:n]]

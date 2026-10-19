@@ -8,6 +8,7 @@ import sys
 from .analyzer import Analyzer
 from .index import Index
 from .phonology import LT_ALPHABET
+from .grammar import Grammar, Issue
 from .suggest import Suggester
 
 TOKEN = re.compile(r"[^\W\d_]+(?:[-‑][^\W\d_]+)*")
@@ -41,6 +42,7 @@ class Checker:
     def __init__(self):
         self.an = Analyzer(Index.load())
         self.sg = Suggester(self.an)
+        self.grammar = Grammar(self.an)
 
     def check_word(self, w):
         """-> (status, suggestions). status: ok | colloquial | unknown | skip"""
@@ -70,12 +72,37 @@ class Checker:
         return "ok", []
 
 
+    def check_text(self, text, formal=False, grammar=True):
+        """All findings in a text, in order: misspellings, spoken forms, grammar."""
+        found, seen = {}, {}
+        for word, pos in tokens(text):
+            word = word if word.lower() in ABBREV else word.rstrip(".")
+            if word not in seen:
+                seen[word] = self.check_word(word)
+            st, sugg = seen[word]
+            if st == "unknown" or (st == "colloquial" and formal):
+                found[pos] = Issue(pos, pos + len(word), word, st, "", list(sugg))
+        if grammar:
+            for g in self.grammar.check(text):
+                if g.rule == "context":
+                    # unknown word: let the context decide the order of suggestions
+                    if g.start in found:
+                        f = found[g.start]
+                        f.suggestions = g.suggestions + [s for s in f.suggestions if s not in g.suggestions]
+                        f.suggestions = f.suggestions[:5]
+                        f.message = g.message
+                elif g.start not in found:
+                    found[g.start] = g
+        return [found[k] for k in sorted(found)]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="varnele", description="Rule-based Lithuanian spell checker")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="check a text file ('-' for stdin)")
     c.add_argument("file")
     c.add_argument("--formal", action="store_true", help="also report spoken shortenings")
+    c.add_argument("--no-grammar", action="store_true", help="only check words one by one")
     w = sub.add_parser("words", help="analyse individual words")
     w.add_argument("words", nargs="+")
     sub.add_parser("build", help="rebuild the form index")
@@ -94,16 +121,12 @@ def main(argv=None):
                 print(f"    {pre}{an.lemma}  {an.tag}")
         return
     text = sys.stdin.read() if a.file == "-" else open(a.file, encoding="utf-8").read()
-    seen = {}
-    for word, pos in tokens(text):
-        word = word if word.lower() in ABBREV else word.rstrip(".")
-        if word not in seen:
-            seen[word] = ck.check_word(word)
-        st, sugg = seen[word]
-        if st == "unknown" or (st == "colloquial" and a.formal):
-            line = text.count("\n", 0, pos) + 1
-            tag = "ERR " if st == "unknown" else "SPOKEN"
-            print(f"{line}:{tag} {word}" + (f" -> {', '.join(sugg)}" if sugg else ""))
+    labels = {"unknown": "ERR ", "colloquial": "SPOKEN", "case": "GRAM", "agreement": "GRAM",
+              "quantity": "GRAM", "comma": "COMMA"}
+    for f in ck.check_text(text, formal=a.formal, grammar=not a.no_grammar):
+        line = text.count("\n", 0, f.start) + 1
+        out = f"{line}:{labels[f.rule]} {f.word}" + (f" -> {', '.join(f.suggestions)}" if f.suggestions else "")
+        print(out + (f"   ({f.message})" if f.message else ""))
 
 
 if __name__ == "__main__":
