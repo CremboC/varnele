@@ -1,0 +1,9 @@
+# Our own additions to the ispell-lt lexicon (UTF-8, same "word/FLAGS" syntax).
+# Lines starting with "-" remove a generated form.
+
+# būti: suppletive present tense (3rd person "yra" is listed in ispell-lt)
+esa/ENX
+-esa
+-neesa
+nėra
+esti   # archaic/bookish 3rd person of būti
