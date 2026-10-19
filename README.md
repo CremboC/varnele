@@ -25,7 +25,7 @@ python3 -m unittest discover tests
 | Prefix grammar | `varnele/analyzer.py` | `ne-/nebe-/be-/te-/tebe-` + 12 verbal prefixes + the `-si-` infix, checked against each verb's prefix flags |
 | Spoken register | `varnele/analyzer.py` | `-ti→-t`, `-me→-m`, `-te→-t`, `-si→-s`, `-oje→-oj`, `-uose→-uos`, `-oms→-om`, … mapped back to formal forms |
 | Word formation | `varnele/derivation.py` | Productive suffixes (`-inis`, `-iškas`, `-ininkas`, diminutives…), compounds, `geo-/anti-/neo-…` prefixes. **Blocked** whenever a dictionary word is one slip away |
-| Context rules | `varnele/grammar.py` | Preposition government (`prieš pora` → `porą`), adjective–noun agreement in case/number/gender, genitive after quantities (`daug vaiku` → `vaikų`), missing commas before `kad`, `nes`, `bet`, `kuris`… Case rules fire only when a diacritic-only fix exists |
+| Context rules | `varnele/grammar.py` | Preposition government (`prieš pora` → `porą`), adjective–noun agreement in case/number/gender, genitive after quantities (`daug vaiku` → `vaikų`), missing commas before `kad`, `nes`, `bet`, `kuris`…; genitive after negation (`neturiu laiką` → `laiko`), subject–verb person (`aš buvo` → `buvau`), objects of 1st/2nd person verbs (`mačiau namas` → `namą`). Fixes are generated from the word's own paradigm |
 | Suggestions | `varnele/suggest.py` | Diacritic-blind lookup + one typo, ranked by weighted edit distance (diacritic swaps cheap, adjacent keys cheaper), form and lemma frequency |
 
 Additions to the lexicon go in `data/extra.txt` (same `word/FLAGS` syntax as ispell-lt).
@@ -71,6 +71,6 @@ context: `kalba`/`kalbą`, `nedidele`/`nedidelė`, `virs`/`virš`.
 
 - The lexicon (2020) lacks many loanwords and names (`klipas`, `singlas`, foreign surnames).
 - Ordinary typos are detected and ranked less well than by Hunspell.
-- Context rules cover prepositions, agreement and quantities only. Verb government
-  (`pakeičiau pora` → `porą`), subject–verb agreement and the genitive after
-  negation (`neturiu laiką` → `laiko`) are not checked yet.
+- Verb rules only fire on unambiguous verbs and phrases, so ambiguous cases pass:
+  `pakeičiau pora` (`pora` could be instrumental), objects of 3rd person verbs
+  (the noun could be the subject), and anything with words in between.

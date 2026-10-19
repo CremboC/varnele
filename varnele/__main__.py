@@ -122,7 +122,8 @@ def main(argv=None):
         return
     text = sys.stdin.read() if a.file == "-" else open(a.file, encoding="utf-8").read()
     labels = {"unknown": "ERR ", "colloquial": "SPOKEN", "case": "GRAM", "agreement": "GRAM",
-              "quantity": "GRAM", "comma": "COMMA"}
+              "quantity": "GRAM", "comma": "COMMA",
+              "negation": "GRAM", "subject": "GRAM", "object": "GRAM"}
     for f in ck.check_text(text, formal=a.formal, grammar=not a.no_grammar):
         line = text.count("\n", 0, f.start) + 1
         out = f"{line}:{labels[f.rule]} {f.word}" + (f" -> {', '.join(f.suggestions)}" if f.suggestions else "")

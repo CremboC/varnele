@@ -24,6 +24,15 @@ FLAGGED = [
     ("Neateisiu nes sergu.", "nes", "comma", ", nes"),
     ("Gaminys buvo prastos kokybes.", "kokybes", "agreement", "kokybės"),
     ("Dizainas nesikeitė daugybę metu.", "metu", "quantity", "metų"),
+    ("Neturiu laiką.", "laiką", "negation", "laiko"),
+    ("Nemačiau jį vakar.", "jį", "negation", "jo"),
+    ("Nevalgau mėsą.", "mėsą", "negation", "mėsos"),
+    ("Aš buvo namie.", "buvo", "subject", "buvau"),
+    ("Tu eina namo.", "eina", "subject", "eini"),
+    ("Mes skaito knygas.", "skaito", "subject", "skaitome"),
+    ("Jis einu namo.", "einu", "subject", "eina"),
+    ("Vakar mačiau namas.", "namas", "object", "namą"),
+    ("Nusipirkau naujas automobilis.", "automobilis", "object", "automobilį"),
     # unknown word: context picks the suggestion order
     ("Grįžau prieš porą dienu.", "dienu", "unknown", "dienų"),
     ("Vakar pries porą dienų.", "pries", "unknown", "prieš"),
@@ -51,6 +60,12 @@ CORRECT = [
     "Seserys viena kitą papildė, nors ir nedaug.",
     "Tuo metu žinomas, kuriam laikui tapo vadovu bet kokioms bausmėms.",
     "Karą nutraukė profesorių O. Mauserio darbai.",
+    # verb rules: durations, copulas, homonyms of verbs
+    "Nedirbau visą dieną. Nebuvo laiko. Aš nesu mokytojas. Esu studentas.",
+    "Dizainas nesikeitė daugybę metų.",
+    "Lietuvai atiteko tik nedidelis ruožas. Atskiri ruožai skirti slidininkams.",
+    "Tuo metu miestas buvo atstatytas. Keli pastatai išliko.",
+    "Aš nemačiau jo, o tu matei mane.",
 ]
 
 

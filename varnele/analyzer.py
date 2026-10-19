@@ -45,6 +45,7 @@ class Analysis:
     kind: str
     tag: str
     prefix: str = ""
+    entry: int = -1          # index entry the form was generated from (for re-inflecting)
 
 
 @dataclass
@@ -130,7 +131,7 @@ class Analyzer:
             for eid, tag in idx.lookup(core):
                 lemma, kind, flags = idx.entries[eid]
                 if _allowed(kind, flags, tag, neg, vi, si):
-                    out.append(Analysis(word, lemma, kind, tag, neg + vs + si))
+                    out.append(Analysis(word, lemma, kind, tag, neg + vs + si, eid))
         return out
 
     def analyze(self, word):

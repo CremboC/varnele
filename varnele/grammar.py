@@ -11,7 +11,9 @@ satisfy them, so a correct but unusual construction is not flagged.
 import re
 from dataclasses import dataclass, field
 
+from .index import generate
 from .phonology import fold
+from .suggest import _load_freq
 
 WORD = re.compile(r"[^\W\d_]+(?:[-‑][^\W\d_]+)*")
 FINITE = {"prs", "pst", "pstf", "fut", "cond", "imp", "inf"}
@@ -54,6 +56,45 @@ INTERROGATIVES = {"kas", "ką", "ko", "kam", "kuo", "kur", "kada", "kaip", "kod�
                   "koks", "kokia", "kokį", "kokią", "kokie", "kokios", "kokių", "kokio",
                   "kokiam", "kokiu", "kokiame", "kokioje", "kokiems", "kokius", "kokias",
                   "kažkas", "kažkur"} | KURIS
+
+
+# Negated verbs take a genitive object: neturiu laiko, nemačiau jo.
+NEG_PRONOUNS = {"jį": "jo", "ją": "jos", "juos": "jų", "jas": "jų", "mane": "manęs",
+                "tave": "tavęs", "mus": "mūsų", "jus": "jūsų", "save": "savęs", "tą": "to",
+                "šį": "šio", "šią": "šios", "tuos": "tų", "šiuos": "šių"}
+# ...except durations, which stay accusative: nedirbau visą dieną
+TIME_LEMMAS = {"diena", "naktis", "savaitė", "mėnuo", "metai", "valanda", "minutė", "sekundė",
+               "kartas", "rytas", "vakaras", "žiema", "vasara", "pavasaris", "ruduo", "para",
+               "pusmetis", "dešimtmetis", "šimtmetis", "amžius", "laikotarpis", "popietė"}
+TIME_WORDS = {"visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "ištisas"}
+# Linking verbs take a nominative or instrumental, not an object.
+COPULAS = {"būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
+           "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė",
+           "gimsta", "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "pasidaryti",
+           "pasidarė", "pasidaro", "pasirodyti", "pasirodė", "pasirodo", "dirbti", "dirbo", "dirba"}
+COPULA_FORMS = {"nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esame", "esate", "yra"}
+# Subject pronoun -> person of the verb
+SUBJECT_PERSON = {"aš": "1sg", "tu": "2sg", "mes": "1pl", "jūs": "2pl",
+                  "jis": "3", "ji": "3", "jie": "3"}
+PERSONS = {"1sg", "2sg", "3", "1pl", "2pl"}
+PERSON_NAMES = {"1sg": "1st person singular", "2sg": "2nd person singular", "3": "3rd person",
+                "1pl": "1st person plural", "2pl": "2nd person plural"}
+
+
+def retag(tag, **change):
+    """V.prs.3 + person=1sg -> V.prs.1sg; N.m.sg.acc + case=gen -> N.m.sg.gen"""
+    parts = tag.split(".")
+    for i, p in enumerate(parts):
+        if "case" in change and p in CASE_NAMES:
+            parts[i] = change["case"]
+        if "person" in change and p in PERSONS:
+            parts[i] = change["person"]
+    return ".".join(parts)
+
+
+def finite(a):
+    parts = a.tag.split(".")
+    return parts[0] == "V" and len(parts) > 2 and parts[1] in FINITE and parts[2] in PERSONS
 
 
 @dataclass
@@ -177,7 +218,53 @@ def _agree(r1, r2):
 class Grammar:
     def __init__(self, analyzer):
         self.an = analyzer
-        self._read, self._var, self._known = {}, {}, {}
+        self._read, self._var, self._known, self._an, self._forms = {}, {}, {}, {}, {}
+        self.lemma_freq = _load_freq("lemma_freq.tsv")
+
+    def analyses(self, w):
+        if w not in self._an:
+            self._an[w] = self.an.analyze(w)
+        return self._an[w]
+
+    def inflect(self, analysis, tag):
+        """Forms of the same word with another tag, keeping its prefix: laiką -> laiko."""
+        if analysis.entry < 0:
+            return []
+        if analysis.entry not in self._forms:
+            lemma, kind, flags = self.an.index.entries[analysis.entry]
+            self._forms[analysis.entry] = generate(lemma, kind, flags)
+        out = []
+        for form, t in self._forms[analysis.entry]:
+            f = analysis.prefix + form
+            if t == tag and f not in out and self.an._analyze_exact(f):
+                out.append(f)
+        return out
+
+    def reinflect(self, w, keep, **change):
+        """All re-inflections of word w's readings that pass keep(tag)."""
+        out = []
+        for a in self.analyses(w.text):
+            if keep(a.tag):
+                for f in self.inflect(a, retag(a.tag, **change)):
+                    f = w.cap(f)
+                    if f not in out and f != w.text:
+                        out.append(f)
+        return out
+
+    def mostly_verb(self, analyses):
+        """Is the verb reading the likely one? metu (I throw / time), keli (you lift /
+        several) and tik (fit! / only) are usually not verbs; mačiau is a verb even
+        though the rare adjective matus has the same comparative form."""
+        if any(a.tag == "W" for a in analyses):
+            return False          # tik, beveik: listed particles/adverbs, not imperatives
+        verb = other = 0
+        for a in analyses:
+            f = self.lemma_freq.get(a.lemma.lower(), 0)
+            if a.tag.startswith("V."):
+                verb = max(verb, f)
+            else:
+                other = max(other, f, 1)
+        return other == 0 or verb > other
 
     def known(self, w):
         if w not in self._known:
@@ -275,6 +362,73 @@ class Grammar:
                     and toks[i + 1].lower in KURIS and toks[i - 1].lower not in NO_COMMA_AFTER):
                 add(Issue(w.start, w.end, w.text, "comma",
                           f"comma needed before '{w.text} {toks[i + 1].text}'", [", " + w.text]))
+
+        # 5. verbs: negation + genitive, subject-verb agreement, objects of 1st/2nd person
+        for i, w in enumerate(toks):
+            if i + 1 >= len(toks) or not adjacent[i + 1]:
+                continue
+            alls = self.analyses(w.text)
+            verbs = [a for a in alls if finite(a) or a.tag == "V.inf"]
+            if not verbs or not self.mostly_verb(alls):
+                continue
+            if any(r.pos == "adj" for r in w.own) and _could_agree(w, toks[i + 1]):
+                continue          # Atskiri ruožai: an adjective agreeing with its noun, not "you separate"
+            lemmas = {a.lemma for a in verbs} | {w.lower}
+            copula = bool(lemmas & COPULAS) or w.lower in COPULA_FORMS
+            nxt = toks[i + 1]
+            negated = any(a.prefix.startswith("ne") for a in verbs)
+
+            if negated and not copula:
+                if nxt.lower in NEG_PRONOUNS:
+                    add(Issue(nxt.start, nxt.end, nxt.text, "negation",
+                              f"after the negated verb '{w.text}' use the genitive",
+                              [nxt.cap(NEG_PRONOUNS[nxt.lower])]))
+                    continue
+                span = phrase(i)
+                timey = any(x.lower in TIME_WORDS or x.is_quantity() or any(
+                            a.lemma in TIME_LEMMAS for a in self.analyses(x.text)) for x in span)
+                if span and span[-1].is_noun and not timey:
+                    for x in span:
+                        cases = {r.case for r in x.own}
+                        if cases and cases <= {"acc"}:          # unambiguously accusative
+                            fix = self.reinflect(x, lambda t: t.endswith(".acc"), case="gen")
+                            if fix:
+                                add(Issue(x.start, x.end, x.text, "negation",
+                                          f"after the negated verb '{w.text}' use the genitive", fix))
+                    continue
+
+            persons = {a.tag.split(".")[2] for a in verbs if finite(a)}
+            # objects after a 1st/2nd person verb can't be its subject: matau namas -> namą
+            if (persons and persons <= {"1sg", "2sg", "1pl", "2pl"} and not copula
+                    and not negated and not any(a.tag.endswith(".refl") for a in verbs)):
+                span = phrase(i)
+                if span and span[-1].is_noun:
+                    for x in span:
+                        cases = {r.case for r in x.own}
+                        if cases and cases <= {"nom", "voc"}:
+                            fix = self.reinflect(x, lambda t: t.endswith((".nom", ".voc")) and ".voc" not in t,
+                                                 case="acc")
+                            if fix:
+                                add(Issue(x.start, x.end, x.text, "object",
+                                          f"the object of '{w.text}' takes the accusative", fix))
+
+        # subject pronoun + verb: aš buvo -> buvau
+        for i in range(len(toks) - 1):
+            pron, v = toks[i], toks[i + 1]
+            want = SUBJECT_PERSON.get(pron.lower)
+            if not want or not adjacent[i + 1] or v.start in issues:
+                continue
+            fin = [a for a in self.analyses(v.text) if finite(a)]
+            if not fin or any(a.tag.split(".")[2] == want for a in fin):
+                continue
+            fix = []
+            for a in fin:
+                for f in self.inflect(a, retag(a.tag, person=want)):
+                    if v.cap(f) not in fix:
+                        fix.append(v.cap(f))
+            if fix:
+                add(Issue(v.start, v.end, v.text, "subject",
+                          f"'{pron.text}' needs the {PERSON_NAMES[want]} form of the verb", fix))
 
         # 2. adjective-noun agreement
         for i in range(1, len(toks)):
