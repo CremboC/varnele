@@ -127,7 +127,11 @@ impl Analyzer {
             .map(|a| *self.data.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0))
             .max()
             .unwrap_or(0);
-        let f = *self.data.freq.get(&cl).unwrap_or(&0);
+        // a negated form is as common as the plain one: neturėtų counts like turėtų
+        let f = match *self.data.freq.get(&cl).unwrap_or(&0) {
+            0 => cl.strip_prefix("ne").and_then(|r| self.data.freq.get(r)).copied().unwrap_or(0),
+            f => f,
+        };
         let bonus = 0.12 * (1.0 + f as f64).log10() + 0.1 * (1.0 + lf as f64).log10();
         if fold(&cl) == fold(word) {
             0.1 + 0.5 * diacritic_cost(word, &cl) - bonus

@@ -242,6 +242,7 @@ impl Checker {
     /// Diacritic-only twin of a valid word when the word itself is never seen in the
     /// frequency corpus (neither the form nor its lemma) and the twin's lemma is.
     fn common_twin(&self, word: &str) -> Option<String> {
+        const CASE_PARTS: &[&str] = &["nom", "gen", "dat", "acc", "ins", "loc", "voc"];
         let d = &self.an.data;
         let lemma_freq = |w: &str| {
             self.an.analyze(w).iter().map(|a| *d.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0)).max().unwrap_or(0)
@@ -255,15 +256,22 @@ impl Checker {
             .folded_forms(&fold(&lw))
             .into_iter()
             .filter(|c| *c != lw && (!lowercase || first_lower(c)) && !self.an.analyze_exact(c).is_empty())
+            // a twin that can only be a vocative (sakiny, "O sentence!") or a participle
+            // (tęstuoju for testuoju) is rarely meant
+            .filter(|c| {
+                self.an.analyze_exact(c).iter().any(|a| {
+                    let t = self.an.tag_str(a);
+                    let participle = t.starts_with("V.") && t.split('.').any(|p| CASE_PARTS.contains(&p));
+                    !t.ends_with(".voc") && !participle
+                })
+            })
             .map(|c| {
                 let f = d.freq.get(&lower(&c)).copied().unwrap_or(0);
-                // a twin that can only be a vocative (sakiny, "O sentence!") is rarely meant
-                let not_vocative = self.an.analyze_exact(&c).iter().any(|a| !self.an.tag_str(a).ends_with(".voc"));
-                (lemma_freq(&c) + f, not_vocative, c)
+                (lemma_freq(&c) + f, c)
             })
-            .filter(|(score, _, _)| *score >= 3)
-            .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then_with(|| b.2.cmp(&a.2)))
-            .map(|(_, _, c)| cap_like(word, &c))
+            .filter(|(score, _)| *score >= 3)
+            .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)))
+            .map(|(_, c)| cap_like(word, &c))
     }
 
     /// All findings in a text, in order: misspellings, spoken forms, grammar.

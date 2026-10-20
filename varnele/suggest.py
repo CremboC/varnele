@@ -97,7 +97,10 @@ class Suggester:
         """Lower is better. Diacritic-only fixes always beat real edits; among
         equally plausible candidates, frequent words win."""
         lf = max((self.lemma_freq.get(a.lemma.lower(), 0) for a in self.an._analyze_exact(cand)), default=0)
-        bonus = 0.12 * math.log10(1 + self.freq.get(cand.lower(), 0)) + 0.1 * math.log10(1 + lf)
+        cl = cand.lower()
+        # a negated form is as common as the plain one: neturėtų counts like turėtų
+        f = self.freq.get(cl, 0) or (self.freq.get(cl[2:], 0) if cl.startswith("ne") else 0)
+        bonus = 0.12 * math.log10(1 + f) + 0.1 * math.log10(1 + lf)
         if fold(cand.lower()) == fold(word):
             return 0.1 + 0.5 * _diacritic_cost(word, cand.lower()) - bonus
         return _cost(word, cand.lower()) - bonus
