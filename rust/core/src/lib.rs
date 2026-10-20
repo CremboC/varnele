@@ -21,4 +21,4 @@ pub mod json;
 pub mod suggest;
 pub mod text;
 
-pub use checker::{Checker, Finding, WordStatus};
+pub use checker::{Checker, Finding, KeyboardWord, WordStatus};

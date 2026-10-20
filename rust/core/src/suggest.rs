@@ -79,6 +79,11 @@ impl Analyzer {
     }
 
     pub fn suggest(&self, word: &str, n: usize) -> Vec<String> {
+        self.suggest_scored(word, n).into_iter().map(|(c, _)| c).collect()
+    }
+
+    /// Suggestions with their ranking cost (lower is better).
+    pub fn suggest_scored(&self, word: &str, n: usize) -> Vec<(String, f64)> {
         let lw = lower(word);
         let fw = fold(&lw);
         let mut cands: BTreeSet<String> = self.folded_forms(&fw);
@@ -126,7 +131,7 @@ impl Analyzer {
         scored
             .into_iter()
             .take(n)
-            .map(|(_, c)| if cap { upper_first(&c) } else { c })
+            .map(|(sc, c)| (if cap { upper_first(&c) } else { c }, sc))
             .collect()
     }
 }

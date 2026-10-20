@@ -37,3 +37,28 @@ pub fn findings(fs: &[Finding], offset: impl Fn(usize) -> usize + Copy) -> Strin
     let items: Vec<String> = fs.iter().map(|f| finding(f, offset)).collect();
     format!("[{}]", items.join(","))
 }
+
+/// A [`KeyboardWord`](crate::checker::KeyboardWord) as JSON.
+pub fn keyboard_word(k: &crate::checker::KeyboardWord) -> String {
+    let list = |v: &[(String, f64, f64)]| {
+        v.iter()
+            .map(|(w, c, fc)| {
+                format!("{{\"w\":{},\"cost\":{:.4},\"fcost\":{:.4},\"diacritic\":{}}}", string(w), c, fc, *fc == 0.0)
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let status = match k.status {
+        crate::WordStatus::Ok => "ok",
+        crate::WordStatus::Colloquial => "colloquial",
+        crate::WordStatus::Unknown => "unknown",
+        crate::WordStatus::Skip => "skip",
+    };
+    format!(
+        "{{\"status\":\"{}\",\"suggestions\":[{}],\"contextRule\":{},\"contextFixes\":[{}]}}",
+        status,
+        list(&k.suggestions),
+        string(&k.context_rule),
+        list(&k.context_fixes)
+    )
+}

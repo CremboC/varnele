@@ -45,6 +45,16 @@ QUANTIFIER_LEMMAS = {"šimtas", "tūkstantis", "milijonas", "milijardas", "deši
 KURIS = {"kuris", "kuri", "kurio", "kurios", "kuriam", "kuriai", "kurį", "kurią", "kuriuo",
          "kuria", "kuriame", "kurioje", "kurie", "kurių", "kuriems", "kurioms", "kuriuos",
          "kurias", "kuriais", "kuriomis", "kuriuose", "kuriose"}
+# (number, gender) each form of kuris can have; gender None = any
+KURIS_FEATURES = {
+    "kuris": {("sg", "m")}, "kuri": {("sg", "f")}, "kurio": {("sg", "m")},
+    "kurios": {("sg", "f"), ("pl", "f")}, "kuriam": {("sg", "m")}, "kuriai": {("sg", "f")},
+    "kurį": {("sg", "m")}, "kurią": {("sg", "f")}, "kuriuo": {("sg", "m")}, "kuria": {("sg", "f")},
+    "kuriame": {("sg", "m")}, "kurioje": {("sg", "f")}, "kurie": {("pl", "m")},
+    "kurių": {("pl", None)}, "kuriems": {("pl", "m")}, "kurioms": {("pl", "f")},
+    "kuriuos": {("pl", "m")}, "kurias": {("pl", "f")}, "kuriais": {("pl", "m")},
+    "kuriomis": {("pl", "f")}, "kuriuose": {("pl", "m")}, "kuriose": {("pl", "f")},
+}
 CLAUSE_STARTERS = {"kad", "nes", "jog", "bet", "tačiau", "kadangi", "nors", "jei", "jeigu", "kai",
                    "kol", "nebent", "o"} | KURIS
 # ...unless the previous word is part of the same connective ("ir kad", "net jei", "ypač kai")
@@ -71,6 +81,15 @@ COPULAS = {"būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "li
            "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė",
            "gimsta", "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "pasidaryti",
            "pasidarė", "pasidaro", "pasirodyti", "pasirodė", "pasirodo", "dirbti", "dirbo", "dirba"}
+# Participles of these verbs take a predicate instrumental, not an agreeing noun:
+# tapusią vienuole, išrinktas prezidentu, vadinamas tėvu, laikomas didvyriu.
+# Principal parts; matched by ending so prefixed entries (išrinkti) count too.
+PREDICATIVE_VERBS = ("būti", "buvo", "būna", "esa", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
+                     "atrodyti", "atrodė", "atrodo", "vadinti", "vadino", "vadina", "vadintis",
+                     "laikyti", "laikė", "laiko", "rinkti", "rinko", "renka", "skirti", "skyrė", "skiria",
+                     "pažinti", "pažino", "pažįsta", "skelbti", "skelbė", "skelbia", "tituluoti",
+                     "titulavo", "tituluoja", "dirbti", "dirbo", "dirba", "gimti", "gimė", "gimsta",
+                     "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "rodyti", "rodė", "rodo")
 COPULA_FORMS = {"nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esame", "esate", "yra"}
 # Subject pronoun -> person of the verb
 SUBJECT_PERSON = {"aš": "1sg", "tu": "2sg", "mes": "1pl", "jūs": "2pl",
@@ -147,6 +166,10 @@ class Word:
     def variants(self):
         if self._variants is None:
             forms = self.g.variants_of(self.lower)
+            if not forms and not self.known:
+                # an unknown word with no diacritic-only reading: its typo corrections
+                # (zodzou -> žodžiu, žodžių) let the context choose between them
+                forms = self.g.suggestions_of(self.text)
             if self.text[:1].islower():
                 forms = [f for f in forms if f[:1].islower()]   # ežerėlių is not the name Ežerėliu
             self._variants = [(f, self.g.readings_of(f)) for f in forms]
@@ -215,9 +238,11 @@ def _agree(r1, r2):
 
 
 class Grammar:
-    def __init__(self, analyzer):
+    def __init__(self, analyzer, suggester=None):
         self.an = analyzer
+        self.sg = suggester
         self._read, self._var, self._known, self._an, self._forms = {}, {}, {}, {}, {}
+        self._sugg = {}
         self.lemma_freq = _load_freq("lemma_freq.tsv")
 
     def analyses(self, w):
@@ -273,6 +298,14 @@ class Grammar:
         if w not in self._read:
             self._read[w] = readings(self.an.analyze(w))
         return self._read[w]
+
+    def suggestions_of(self, w):
+        """Typo corrections of an unknown word, lower case (candidates for context rules)."""
+        if self.sg is None:
+            return []
+        if w not in self._sugg:
+            self._sugg[w] = [s.lower() for s in self.sg.suggest(w)]
+        return self._sugg[w]
 
     def variants_of(self, w):
         """Other real words spelled like w apart from diacritics."""
@@ -361,6 +394,34 @@ class Grammar:
                 add(Issue(w.start, w.end, w.text, "comma",
                           f"comma needed before '{w.text} {toks[i + 1].text}'", [", " + w.text]))
 
+        # 6. relative pronoun typed without diacritics: žodžių kuriu aš rašau -> kurių
+        for i in range(1, len(toks)):
+            w, prev = toks[i], toks[i - 1]
+            if w.lower in KURIS or not (adjacent[i] or gaps[i].strip() == ",") or not prev.is_noun:
+                continue
+            fw = fold(w.lower)
+            nouns = [r for r in prev.pos_readings() if r.pos == "noun"]
+
+            def agrees(feats):
+                # kuris agrees with its noun in number and gender (not case)
+                return any((r.number is None or r.number == num) and (g is None or r.gender is None or r.gender == g)
+                           for r in nouns for num, g in feats)
+            cands = [k for k, feats in KURIS_FEATURES.items() if fold(k) == fw and agrees(feats)]
+            if not cands:
+                continue
+            # the relative clause needs a verb of its own, otherwise "kuriu" may be the
+            # verb itself: "dainas kuriu pats" (I write songs myself)
+            j, verb_follows = i + 1, False
+            while j < len(toks) and j <= i + 5 and adjacent[j]:
+                an_j = self.analyses(toks[j].text)
+                if any(finite(a) for a in an_j) and self.mostly_verb(an_j):
+                    verb_follows = True
+                    break
+                j += 1
+            if verb_follows:
+                add(Issue(w.start, w.end, w.text, "relative",
+                          f"relative pronoun after '{prev.text}'", [w.cap(c) for c in cands]))
+
         # 5. verbs: negation + genitive, subject-verb agreement, objects of 1st/2nd person
         for i, w in enumerate(toks):
             if i + 1 >= len(toks) or not adjacent[i + 1]:
@@ -388,11 +449,13 @@ class Grammar:
                 if span and span[-1].is_noun and not timey:
                     for x in span:
                         cases = {r.case for r in x.own}
+                        why = f"after the negated verb '{w.text}' use the genitive"
                         if cases and cases <= {"acc"}:          # unambiguously accusative
                             fix = self.reinflect(x, lambda t: t.endswith(".acc"), case="gen")
                             if fix:
-                                add(Issue(x.start, x.end, x.text, "negation",
-                                          f"after the negated verb '{w.text}' use the genitive", fix))
+                                add(Issue(x.start, x.end, x.text, "negation", why, fix))
+                                continue
+                        require(x, {"gen"}, "negation", why)  # nepataiso visu žodžių -> visų
                     continue
 
             persons = {a.tag.split(".")[2] for a in verbs if finite(a)}
@@ -433,8 +496,7 @@ class Grammar:
             a, n = toks[i - 1], toks[i]
             if not adjacent[i] or a.start in issues:
                 continue
-            if (not (a.is_adj and n.is_noun) or a.is_participle or a.can_be_verb
-                    or not (a.known or n.known)):
+            if not (a.is_adj and n.is_noun) or a.can_be_verb or not (a.known or n.known):
                 continue
             if a.lower in ("vienas", "viena", "vieni", "vienos"):
                 continue          # viena kitą = each other
@@ -448,6 +510,12 @@ class Grammar:
                 if j == i or toks[j].can_be("gen") or not toks[j].known:
                     continue
                 n = toks[j]
+            # A participle before a noun is usually an attribute (nukritusią sagutę), but it
+            # can also take an object (praėjusi advokatūrą), a place (einanti sakinio gale)
+            # or a predicate (tapusią vienuole).
+            if a.is_participle and (n.can_be("acc") or n.can_be("loc") or any(
+                    an.lemma.endswith(PREDICATIVE_VERBS) for an in self.analyses(a.text))):
+                continue
             if n.start in issues:
                 continue
             ar = [r for r in a.pos_readings() if r.pos == "adj"]

@@ -57,6 +57,17 @@ const KURIS: &[&str] = &[
     "kuriame", "kurioje", "kurie", "kurių", "kuriems", "kurioms", "kuriuos", "kurias", "kuriais",
     "kuriomis", "kuriuose", "kuriose",
 ];
+/// (number, gender) each form of kuris can have; gender None = any
+const KURIS_FEATURES: &[(&str, &[(&str, Option<&str>)])] = &[
+    ("kuris", &[("sg", Some("m"))]), ("kuri", &[("sg", Some("f"))]), ("kurio", &[("sg", Some("m"))]),
+    ("kurios", &[("sg", Some("f")), ("pl", Some("f"))]), ("kuriam", &[("sg", Some("m"))]),
+    ("kuriai", &[("sg", Some("f"))]), ("kurį", &[("sg", Some("m"))]), ("kurią", &[("sg", Some("f"))]),
+    ("kuriuo", &[("sg", Some("m"))]), ("kuria", &[("sg", Some("f"))]), ("kuriame", &[("sg", Some("m"))]),
+    ("kurioje", &[("sg", Some("f"))]), ("kurie", &[("pl", Some("m"))]), ("kurių", &[("pl", None)]),
+    ("kuriems", &[("pl", Some("m"))]), ("kurioms", &[("pl", Some("f"))]), ("kuriuos", &[("pl", Some("m"))]),
+    ("kurias", &[("pl", Some("f"))]), ("kuriais", &[("pl", Some("m"))]), ("kuriomis", &[("pl", Some("f"))]),
+    ("kuriuose", &[("pl", Some("m"))]), ("kuriose", &[("pl", Some("f"))]),
+];
 const CLAUSE_STARTERS: &[&str] =
     &["kad", "nes", "jog", "bet", "tačiau", "kadangi", "nors", "jei", "jeigu", "kai", "kol", "nebent", "o"];
 const NO_COMMA_AFTER: &[&str] = &[
@@ -98,6 +109,16 @@ const COPULAS: &[&str] = &[
     "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė", "gimsta",
     "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "pasidaryti", "pasidarė",
     "pasidaro", "pasirodyti", "pasirodė", "pasirodo", "dirbti", "dirbo", "dirba",
+];
+/// Participles of these verbs take a predicate instrumental (tapusią vienuole);
+/// matched by ending so prefixed entries (išrinkti) count too.
+const PREDICATIVE_VERBS: &[&str] = &[
+    "būti", "buvo", "būna", "esa", "tapti", "tapo", "tampa", "likti", "liko", "lieka", "atrodyti",
+    "atrodė", "atrodo", "vadinti", "vadino", "vadina", "vadintis", "laikyti", "laikė", "laiko",
+    "rinkti", "rinko", "renka", "skirti", "skyrė", "skiria", "pažinti", "pažino", "pažįsta", "skelbti",
+    "skelbė", "skelbia", "tituluoti", "titulavo", "tituluoja", "dirbti", "dirbo", "dirba", "gimti",
+    "gimė", "gimsta", "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "rodyti", "rodė",
+    "rodo",
 ];
 const COPULA_FORMS: &[&str] = &["nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esame", "esate", "yra"];
 fn subject_person(w: &str) -> Option<&'static str> {
@@ -174,6 +195,7 @@ pub struct Grammar {
     readings: RefCell<FxMap<String, Vec<Reading>>>,
     variants: RefCell<FxMap<String, Vec<String>>>,
     known: RefCell<FxMap<String, bool>>,
+    suggestions: RefCell<FxMap<String, Vec<String>>>,
 }
 
 struct G<'a> {
@@ -252,6 +274,16 @@ impl<'a> G<'a> {
         v
     }
 
+    /// Typo corrections of an unknown word, lower case (candidates for context rules).
+    fn suggestions_of(&self, w: &str) -> Vec<String> {
+        if let Some(v) = self.c.suggestions.borrow().get(w) {
+            return v.clone();
+        }
+        let v: Vec<String> = self.an.suggest(w, 5).iter().map(|s| lower(s)).collect();
+        self.c.suggestions.borrow_mut().insert(w.to_string(), v.clone());
+        v
+    }
+
     fn known(&self, w: &str) -> bool {
         if let Some(&k) = self.c.known.borrow().get(w) {
             return k;
@@ -317,6 +349,11 @@ impl Word {
     fn variants(&self, g: &G) -> &Vec<(String, Vec<Reading>)> {
         self.variants.get_or_init(|| {
             let mut forms = g.variants_of(&self.lower);
+            if forms.is_empty() && !self.known {
+                // unknown word without a diacritic-only reading: let context choose
+                // between its typo corrections (zodzou -> žodžiu, žodžių)
+                forms = g.suggestions_of(&self.text);
+            }
             if first_lower(&self.text) {
                 forms.retain(|f| first_lower(f));
             }
@@ -514,6 +551,45 @@ impl Grammar {
             }
         }
 
+        // 6. relative pronoun typed without diacritics: žodžių kuriu aš rašau -> kurių
+        for i in 1..toks.len() {
+            let (w, prev) = (&toks[i], &toks[i - 1]);
+            let gap: String = chars[prev.end..w.start].iter().collect();
+            if KURIS.contains(&w.lower.as_str()) || !(adjacent[i] || gap.trim() == ",") || !prev.is_noun(&g) {
+                continue;
+            }
+            let fw = fold(&w.lower);
+            let nouns: Vec<Reading> = prev.pos_readings(&g).into_iter().filter(|r| r.pos == Pos::Noun).collect();
+            let agrees = |feats: &[(&str, Option<&str>)]| {
+                nouns.iter().any(|r| feats.iter().any(|(num, gen)| {
+                    (r.number.is_none() || r.number == Some(num)) && (gen.is_none() || r.gender.is_none() || r.gender == *gen)
+                }))
+            };
+            let cands: Vec<String> = KURIS_FEATURES.iter()
+                .filter(|(k, feats)| fold(k) == fw && agrees(feats))
+                .map(|(k, _)| w.cap(k)).collect();
+            if cands.is_empty() {
+                continue;
+            }
+            // the relative clause needs its own verb, else "kuriu" may be the verb ("dainas kuriu pats")
+            let mut verb_follows = false;
+            let mut j = i + 1;
+            while j < toks.len() && j <= i + 5 && adjacent[j] {
+                let an_j = g.analyses(&toks[j].text);
+                if an_j.iter().any(|a| g.finite(a)) && g.mostly_verb(&an_j) {
+                    verb_follows = true;
+                    break;
+                }
+                j += 1;
+            }
+            if verb_follows {
+                add(&mut issues, Issue {
+                    start: w.start, end: w.end, word: w.text.clone(), rule: "relative",
+                    message: format!("relative pronoun after '{}'", prev.text), suggestions: cands,
+                });
+            }
+        }
+
         // 5. verbs: negation + genitive, objects of 1st/2nd person verbs
         for (i, w) in toks.iter().enumerate() {
             if i + 1 >= toks.len() || !adjacent[i + 1] {
@@ -552,16 +628,18 @@ impl Grammar {
                 if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey {
                     for &x in &span {
                         let t = &toks[x];
+                        let why = format!("after the negated verb '{}' use the genitive", w.text);
                         if !t.own.is_empty() && t.own.iter().all(|r| r.case == "acc") {
                             let fix = g.reinflect(t, |tg| tg.ends_with(".acc"), Some("gen"));
                             if !fix.is_empty() {
                                 add(&mut issues, Issue {
                                     start: t.start, end: t.end, word: t.text.clone(), rule: "negation",
-                                    message: format!("after the negated verb '{}' use the genitive", w.text),
-                                    suggestions: fix,
+                                    message: why, suggestions: fix,
                                 });
+                                continue;
                             }
                         }
+                        require(&mut issues, t, &["gen"], "negation", &why); // nepataiso visu žodžių -> visų
                     }
                 }
                 continue;
@@ -629,7 +707,7 @@ impl Grammar {
             if !adjacent[i] || issues.contains_key(&a.start) {
                 continue;
             }
-            if !(a.is_adj(&g) && n.is_noun(&g)) || a.is_participle(&g) || a.can_be_verb(&g) || !(a.known || n.known) {
+            if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) || !(a.known || n.known) {
                 continue;
             }
             if ["vienas", "viena", "vieni", "vienos"].contains(&a.lower.as_str()) {
@@ -644,6 +722,14 @@ impl Grammar {
                     continue;
                 }
                 n = &toks[j];
+            }
+            // participle as attribute (nukritusią sagutę), not with an object, place or predicate
+            if a.is_participle(&g)
+                && (n.can_be(&g, "acc")
+                    || n.can_be(&g, "loc")
+                    || g.analyses(&a.text).iter().any(|x| PREDICATIVE_VERBS.iter().any(|v| x.lemma.ends_with(v))))
+            {
+                continue;
             }
             if issues.contains_key(&n.start) {
                 continue;

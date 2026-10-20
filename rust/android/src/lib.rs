@@ -22,6 +22,12 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_warmUp(_env: JNIEnv, _cl
     let _ = ck.check_text("Labas rytas, sviesa.", false, true); // also builds lazy indexes
 }
 
+/// Same as warmUp, for the HeliBoard bridge (which wraps it in a Kotlin warmUp()).
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_warmUpNative(env: JNIEnv, class: JClass) {
+    Java_dev_imbrasas_varnele_Native_warmUp(env, class)
+}
+
 /// Check a text. Returns a JSON array of findings with UTF-16 offsets.
 #[no_mangle]
 pub extern "system" fn Java_dev_imbrasas_varnele_Native_check<'l>(
@@ -46,6 +52,24 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_check<'l>(
         let ck = checker().lock().unwrap();
         let fs = ck.check_text(&text, formal != 0, true);
         varnele::json::findings(&fs, |i| utf16[i])
+    };
+    env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// The word being typed, for a keyboard: JSON {status, suggestions, contextRule, contextFixes}.
+/// `context` is the text before the word (a few previous words), may be empty.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    word: JString<'l>,
+    context: JString<'l>,
+) -> jstring {
+    let word: String = env.get_string(&word).map(Into::into).unwrap_or_default();
+    let context: String = env.get_string(&context).map(Into::into).unwrap_or_default();
+    let json = {
+        let ck = checker().lock().unwrap();
+        varnele::json::keyboard_word(&ck.keyboard_word(&word, &context))
     };
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }

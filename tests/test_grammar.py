@@ -33,6 +33,11 @@ FLAGGED = [
     ("Jis einu namo.", "einu", "subject", "eina"),
     ("Vakar mačiau namas.", "namas", "object", "namą"),
     ("Nusipirkau naujas automobilis.", "automobilis", "object", "automobilį"),
+    ("Radau nukritusią sagute.", "sagute", "agreement", "sagutę"),
+    ("Pagrindinė kylanti grėsme yra kirtimai.", "grėsme", "agreement", "grėsmė"),
+    ("Kodėl nepataiso visu žodžių?", "visu", "negation", "visų"),
+    ("Kodėl nepataiso žodžių kuriu aš rašau?", "kuriu", "relative", "kurių"),
+    ("Kodėl nepataiso visų zodzou?", "zodzou", "unknown", "žodžių"),
     # unknown word: context picks the suggestion order
     ("Grįžau prieš porą dienu.", "dienu", "unknown", "dienų"),
     ("Vakar pries porą dienų.", "pries", "unknown", "prieš"),
@@ -66,6 +71,12 @@ CORRECT = [
     "Lietuvai atiteko tik nedidelis ruožas. Atskiri ruožai skirti slidininkams.",
     "Tuo metu miestas buvo atstatytas. Keli pastatai išliko.",
     "Aš nemačiau jo, o tu matei mane.",
+    # participles with objects or predicates, not agreeing attributes
+    "Ji, praėjusi advokatūrą, pradėjo dirbti. Užuot pasirašiusi memorandumą, išvyko.",
+    "Matėme tapusią vienuole seserį. Jis išrinktas prezidentu, vadinamas tėvu, laikomas didvyriu.",
+    "Tai veiksmažodis, išreiškianti liepimą forma.",
+    "Forma, einanti sakinio gale kaip tarinys. Esantis mieste namas.",
+    "Dainas kuriu pats. Einu gatve namo.",
 ]
 
 

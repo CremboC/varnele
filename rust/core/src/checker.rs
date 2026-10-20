@@ -17,6 +17,17 @@ pub enum WordStatus {
     Skip,
 }
 
+/// Result of [`Checker::keyboard_word`].
+pub struct KeyboardWord {
+    pub status: WordStatus,
+    /// corrections for an unknown word: (word, cost, typo cost ignoring diacritics;
+    /// 0 = only diacritics differ)
+    pub suggestions: Vec<(String, f64, f64)>,
+    /// a grammar rule that says this (valid) word must change, and its fixes
+    pub context_rule: String,
+    pub context_fixes: Vec<(String, f64, f64)>,
+}
+
 pub struct Checker {
     pub an: Analyzer,
     grammar: Grammar,
@@ -157,6 +168,51 @@ impl Checker {
             Status::Unknown => (WordStatus::Unknown, self.an.suggest(w, 5)),
             _ => (WordStatus::Ok, vec![]),
         }
+    }
+
+    /// What a keyboard needs for the word being typed: is it valid, and the ranked
+    /// corrections (word, cost, differs-only-in-diacritics). `context` is the text
+    /// before the word (a few previous words); grammar rules can use it to fix a
+    /// valid word ("prieš pora" -> "porą") or re-rank corrections.
+    pub fn keyboard_word(&self, word: &str, context: &str) -> KeyboardWord {
+        let (status, _) = self.check_word(word);
+        let lw = lower(word);
+        let fw = fold(&lw);
+        let entry = |w: String, cost: f64| {
+            let fc = crate::suggest::cost(&fw, &fold(&lower(&w)));
+            (w, cost, fc)
+        };
+        let mut suggestions: Vec<(String, f64, f64)> = Vec::new();
+        if status == WordStatus::Unknown {
+            suggestions = self.an.suggest_scored(word, 5).into_iter().map(|(w, c)| entry(w, c)).collect();
+        }
+        let mut context_rule = String::new();
+        let mut context_fixes: Vec<(String, f64, f64)> = Vec::new();
+        if !context.trim().is_empty() {
+            let text = format!("{} {}", context.trim_end(), word);
+            let start = clen(&text) - clen(word);
+            if let Some(f) = self.grammar.check(&self.an, &text).into_iter().find(|f| f.start == start) {
+                if f.rule == "context" && status == WordStatus::Unknown {
+                    // unknown word: context decides the order
+                    let mut ordered: Vec<(String, f64, f64)> = Vec::new();
+                    for s in &f.suggestions {
+                        ordered.push(entry(s.clone(), self.an.score(&lw, &lower(s))));
+                    }
+                    for s in suggestions.drain(..) {
+                        if !ordered.iter().any(|o| o.0 == s.0) {
+                            ordered.push(s);
+                        }
+                    }
+                    ordered.truncate(5);
+                    suggestions = ordered;
+                    context_rule = "context".into();
+                } else if f.rule != "comma" && f.rule != "context" {
+                    context_rule = f.rule.to_string();
+                    context_fixes = f.suggestions.iter().map(|s| entry(s.clone(), 0.0)).collect();
+                }
+            }
+        }
+        KeyboardWord { status, suggestions, context_rule, context_fixes }
     }
 
     /// All findings in a text, in order: misspellings, spoken forms, grammar.

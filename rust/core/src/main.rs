@@ -58,6 +58,11 @@ fn main() {
             }
             eprintln!("load {:?}, check {:?}", load, t.elapsed());
         }
+        Some("kb") => {
+            // keyboard view of a word: varnele kb WORD [CONTEXT...]
+            let ctx = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>().join(" ");
+            println!("{}", varnele::json::keyboard_word(&ck.keyboard_word(&args[1], &ctx)));
+        }
         Some("bench") => {
             // per-call latency: correct words, misspellings (with suggestions), sentences
             let time = |label: &str, items: &[&str], f: &dyn Fn(&str)| {
