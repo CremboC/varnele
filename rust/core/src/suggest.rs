@@ -16,6 +16,17 @@ fn key_pos(c: char) -> Option<(i32, i32)> {
         .find_map(|(r, row)| row.chars().position(|k| k == c).map(|i| (r as i32, i as i32)))
 }
 
+/// The typed letter and its neighbouring keys, within the (folded) Lithuanian alphabet.
+pub fn key_and_neighbours(c: char) -> Vec<char> {
+    let mut v = vec![c];
+    for &k in FOLDED_ALPHABET.iter() {
+        if k != c && near(c, k) {
+            v.push(k);
+        }
+    }
+    v
+}
+
 /// Adjacent keys on a QWERTY-based Lithuanian layout (diacritics share their base key).
 fn near(a: char, b: char) -> bool {
     match (key_pos(a), key_pos(b)) {
@@ -59,6 +70,36 @@ pub fn cost(a: &str, b: &str) -> f64 {
 }
 
 impl Analyzer {
+    /// Words typed with the hand shifted: every letter may be a neighbouring key
+    /// (fofrkua -> didelis). Fewest shifted keys first, then frequency.
+    pub fn key_shift(&self, word: &str, n: usize) -> Vec<String> {
+        let lw = lower(word);
+        let typed: Vec<char> = fold(&lw).chars().collect();
+        if typed.len() < 3 || typed.len() > 16 {
+            return vec![];
+        }
+        let mut found = BTreeSet::new();
+        self.data.neighbour_forms(&typed, &key_and_neighbours, &mut found);
+        // common words first (a whole-word slip is only worth fixing into a likely word),
+        // then fewer shifted keys
+        let mut ranked: Vec<(i64, usize, String)> = found
+            .into_iter()
+            .filter_map(|c| {
+                let an = self.analyze_exact(&c);
+                if !first_lower(&c) || an.is_empty() {
+                    return None;
+                }
+                let lf = an.iter().map(|a| *self.data.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0)).max().unwrap_or(0);
+                let f = *self.data.freq.get(&c).unwrap_or(&0);
+                let shifted = fold(&c).chars().zip(&typed).filter(|(a, b)| a != *b).count();
+                Some((-((lf + f) as i64), shifted, c))
+            })
+            .collect();
+        ranked.sort();
+        let cap = first_upper(word);
+        ranked.into_iter().take(n).map(|(_, _, c)| if cap { upper_first(&c) } else { c }).collect()
+    }
+
     /// Lower is better. Diacritic-only fixes always beat real edits; among
     /// equally plausible candidates, frequent words win.
     pub fn score(&self, word: &str, cand: &str) -> f64 {

@@ -75,6 +75,7 @@ pub struct Data {
     pub head_rests: FxSet<String>,
     folded: OnceLock<Folded>,
     entry_stems: OnceLock<Vec<Vec<(u32, u16)>>>,
+    stem_prefixes: OnceLock<FxSet<String>>,
 }
 
 struct Reader<'a> {
@@ -203,6 +204,7 @@ impl Data {
             head_rests,
             folded: OnceLock::new(),
             entry_stems: OnceLock::new(),
+            stem_prefixes: OnceLock::new(),
         })
     }
 
@@ -272,6 +274,65 @@ impl Data {
                     }
                 }
             }
+        }
+    }
+
+    /// Every beginning of every folded stem: prunes the key-shift search.
+    fn stem_prefixes(&self) -> &FxSet<String> {
+        self.stem_prefixes.get_or_init(|| {
+            let mut set = FxSet::default();
+            for st in self.folded().stems.keys() {
+                for (i, _) in st.char_indices().skip(1) {
+                    set.insert(st[..i].to_string());
+                }
+                set.insert(st.clone());
+            }
+            set
+        })
+    }
+
+    /// Unprefixed forms where every letter is the typed letter or one of `options(typed letter)`
+    /// (e.g. its neighbours on the keyboard): fofrkua -> didelis. `typed` is folded.
+    pub fn neighbour_forms(&self, typed: &[char], options: &dyn Fn(char) -> Vec<char>, out: &mut BTreeSet<String>) {
+        let f = self.folded();
+        let prefixes = self.stem_prefixes();
+        let opts: Vec<Vec<char>> = typed.iter().map(|&c| options(c)).collect();
+        let mut cur = String::new();
+        let mut budget = 200_000usize; // search steps: bounds the worst case on a phone
+        self.neighbour_dfs(&opts, 0, &mut cur, f, prefixes, out, &mut budget);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn neighbour_dfs(&self, opts: &[Vec<char>], pos: usize, cur: &mut String, f: &Folded,
+                     prefixes: &FxSet<String>, out: &mut BTreeSet<String>, budget: &mut usize) {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        if let Some(idxs) = f.stems.get(cur.as_str()) {
+            let rest = &opts[pos..];
+            for &si in idxs {
+                let st = &self.stem_list[si as usize];
+                for &(sid, _) in &self.stems[st] {
+                    for (fsuf, ks) in &f.sigs[sid as usize] {
+                        if fsuf.chars().count() == rest.len() && fsuf.chars().zip(rest).all(|(c, o)| o.contains(&c)) {
+                            for &k in ks {
+                                out.insert(format!("{st}{}", self.sigs[sid as usize].suffixes[k].0));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if pos == opts.len() {
+            return;
+        }
+        for &c in &opts[pos] {
+            cur.push(c);
+            if prefixes.contains(cur.as_str()) {
+                self.neighbour_dfs(opts, pos + 1, cur, f, prefixes, out, budget);
+            }
+            cur.pop();
         }
     }
 
