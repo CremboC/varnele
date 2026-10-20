@@ -150,12 +150,17 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     `labas`); DFS over a folded stem-prefix set with a 200k-step budget, ranked by
     lemma+form frequency then fewest shifted keys; top guess autocorrects.
     0.4 ms per word after warm-up (tables built in warmUp).
+  - `Suggest.kt` (fork change): a whitelisted Varnelė suggestion always autocorrects.
+    Upstream lets the user-history predictions veto a fix when the typed word is valid,
+    and testing teaches it the uncorrected words (`nauja sakini` stayed).
   - gesture typing (batch mode) is left to binary dictionaries
 - `inputlogic/VarneleSentenceFixer.kt`, hooked at the end of
   `InputLogic.handleSeparatorEvent`: after each finished word, re-check the
   current sentence and apply **only** diacritic-only grammar fixes and missing
   commas, two passes, rewriting from the first changed character through
-  `RichInputConnection`. This is how later words fix earlier ones
+  `RichInputConnection`. It first re-checks the word the separator just finished and
+  applies `VarneleDictionary.confidentFix` (the whitelisted kind), so punctuation
+  (`sakini?`) and learned words can't leave it unfixed. This is how later words fix earlier ones
   (`visu … žodžių` → `visų`, `kuriu … rašau` → `kurių`, `, kurių`).
 - `dev/imbrasas/varnele/Native.kt`: JNI class name must stay exactly this.
   ProGuard keep rule added. Library missing → keyboard works without Varnelė.
@@ -202,6 +207,10 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   (the keyboard's sentence fixer replaced the idea). Don't commit it unless asked.
 - Wikipedia API rate-limits; `fetch_corpus.py` uses cirrusdoc bulk text with backoff.
 
+- HeliBoard's user history learns every word committed as typed. Repeating a test
+  sentence trains it on the wrong spelling; that is why whitelisted Varnelė fixes skip
+  the history comparison in `Suggest.shouldBeAutoCorrected`.
+
 ## Ideas and open problems (backlog)
 
 - Verify on the phone (owner's tests so far found real gaps every time): the
@@ -239,3 +248,4 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
    candidates as context variants, keyboard typo cost, AGENTS.md
 6. keyboard: rare-twin rule, key-shift search (+ HeliBoard setting), score
    compensation for HeliBoard's normalisation
+7. keyboard: fixes survive punctuation and user history (HeliBoard fork)
