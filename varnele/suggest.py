@@ -133,6 +133,9 @@ class Suggester:
             sc = min(sc, self._score(base, c) + 0.05) if base else sc
             # a lowercase word is rarely a misspelt name: dvara -> dvarą, not Dvarą
             # 0.3: a name can share a lemma key with a verb (Klausė / klausė, past of klausti)
-            return sc + (0.3 if c[:1].isupper() and word[:1].islower() else 0)
+            # +0.2 more when only the capital differs: "verai" is gerai mistyped, not the name Verai
+            if c[:1].isupper() and word[:1].islower():
+                sc += 0.5 if c.lower() == lower else 0.3
+            return sc
         ranked = sorted(good, key=lambda c: (score(c), c))
         return [c[0].upper() + c[1:] if cap else c for c in ranked[:n]]

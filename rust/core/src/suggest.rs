@@ -183,8 +183,9 @@ impl Analyzer {
                 }
                 // a lowercase word is rarely a misspelt name: dvara -> dvarą, not Dvarą;
                 // 0.3: a name can share a lemma key with a verb (Klausė / klausė, past of klausti)
+                // +0.2 more when only the capital differs: "verai" is gerai mistyped, not the name Verai
                 if first_upper(&c) && word_lower_first {
-                    sc += 0.3;
+                    sc += if lower(&c) == lw { 0.5 } else { 0.3 };
                 }
                 (sc, c)
             })

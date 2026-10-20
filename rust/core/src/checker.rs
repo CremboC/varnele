@@ -223,6 +223,15 @@ impl Checker {
                 context_fixes.push(entry(twin, 0.0));
             }
         }
+        // A short valid word never seen in the corpus, one neighbouring key from a common
+        // word, is that word mistyped: kak (imperative of the dialect verb kakti) -> kai.
+        if status == WordStatus::Ok && context_fixes.is_empty() {
+            if let Some(common) = self.common_neighbour(word) {
+                context_rule = "rare".into();
+                let c = self.an.score(&lw, &lower(&common));
+                context_fixes.push(entry(common, c));
+            }
+        }
         // completely unrecognised and nothing close: maybe the hand was one key off
         let mut shifted = false;
         if key_shift && status == WordStatus::Unknown && suggestions.iter().all(|s| s.2 > 1.0) {
@@ -237,6 +246,34 @@ impl Checker {
             }
         }
         KeyboardWord { status, suggestions, context_rule, context_fixes, key_shift: shifted }
+    }
+
+    /// The most frequent word (seen at least COMMON times) that differs from a short (2-4 letters), never
+    /// seen valid word in one letter typed with a neighbouring key: kak -> kai.
+    fn common_neighbour(&self, word: &str) -> Option<String> {
+        const COMMON: u32 = 50;
+        let d = &self.an.data;
+        let lw = lower(word);
+        let chars: Vec<char> = lw.chars().collect();
+        if chars.len() < 2 || chars.len() > 4 || !first_lower(word) || d.freq.get(&lw).copied().unwrap_or(0) > 0 {
+            return None;
+        }
+        if self.an.analyze(word).iter().any(|a| d.lemma_freq.get(&lower(&a.lemma)).copied().unwrap_or(0) > 0) {
+            return None;
+        }
+        let mut best: Option<(u32, String)> = None;
+        for (i, &c) in chars.iter().enumerate() {
+            for k in crate::suggest::key_and_neighbours(c).into_iter().skip(1) {
+                let mut v = chars.clone();
+                v[i] = k;
+                let cand: String = v.into_iter().collect();
+                let f = d.freq.get(&cand).copied().unwrap_or(0);
+                if f >= COMMON && best.as_ref().map_or(true, |b| f > b.0) && !self.an.analyze_exact(&cand).is_empty() {
+                    best = Some((f, cand));
+                }
+            }
+        }
+        best.map(|(_, c)| c)
     }
 
     /// Diacritic-only twin of a valid word when the word itself is never seen in the

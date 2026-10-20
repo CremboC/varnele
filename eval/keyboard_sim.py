@@ -32,7 +32,7 @@ def autocorrect(word, context):
     r = kb(word, context)
     if r["status"] != "unknown":
         fixes = r["contextFixes"]
-        if fixes and (fixes[0]["diacritic"] or r["contextRule"] == "subject"):   # aš buvo -> buvau
+        if fixes and (fixes[0]["diacritic"] or r["contextRule"] in ("subject", "rare")):   # aš buvo -> buvau, kak -> kai
             return fixes[0]["w"]
         fixes = [c for c in fixes if c["diacritic"]]
         return fixes[0]["w"] if fixes else word

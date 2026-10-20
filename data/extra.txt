@@ -27,3 +27,7 @@ domėjo/POSXrw
 -šita/D
 -kita/D
 -tokia/ND
+
+# ispell-lt lists a truncated "bereikal"; the adverb is bereikalo
+-bereikal
+bereikalo
