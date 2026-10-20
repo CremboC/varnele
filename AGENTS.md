@@ -23,7 +23,7 @@ Keep it current when something changes.
 | Path | What |
 |---|---|
 | `~/git/varnele` | This repo. Python grammar "compiler", Rust runtime, Android spell-checker app, evaluations |
-| `~/git/HeliBoard` | **Varnelė Klaviatūra (HeliBoard fork)**: fork of github.com/Helium314/HeliBoard (GPL-3.0) with Varnelė as the Lithuanian dictionary, at github.com/CremboC/HeliBoard, work on branch `varnele` (pushed). Remotes: `origin` = upstream Helium314/HeliBoard (pull only, never push), `fork` = CremboC/HeliBoard (push here). Upstream's `AI_USAGE.md` forbids AI-generated upstream PRs: **never open PRs upstream from this work** |
+| `~/git/HeliBoard` | **Varnelė Klaviatūra (HeliBoard fork)**: fork of github.com/Helium314/HeliBoard (GPL-3.0) with Varnelė as the Lithuanian dictionary, at github.com/CremboC/Varnele-Keyboard (renamed from CremboC/HeliBoard on 2026-10-20), work on branch `main` (the old `varnele` branch was fast-forwarded into it and deleted). Remotes: `origin` = upstream Helium314/HeliBoard, now HeliBorg/HeliBoard (pull only, never push; take updates by merging `origin/main` into `main`), `fork` = CremboC/Varnele-Keyboard (push here). Upstream's `AI_USAGE.md` forbids AI-generated upstream PRs: **never open PRs upstream from this work** |
 
 Layout of this repo:
 
@@ -208,7 +208,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 ## Release builds and Google Play (keyboard)
 
-- CI: `.github/workflows/varnele-release.yml` in the fork, on push to `varnele` and manual
+- CI: `.github/workflows/varnele-release.yml` in the fork, on push to `main` and manual
   dispatch. Checks out this repo (main) next to HeliBoard, Python 3.12, Rust + 4 Android
   targets, cargo-ndk, NDK 28.0.13004108; builds the **`nouserlib`** build type (the Play
   build: no user-supplied gesture library, Play forbids loading outside code). Artifacts:
@@ -221,7 +221,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   HeliBoard's AppUpgrade runs every `oldVersion <= N` migration; after an upstream merge,
   check new migrations with N < 10000, they won't run for our upgrades. Renaming the
   workflow restarts the run number: raise the offset above the last uploaded code.
-- Signing: GitHub secrets on CremboC/HeliBoard `VARNELE_KEYSTORE_BASE64`,
+- Signing: GitHub secrets on CremboC/Varnele-Keyboard `VARNELE_KEYSTORE_BASE64`,
   `VARNELE_KEYSTORE_PASSWORD`, `VARNELE_KEY_ALIAS` (`upload`), `VARNELE_KEY_PASSWORD`.
   Gradle reads `VARNELE_KEYSTORE_FILE` + the three others from the environment; without
   them release builds are unsigned and debug builds are unaffected.
