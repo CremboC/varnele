@@ -26,6 +26,8 @@ pub struct KeyboardWord {
     /// a grammar rule that says this (valid) word must change, and its fixes
     pub context_rule: String,
     pub context_fixes: Vec<(String, f64, f64)>,
+    /// the first suggestions come from the key-shift search
+    pub key_shift: bool,
 }
 
 pub struct Checker {
@@ -174,7 +176,7 @@ impl Checker {
     /// corrections (word, cost, differs-only-in-diacritics). `context` is the text
     /// before the word (a few previous words); grammar rules can use it to fix a
     /// valid word ("prieš pora" -> "porą") or re-rank corrections.
-    pub fn keyboard_word(&self, word: &str, context: &str) -> KeyboardWord {
+    pub fn keyboard_word(&self, word: &str, context: &str, key_shift: bool) -> KeyboardWord {
         let (status, _) = self.check_word(word);
         let lw = lower(word);
         let fw = fold(&lw);
@@ -212,7 +214,56 @@ impl Checker {
                 }
             }
         }
-        KeyboardWord { status, suggestions, context_rule, context_fixes }
+        // A valid but rare form whose diacritic twin is common was almost certainly typed
+        // without diacritics: sakini (rare verb form) -> sakinį. Keyboard only; frequencies
+        // come from the small corpus, so the bar is "never seen" vs "seen".
+        if status == WordStatus::Ok && context_fixes.is_empty() {
+            if let Some(twin) = self.common_twin(word) {
+                context_rule = "rare".into();
+                context_fixes.push(entry(twin, 0.0));
+            }
+        }
+        // completely unrecognised and nothing close: maybe the hand was one key off
+        let mut shifted = false;
+        if key_shift && status == WordStatus::Unknown && suggestions.iter().all(|s| s.2 > 1.0) {
+            let ks = self.an.key_shift(word, 3);
+            if !ks.is_empty() {
+                shifted = true;
+                let mut v: Vec<(String, f64, f64)> =
+                    ks.into_iter().map(|w| { let c = self.an.score(&lw, &lower(&w)); entry(w, c) }).collect();
+                v.extend(suggestions.drain(..));
+                v.truncate(5);
+                suggestions = v;
+            }
+        }
+        KeyboardWord { status, suggestions, context_rule, context_fixes, key_shift: shifted }
+    }
+
+    /// Diacritic-only twin of a valid word when the word itself is never seen in the
+    /// frequency corpus (neither the form nor its lemma) and the twin's lemma is.
+    fn common_twin(&self, word: &str) -> Option<String> {
+        let d = &self.an.data;
+        let lemma_freq = |w: &str| {
+            self.an.analyze(w).iter().map(|a| *d.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0)).max().unwrap_or(0)
+        };
+        let lw = lower(word);
+        if d.freq.get(&lw).copied().unwrap_or(0) > 0 || lemma_freq(word) > 0 {
+            return None;
+        }
+        let lowercase = first_lower(word);
+        self.an
+            .folded_forms(&fold(&lw))
+            .into_iter()
+            .filter(|c| *c != lw && (!lowercase || first_lower(c)) && !self.an.analyze_exact(c).is_empty())
+            .map(|c| {
+                let f = d.freq.get(&lower(&c)).copied().unwrap_or(0);
+                // a twin that can only be a vocative (sakiny, "O sentence!") is rarely meant
+                let not_vocative = self.an.analyze_exact(&c).iter().any(|a| !self.an.tag_str(a).ends_with(".voc"));
+                (lemma_freq(&c) + f, not_vocative, c)
+            })
+            .filter(|(score, _, _)| *score >= 3)
+            .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then_with(|| b.2.cmp(&a.2)))
+            .map(|(_, _, c)| cap_like(word, &c))
     }
 
     /// All findings in a text, in order: misspellings, spoken forms, grammar.

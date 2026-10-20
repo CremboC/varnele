@@ -133,10 +133,23 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   - valid typed word → returned with score 1.2M (never "corrected")
   - context fix of a valid word: diacritic-only → whitelisted, 1.3M (autocorrects);
     otherwise 1.1M (shown only)
-  - unknown word: score `(2 - cost) * 700k`; whitelisted if diacritic-only and
-    clearly best (margin 0.08, or context chose); autocorrect-appropriate if
-    **typoCost ≤ 1.0**, where typoCost is the edit cost ignoring diacritics
-    (`zodzou` → `žodžių` = 0.8)
+  - unknown word: whitelisted if diacritic-only and clearly best (margin 0.08,
+    or context chose); autocorrect-appropriate if **typoCost ≤ 1.0**, where
+    typoCost is the edit cost ignoring diacritics (`zodzou` → `žodžių` = 0.8).
+    **Scores compensate HeliBoard's normalisation**, which counts every changed
+    letter including diacritics (`zodzou` → `žodžių` = 4 edits / 6 letters):
+    score = target × 1e6 / (1 − levenshtein/len), target 1.0 for diacritic-only,
+    0.9 − 0.4·typoCost for one typo, 0.05 otherwise; scores kept strictly decreasing.
+  - **rare twin** (Rust `keyboard_word`, keyboard only): a valid word whose form and
+    lemma never occur in the frequency corpus, with a diacritic-only twin whose
+    lemma does, gets the twin as a context fix (`sakini` → `sakinį`); vocative-only
+    twins rank last (`sakiny`).
+  - **key-shift** (setting `varnele_key_shift`, default on, Text correction screen):
+    if the word is unknown and no correction is within one typo, search words where
+    every letter is the typed key or a neighbour (`fofrkua` → `didelis`, `ksbsd` →
+    `labas`); DFS over a folded stem-prefix set with a 200k-step budget, ranked by
+    lemma+form frequency then fewest shifted keys; top guess autocorrects.
+    0.4 ms per word after warm-up (tables built in warmUp).
   - gesture typing (batch mode) is left to binary dictionaries
 - `inputlogic/VarneleSentenceFixer.kt`, hooked at the end of
   `InputLogic.handleSeparatorEvent`: after each finished word, re-check the
@@ -163,9 +176,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   sentence ~1.6 ms (Mac). Phone (Fold7): 0.05–0.8 ms valid words, 6–17 ms
   unknown words with suggestions, data load ~110 ms. Data file 5.3 MB.
 - Keyboard simulation: `kodel nepataiso visu zodzou kuriu as rasau?` →
-  `kodėl nepataiso visų žodžių, kurių aš rašau?`
+  `kodėl nepataiso visų žodžių, kurių aš rašau?`; `dabar meginu nauja sakini` →
+  `dabar mėginu naują sakinį`; Rust key-shift search 0.4 ms, sentence 1.5 ms (Mac).
 
 ## Gotchas (learned the hard way)
+
+- My keyboard simulation (`eval/keyboard_sim.py`) models Varnelė's decisions, not
+  HeliBoard's native score normalisation; a fix that works in the simulation can
+  still fail on the phone if its score doesn't pass `calcNormalizedScore`. Always
+  read `adb logcat -s Varnele:V` after a phone test.
 
 - Tool hook: Bash commands mentioning gradle/curl are redirected; run them via
   the context-mode `ctx_execute` tool (shell), or use Write for files.
@@ -187,6 +206,11 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - Wikipedia API rate-limits; `fetch_corpus.py` uses cirrusdoc bulk text with backoff.
 
 ## Ideas and open problems (backlog)
+
+- Verify on the phone (owner's tests so far found real gaps every time): the
+  score compensation for `zodzou`, rare twins, key-shift autocorrect.
+- The frequency corpus (600 articles, 173k words) is too small for the rare-twin
+  rule and for ranking; a full Wikipedia dump would help a lot.
 
 - **Verb transitivity lexicon** (from a corpus or verb flags): would allow
   `Radau nukritusia sagute` → `nukritusią sagutę` (object of a 3rd/1st person
@@ -214,5 +238,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 2. Context rules: prepositions, agreement, quantities, commas
 3. Verb rules: negation genitive, subject-verb person, objects
 4. Rust runtime + Android spell-checker app (parity 100%)
-5. (this round) participle agreement, negation via diacritics, relative pronoun,
-   typo candidates as context variants, keyboard typo cost, AGENTS.md
+5. participle agreement, negation via diacritics, relative pronoun, typo
+   candidates as context variants, keyboard typo cost, AGENTS.md
+6. keyboard: rare-twin rule, key-shift search (+ HeliBoard setting), score
+   compensation for HeliBoard's normalisation

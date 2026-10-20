@@ -55,10 +55,11 @@ pub fn keyboard_word(k: &crate::checker::KeyboardWord) -> String {
         crate::WordStatus::Skip => "skip",
     };
     format!(
-        "{{\"status\":\"{}\",\"suggestions\":[{}],\"contextRule\":{},\"contextFixes\":[{}]}}",
+        "{{\"status\":\"{}\",\"suggestions\":[{}],\"contextRule\":{},\"contextFixes\":[{}],\"keyShift\":{}}}",
         status,
         list(&k.suggestions),
         string(&k.context_rule),
-        list(&k.context_fixes)
+        list(&k.context_fixes),
+        k.key_shift
     )
 }

@@ -20,6 +20,7 @@ fn checker() -> &'static Mutex<Checker> {
 pub extern "system" fn Java_dev_imbrasas_varnele_Native_warmUp(_env: JNIEnv, _class: JClass) {
     let ck = checker().lock().unwrap();
     let _ = ck.check_text("Labas rytas, sviesa.", false, true); // also builds lazy indexes
+    let _ = ck.an.key_shift("ksbsd", 1); // and the key-shift prefix table
 }
 
 /// Same as warmUp, for the HeliBoard bridge (which wraps it in a Kotlin warmUp()).
@@ -56,7 +57,7 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_check<'l>(
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-/// The word being typed, for a keyboard: JSON {status, suggestions, contextRule, contextFixes}.
+/// The word being typed, for a keyboard: JSON {status, suggestions, contextRule, contextFixes, keyShift}.
 /// `context` is the text before the word (a few previous words), may be empty.
 #[no_mangle]
 pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
@@ -64,12 +65,13 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
     _class: JClass<'l>,
     word: JString<'l>,
     context: JString<'l>,
+    key_shift: jboolean,
 ) -> jstring {
     let word: String = env.get_string(&word).map(Into::into).unwrap_or_default();
     let context: String = env.get_string(&context).map(Into::into).unwrap_or_default();
     let json = {
         let ck = checker().lock().unwrap();
-        varnele::json::keyboard_word(&ck.keyboard_word(&word, &context))
+        varnele::json::keyboard_word(&ck.keyboard_word(&word, &context, key_shift != 0))
     };
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }

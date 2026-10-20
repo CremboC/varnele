@@ -61,7 +61,7 @@ fn main() {
         Some("kb") => {
             // keyboard view of a word: varnele kb WORD [CONTEXT...]
             let ctx = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>().join(" ");
-            println!("{}", varnele::json::keyboard_word(&ck.keyboard_word(&args[1], &ctx)));
+            println!("{}", varnele::json::keyboard_word(&ck.keyboard_word(&args[1], &ctx, !args.iter().any(|a| a == "--no-key-shift"))));
         }
         Some("bench") => {
             // per-call latency: correct words, misspellings (with suggestions), sentences
@@ -82,6 +82,8 @@ fn main() {
             println!("first suggestion (builds lookup tables): {:?}", t.elapsed());
             time("correct word", &["šviesa", "namas", "mačiau", "nusiprausė", "Vilniaus", "kavinę"], &|w| { ck.check_word(w); });
             time("misspelled + suggestions", &["maciau", "pakeiciau", "dziaugias", "isvaziavo", "temperaturos", "pulininkai", "virma", "atuželti"], &|w| { ck.check_word(w); });
+            let _ = ck.an.key_shift("fofrkua", 3);
+            time("key-shift search (7 letters)", &["fofrkua", "fifekua", "nakas", "ksbsd"], &|w| { ck.an.key_shift(w, 3); });
             time("sentence (12 words)", &["Vakar maciau, kad pries pora dienu jis nuėjo į didele kavine su draugais."], &|s| { ck.check_text(s, false, true); });
         }
         _ => eprintln!("usage: varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W..."),
