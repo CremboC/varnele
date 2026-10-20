@@ -574,6 +574,20 @@ impl Grammar {
                         message: format!("comma needed before '{}'", w.text),
                         suggestions: vec![format!(", {}", w.text)],
                     });
+                } else if (prev == "net" || prev == "ypač") // veikia, net jeigu ...
+                    && i >= 2
+                    && adjacent[i - 1]
+                    && !NO_COMMA_AFTER.contains(&toks[i - 2].lower.as_str())
+                    && prep_cases(&toks[i - 2].lower).is_none()
+                    && !first_upper(&w.text)
+                    && !first_upper(&toks[i - 1].text)
+                {
+                    let p = &toks[i - 1];
+                    add(&mut issues, Issue {
+                        start: p.start, end: p.end, word: p.text.clone(), rule: "comma",
+                        message: format!("comma needed before '{} {}'", p.text, w.text),
+                        suggestions: vec![format!(", {}", p.text)],
+                    });
                 }
             }
             if i > 0 && prep_cases(lw).is_some() && adjacent[i] && nxt_adjacent

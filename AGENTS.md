@@ -121,7 +121,7 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 | subject | `aš buvo` → `buvau` | only adjacent pronoun + finite verb |
 | object (1st/2nd person verb) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą` | copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`) |
 | relative | `žodžių kuriu aš rašau` → `kurių` | needs a following finite verb (`dainas kuriu pats` stays) |
-| comma | `sakė kad` → `, kad`; indirect question after QUESTION_VERBS when a verb follows (`matau, ką man rašo`, not `ką nors`, `ką tik`), before kuris-forms and preps + kuris | `bet kas`, `kai kurie`, `kas nors`, `nors ir`, names/initials, after another connective |
+| comma | `sakė kad` → `, kad`; before `net`/`ypač` + connective (`veikia, net jeigu`); indirect question after QUESTION_VERBS when a verb follows (`matau, ką man rašo`, not `ką nors`, `ką tik`), before kuris-forms and preps + kuris | `bet kas`, `kai kurie`, `kas nors`, `nors ir`, names/initials, after another connective |
 
 "Mostly a verb": listed particles/adverbs (`W`) are never verbs; otherwise verb
 lemma frequency must beat other lemmas (`mačiau` yes, `metu` no). A rule-built
@@ -236,6 +236,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   missing too: check 1sg `-uosi` forms of common ones.
 - ispell-lt lists some pronouns as nouns too (`šita/D`, `kita/D`, `tokia/ND`), which hides
   them from agreement. `-word/FLAGS` in data/extra.txt drops such an entry.
+- HeliBoard capitalises sentences only if the text field asks for it
+  (TYPE_TEXT_FLAG_CAP_SENTENCES); the test app's field now does.
 - The keyboard fixer's fold keeps `y` (it is a key): i/y changes are never auto-applied.
 - Lexicon gaps: loanwords and names (`klipas`, `singlas`); induce stems from a
   corpus by finding multiple forms of a guessed paradigm.

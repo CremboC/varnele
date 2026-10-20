@@ -13,6 +13,7 @@ def findings(text):
 
 # (sentence, word, rule, expected first suggestion)
 FLAGGED = [
+    ("Viskas veikia net jeigu rašau prastai.", "net", "comma", ", net"),
     ("Manau, kad šita žmogų reikia aptarti.", "šita", "agreement", "šitą"),   # žmogų is not a genitive here
     ("Ir aš matau dar viena klaida.", "viena", "object", "vieną"),            # transitive verb, skips "dar"
     ("Ir aš matau dar viena klaida.", "klaida", "object", "klaidą"),
@@ -49,6 +50,7 @@ FLAGGED = [
 ]
 
 CORRECT = [
+    "Grįšiu, ir net jei vėluosiu, paskambinsiu.",
     "Einu gatve namo.",                       # motion verb: instrumental is right
     "Mačiau ką tik atėjusį žmogų.",
     "Žinau ką nors apie tai.",

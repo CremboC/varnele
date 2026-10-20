@@ -417,6 +417,12 @@ class Grammar:
                 if not skip:
                     add(Issue(w.start, w.end, w.text, "comma",
                               f"comma needed before '{w.text}'", [", " + w.text]))
+                elif (prev in ("net", "ypač") and i >= 2 and adjacent[i - 1]   # veikia, net jeigu ...
+                      and toks[i - 2].lower not in NO_COMMA_AFTER and toks[i - 2].lower not in PREPOSITIONS
+                      and not w.text[:1].isupper() and not toks[i - 1].text[:1].isupper()):
+                    p = toks[i - 1]
+                    add(Issue(p.start, p.end, p.text, "comma",
+                              f"comma needed before '{p.text} {w.text}'", [", " + p.text]))
             # comma before a preposition that introduces a relative clause: ..., su kuriuo
             if (i > 0 and w.lower in PREPOSITIONS and adjacent[i] and nxt_adjacent
                     and toks[i + 1].lower in KURIS and toks[i - 1].lower not in NO_COMMA_AFTER):
