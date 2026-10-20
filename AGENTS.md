@@ -227,8 +227,6 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - zsh does not word-split `$VAR` commands; use a shell function.
 - Parity needs deterministic order: inflection reads forms from the index
   (`Index.entry_forms`), sorts use (score, word) keys.
-- `varnele/restore.py` is an untracked, unused prototype of a sentence restorer
-  (the keyboard's sentence fixer replaced the idea). Don't commit it unless asked.
 - Wikipedia API rate-limits; `fetch_corpus.py` uses cirrusdoc bulk text with backoff.
 
 - HeliBoard's user history learns every word committed as typed. Repeating a test
