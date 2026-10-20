@@ -167,8 +167,6 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 ## Gotchas (learned the hard way)
 
-- Tool hook: Bash commands mentioning gradle/curl are redirected; run them via
-  the context-mode `ctx_execute` tool (shell), or use Write for files.
 - Gradle **configuration cache** freezes task environments. The cargo task sets
   its own `TMPDIR` (build/tmp/cargo); otherwise a dead sandbox temp dir breaks rustc.
   Script-level vals must not be captured in task actions.
