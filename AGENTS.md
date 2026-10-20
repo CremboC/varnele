@@ -136,6 +136,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   Internal packages stay `helium314.keyboard.*`. Lithuanian is enabled first on a fresh
   install. Credits are in the fork's README and the About screen.
 - Fork defaults on: key borders, vibration, number row, emoji key, language switch key.
+- **Gboard layout on every screen**: `Settings.useTabletLayout()` is false, so tablets and the
+  Fold inner screen (≥600 dp, HeliBoard's "tablet") keep the phone layout (backspace next to `m`,
+  enter bottom right, no extra `, .` keys, full key width). Split mode is cut from it:
+  `⇧ z x c v | b n m ⌫` like Gboard (the tablet layout put `b` left). Split is on by default only
+  on a foldable that is open with smallest width ≥600 dp (`Defaults.splitKeyboardDefault`): Fold
+  open yes, Flip never (open it is phone-sized, closed only the cover screen). Upstream's
+  `isTablet` is false for sw768dp+ (metrics 2), so this uses `Settings.isWideScreen()`.
   A typed space is moved behind `. , ; : ! ?` (`tašką .` → `tašką. `).
 - `dictionary/VarneleDictionary.kt`: main dictionary for locale `lt`, prepended
   in `DictionaryFactory.getMainDictsForLocale`. Calls `Native.check(word, prevWords)`
