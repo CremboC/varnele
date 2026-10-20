@@ -97,7 +97,10 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 7. **Suggestions**: diacritic-blind lookup + one typo on folded text; ranking =
    weighted edit distance (same-class diacritic 0.3, i/y 0.6 because y is its own key
    so `sita` means `šita` not `syta`, adjacent key 0.8, other 1.0)
-   minus form and lemma frequency bonuses. Lowercase input penalises capitalised names.
+   minus form and lemma frequency bonuses. Input typed with no diacritics at all pays
+   0.3 once for any number of missing diacritics, so frequency decides (`turetu` →
+   `turėtų`, not the rare `turėtu`); restoration 62.9% → 65.8%. A word's diacritic
+   variants in grammar are ordered by this cost (`šitą` before `sytą`). Lowercase input penalises capitalised names.
 8. **Context rules** (`grammar.py` / `grammar.rs`), see list below. Case rules
    only fire when a **diacritic-only** variant satisfies them; re-inflection
    (negation, subject, object) is generated from the word's own entry.
@@ -113,12 +116,12 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 |---|---|---|
 | case (prepositions) | `prieš pora` → `porą`, `į didele kavine` | genitive modifiers (`su lietuvių kultūra`), `apie` + quantity (`apie pusė`), numerals (`per šešiolika`), phrase must end in a noun, phrase stops at a word that can't agree (`už didžiausią | tuo metu`), participles end the phrase |
 | quantity | `daug vaiku` → `vaikų` | comparatives (`kiek silpnesnes`), only `kind == num` for -lika/-dešimt (not `Respublika`) |
-| agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes` | `viena kitą`; adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`) |
+| agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų` | `viena kitą`; adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`) |
 | negation | `neturiu laiką` → `laiko`; a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas |
 | subject | `aš buvo` → `buvau` | only adjacent pronoun + finite verb |
-| object (1st/2nd person verb) | `mačiau namas` → `namą` | copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`) |
+| object (1st/2nd person verb) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą` | copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`) |
 | relative | `žodžių kuriu aš rašau` → `kurių` | needs a following finite verb (`dainas kuriu pats` stays) |
-| comma | `sakė kad` → `, kad`, before kuris-forms and preps + kuris | `bet kas`, `kai kurie`, `kas nors`, `nors ir`, names/initials, after another connective |
+| comma | `sakė kad` → `, kad`; indirect question after QUESTION_VERBS when a verb follows (`matau, ką man rašo`, not `ką nors`, `ką tik`), before kuris-forms and preps + kuris | `bet kas`, `kai kurie`, `kas nors`, `nors ir`, names/initials, after another connective |
 
 "Mostly a verb": listed particles/adverbs (`W`) are never verbs; otherwise verb
 lemma frequency must beat other lemmas (`mačiau` yes, `metu` no). A rule-built
@@ -175,8 +178,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - vs Hunspell lt_LT: fewer false alarms on lowercase words (2,018 vs 2,483 tokens),
   better diacritic fixes (#1 correct 56.7% vs 40.0%), worse on keyboard typos
   (detect 89.3 vs 95.3%, #1 70.0 vs 76.0%).
-- Restoration (all diacritics stripped, 300 sentences): 59.7% → 62.8% with
-  context rules; words valid without diacritics (29%) are the ceiling for a
+- Restoration (all diacritics stripped, 300 sentences): 63.1% → 65.8% with
+  context rules (was 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
   checker; a most-frequent-spelling baseline gets 71.9%.
 - Rust: load 22 ms, correct word 0.001 ms, misspelling + suggestions ~0.8 ms,
   sentence ~1.6 ms (Mac). Phone (Fold7): 0.05–0.8 ms valid words, 6–17 ms
@@ -219,10 +222,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - The frequency corpus (600 articles, 173k words) is too small for the rare-twin
   rule and for ranking; a full Wikipedia dump would help a lot.
 
-- **Verb transitivity lexicon** (from a corpus or verb flags): would allow
-  `Radau nukritusia sagute` → `nukritusią sagutę` (object of a 3rd/1st person
-  verb in instrumental). Motion verbs take instrumental (`einu gatve`), so it
-  can't be a blanket rule.
+- **Verb transitivity**: a small hand list (TRANSITIVE_VERBS) exists; a corpus-derived
+  one would cover more. Still open: `Radau nukritusia sagute` (participles end the
+  phrase, and `sagute` is instrumental-only so it needs the acc diacritic variant).
 - Agreement across a whole phrase: `dar viena nukritusią sagutę` → `vieną`
   (pronoun/numeral before adj+noun).
 - Bigger frequency corpus (full Wikipedia dump) and word-pair counts for ranking
@@ -230,6 +232,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - ispell-lt has no plain reflexive-only verbs (džiaugtis, juoktis, elgtis, domėtis;
   only apsidžiaugti etc. in lietuviu.ivpk). Added to data/extra.txt; others may be
   missing too: check 1sg `-uosi` forms of common ones.
+- ispell-lt lists some pronouns as nouns too (`šita/D`, `kita/D`, `tokia/ND`), which hides
+  them from agreement. `-word/FLAGS` in data/extra.txt drops such an entry.
+- The keyboard fixer's fold keeps `y` (it is a key): i/y changes are never auto-applied.
 - Lexicon gaps: loanwords and names (`klipas`, `singlas`); induce stems from a
   corpus by finding multiple forms of a guessed paradigm.
 - Keyboard: completions for half-typed words (now we show corrections);
@@ -254,3 +259,4 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
    compensation for HeliBoard's normalisation
 7. keyboard: fixes survive punctuation and user history (HeliBoard fork)
 8. reflexive-only verbs, i/y cost, case requirements prefer candidates agreeing with the adjective
+9. transitive objects, indirect-question commas, flat diacritic cost, pronoun-noun cleanup

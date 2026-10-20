@@ -13,7 +13,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUST = [str(ROOT / "rust/target/release/varnele"), "--data", str(ROOT / "data/varnele.bin")]
-FOLD = str.maketrans("ąčęėįyšųūž", "aceeiisuuz")
+FOLD = str.maketrans("ąčęėįšųūž", "aceeisuuz")   # y is its own key, not a diacritic
 SAFE_RULES = {"case", "agreement", "quantity", "negation", "relative", "object", "subject"}
 
 

@@ -36,6 +36,20 @@ fn near(a: char, b: char) -> bool {
 }
 
 /// Damerau-Levenshtein with cheap same-class substitutions.
+/// Cost of a same-length fix that only changes diacritics (and i/y). If nothing was typed
+/// with diacritics, how many are missing says nothing: one counts like many, and frequency
+/// decides (turetu -> turėtų, not the rare turėtu).
+fn diacritic_cost(word: &str, cand: &str) -> f64 {
+    if word.chars().any(|c| "ąčęėįšųūž".contains(c)) {
+        return cost(word, cand);
+    }
+    let iy = |a: char, b: char| (a == 'i' && b == 'y') || (a == 'y' && b == 'i');
+    let pairs = || word.chars().zip(cand.chars());
+    let diacritics = pairs().filter(|&(a, b)| a != b && !iy(a, b)).count();
+    let swaps = pairs().filter(|&(a, b)| iy(a, b)).count();
+    (if diacritics > 0 { 0.3 } else { 0.0 }) + 0.6 * swaps as f64
+}
+
 pub fn cost(a: &str, b: &str) -> f64 {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -116,7 +130,7 @@ impl Analyzer {
         let f = *self.data.freq.get(&cl).unwrap_or(&0);
         let bonus = 0.12 * (1.0 + f as f64).log10() + 0.1 * (1.0 + lf as f64).log10();
         if fold(&cl) == fold(word) {
-            0.1 + 0.5 * cost(word, &cl) - bonus
+            0.1 + 0.5 * diacritic_cost(word, &cl) - bonus
         } else {
             cost(word, &cl) - bonus
         }

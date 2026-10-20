@@ -1,5 +1,5 @@
 # Our own additions to the ispell-lt lexicon (UTF-8, same "word/FLAGS" syntax).
-# Lines starting with "-" remove a generated form.
+# Lines starting with "-" remove a generated form; "-word/FLAGS" removes a whole entry.
 
 # būti: suppletive present tense (3rd person "yra" is listed in ispell-lt)
 esa/ENX
@@ -22,3 +22,8 @@ elgė/PRSXr
 domėti/TRSXrw
 domi/EOSXrw
 domėjo/POSXrw
+
+# pronouns that ispell-lt also lists as nouns: the noun reading hides them from agreement
+-šita/D
+-kita/D
+-tokia/ND

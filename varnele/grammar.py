@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 from .phonology import fold
-from .suggest import _load_freq
+from .suggest import _cost, _load_freq
 
 WORD = re.compile(r"[^\W\d_]+(?:[-‑][^\W\d_]+)*")
 FINITE = {"prs", "pst", "pstf", "fut", "cond", "imp", "inf"}
@@ -77,6 +77,24 @@ TIME_LEMMAS = {"diena", "naktis", "savaitė", "mėnuo", "metai", "valanda", "min
                "pusmetis", "dešimtmetis", "šimtmetis", "amžius", "laikotarpis", "popietė"}
 TIME_WORDS = {"visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "ištisas"}
 # Linking verbs take a nominative or instrumental, not an object.
+# Verbs whose object is practically never a bare instrumental, so "matau viena klaida" is
+# an accusative typed without diacritics (motion verbs do take one: einu gatve). Principal
+# parts, matched by ending so prefixed entries count (pamatyti, surado). Verbs that take an
+# instrument (rašau ranka, valgau šakute) stay out.
+TRANSITIVE_VERBS = ("matyti", "mato", "matė", "rasti", "randa", "rado", "turėti", "turi", "turėjo",
+                    "gauti", "gauna", "gavo", "pirkti", "perka", "pirko", "žinoti", "žino", "žinojo",
+                    "mylėti", "myli", "mylėjo", "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko")
+# words that may stand between a verb and its object: matau dar vieną klaidą
+OBJECT_SKIP = {"dar", "jau", "vėl", "irgi", "tik", "net"}
+# verbs of seeing, knowing and saying that take an indirect question: matau, ką man rašo
+# (principal parts, matched by ending so prefixed entries count)
+QUESTION_VERBS = ("matyti", "mato", "matė", "žinoti", "žino", "žinojo", "suprasti", "supranta", "suprato",
+                  "sakyti", "sako", "sakė", "klausti", "klausia", "klausė", "girdėti", "girdi", "girdėjo",
+                  "galvoti", "galvoja", "galvojo", "manyti", "mano", "manė", "aiškinti", "aiškina", "aiškino",
+                  "rodyti", "rodo", "rodė", "pasakoti", "pasakoja", "pasakojo")
+# these start a clause, they are not the object: manau, kas ... / žinau, kuris ...
+CLAUSE_WORDS = {"kas", "kuris", "kuri", "kurie", "kurios", "koks", "kokia", "kokie", "kokios"}
+
 COPULAS = {"būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
            "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė",
            "gimsta", "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "pasidaryti",
@@ -310,8 +328,10 @@ class Grammar:
     def variants_of(self, w):
         """Other real words spelled like w apart from diacritics."""
         if w not in self._var:
-            self._var[w] = sorted(f for f in self.an.folded_forms(fold(w))
-                                  if f.lower() != w and self.an._analyze_exact(f))
+            # closest first: šita -> šitą before sytą (y is its own key)
+            self._var[w] = sorted((f for f in self.an.folded_forms(fold(w))
+                                   if f.lower() != w and self.an._analyze_exact(f)),
+                                  key=lambda f: (_cost(w, f.lower()), f))
         return self._var[w]
 
     # ------------------------------------------------------------------
@@ -431,6 +451,28 @@ class Grammar:
                 add(Issue(w.start, w.end, w.text, "relative",
                           f"relative pronoun after '{prev.text}'", [w.cap(c) for c in cands]))
 
+        # 7. comma before an indirect question after a verb of seeing, knowing or saying:
+        #    matau, ką man rašo / nežinau, kur jis gyvena (not: ką nors, ką tik)
+        for i in range(1, len(toks)):
+            w, prev = toks[i], toks[i - 1]
+            if w.lower not in INTERROGATIVES or not adjacent[i] or w.text[:1].isupper():
+                continue
+            nxt = toks[i + 1].lower if i + 1 < len(toks) and adjacent[i + 1] else ""
+            if nxt in ("nors", "tik", "ne"):
+                continue
+            pa = self.analyses(prev.text)
+            if not (any(finite(a) and a.lemma.endswith(QUESTION_VERBS) for a in pa) and self.mostly_verb(pa)):
+                continue
+            j, verb_follows = i + 1, False       # the question needs a verb of its own
+            while j < len(toks) and j <= i + 5 and adjacent[j]:
+                an_j = self.analyses(toks[j].text)
+                if any(finite(a) for a in an_j) and self.mostly_verb(an_j):
+                    verb_follows = True
+                    break
+                j += 1
+            if verb_follows:
+                add(Issue(w.start, w.end, w.text, "comma", f"comma needed before '{w.text}'", [", " + w.text]))
+
         # 5. verbs: negation + genitive, subject-verb agreement, objects of 1st/2nd person
         for i, w in enumerate(toks):
             if i + 1 >= len(toks) or not adjacent[i + 1]:
@@ -471,11 +513,16 @@ class Grammar:
             # objects after a 1st/2nd person verb can't be its subject: matau namas -> namą
             if (persons and persons <= {"1sg", "2sg", "1pl", "2pl"} and not copula
                     and not negated and not any(a.tag.endswith(".refl") for a in verbs)):
-                span = phrase(i)
-                if span and span[-1].is_noun:
+                k = i
+                while k + 1 < len(toks) and adjacent[k + 1] and toks[k + 1].lower in OBJECT_SKIP:
+                    k += 1
+                span = phrase(k)
+                transitive = any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)
+                allowed = {"nom", "voc", "ins"} if transitive else {"nom", "voc"}
+                if span and span[-1].is_noun and span[0].lower not in CLAUSE_WORDS:
                     for x in span:
                         cases = {r.case for r in x.own}
-                        if cases and cases <= {"nom", "voc"}:
+                        if cases and cases <= allowed and cases & {"nom", "voc"}:
                             fix = self.reinflect(x, lambda t: t.endswith((".nom", ".voc")) and ".voc" not in t,
                                                  case="acc")
                             if fix:
@@ -507,6 +554,7 @@ class Grammar:
                 continue
             if not (a.is_adj and n.is_noun) or a.can_be_verb or not (a.known or n.known):
                 continue
+            no_gen = False
             if a.lower in ("vienas", "viena", "vieni", "vienos"):
                 continue          # viena kitą = each other
             if n.can_be("gen") and not a.can_be("gen"):
@@ -516,9 +564,12 @@ class Grammar:
                 while (j + 1 < len(toks) and adjacent[j + 1] and toks[j].known
                        and toks[j].can_be("gen") and toks[j + 1].is_noun):
                     j += 1
-                if j == i or toks[j].can_be("gen") or not toks[j].known:
+                if j > i and not toks[j].can_be("gen") and toks[j].known:
+                    n = toks[j]
+                elif j > i or not any(r.pos == "noun" and r.case != "gen" for r in n.own):
                     continue
-                n = toks[j]
+                else:
+                    no_gen = True       # no head follows: not a modifier (šita žmogų -> šitą)
             # A participle before a noun is usually an attribute (nukritusią sagutę), but it
             # can also take an object (praėjusi advokatūrą), a place (einanti sakinio gale)
             # or a predicate (tapusią vienuole).
@@ -528,7 +579,7 @@ class Grammar:
             if n.start in issues:
                 continue
             ar = [r for r in a.pos_readings() if r.pos == "adj"]
-            nr = [r for r in n.pos_readings() if r.pos == "noun"]
+            nr = [r for r in n.pos_readings() if r.pos == "noun" and not (no_gen and r.case == "gen")]
             if a.known and n.known and any(_agree(x, y) for x in ar for y in nr):
                 continue
             fix_n = [n.cap(f) for f, rs in n.variants

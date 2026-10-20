@@ -30,7 +30,7 @@ SPOKEN = {"valgyt": "valgyti", "buvom": "buvome", "jaučias": "jaučiasi", "moky
 
 FIXES = {"sviesa": "šviesa", "ivikis": "įvykis", "isvaziavo": "išvažiavo",
          "nesidziaugia": "nesidžiaugia", "vilniaus": "Vilniaus", "rasyt": "rašyti",
-         "sita": "šita"}   # y is its own key: not syta
+         "sita": "šita", "turetu": "turėtų"}   # y is its own key: not syta
 
 
 class Morphology(unittest.TestCase):

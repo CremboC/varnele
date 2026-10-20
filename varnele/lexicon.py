@@ -59,7 +59,7 @@ def _parse(lines):
 
 def load():
     """Return (entries, blacklist). entries: list of (lemma, kind, flags)."""
-    seen, entries, blacklist = set(), [], set()
+    seen, entries, blacklist, dropped = set(), [], set(), set()
     sources = []
     for name in ISPELL_FILES:
         text = (ISPELL / f"lietuviu.{name}").read_bytes().decode("iso-8859-13")
@@ -67,7 +67,9 @@ def load():
     if EXTRA.exists():
         extra = []
         for line in EXTRA.read_text("utf-8").splitlines():
-            if line.startswith("-"):
+            if line.startswith("-") and "/" in line:     # -šita/D: drop a wrong lexicon entry
+                dropped.add(next(_parse([line[1:]])))
+            elif line.startswith("-"):
                 blacklist.add(line[1:].split("#", 1)[0].strip())
             else:
                 extra.append(line)
@@ -75,7 +77,7 @@ def load():
     for lines in sources:
         for word, flags in _parse(lines):
             key = (word, flags)
-            if key in seen:
+            if key in seen or key in dropped:
                 continue
             seen.add(key)
             entries.append((word, kind_of(flags), flags))

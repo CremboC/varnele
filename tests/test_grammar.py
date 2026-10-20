@@ -13,6 +13,10 @@ def findings(text):
 
 # (sentence, word, rule, expected first suggestion)
 FLAGGED = [
+    ("Manau, kad šita žmogų reikia aptarti.", "šita", "agreement", "šitą"),   # žmogų is not a genitive here
+    ("Ir aš matau dar viena klaida.", "viena", "object", "vieną"),            # transitive verb, skips "dar"
+    ("Ir aš matau dar viena klaida.", "klaida", "object", "klaidą"),
+    ("Aš matau ką man rašo telefonas.", "ką", "comma", ", ką"),               # indirect question
     ("Kodėl nepataiso visų zodziou?", "zodziou", "unknown", "žodžių"),   # agree with visų
     ("Grįžau prieš pora dienų.", "pora", "case", "porą"),
     ("Nuėjome į didele kavine.", "didele", "case", "didelę"),
@@ -45,6 +49,10 @@ FLAGGED = [
 ]
 
 CORRECT = [
+    "Einu gatve namo.",                       # motion verb: instrumental is right
+    "Mačiau ką tik atėjusį žmogų.",
+    "Žinau ką nors apie tai.",
+    "Aš manau, kas bus toliau.",               # no object fix on a clause word
     "Grįžau prieš porą dienų.",
     "Nuėjome į didelę kavinę prie upės.",
     "Ten buvo daug vaikų ir keletas suaugusiųjų.",

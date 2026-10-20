@@ -46,6 +46,17 @@ def _cost(a, b):
     return d[n][m]
 
 
+def _diacritic_cost(word, cand):
+    """Cost of a same-length fix that only changes diacritics (and i/y). If nothing was
+    typed with diacritics, how many are missing says nothing: one counts like many,
+    and frequency decides (turetu -> turėtų, not the rare turėtu)."""
+    if any(c in "ąčęėįšųūž" for c in word):
+        return _cost(word, cand)
+    diacritics = sum(1 for a, b in zip(word, cand) if a != b and {a, b} != {"i", "y"})
+    swaps = sum(1 for a, b in zip(word, cand) if {a, b} == {"i", "y"})
+    return (0.3 if diacritics else 0.0) + 0.6 * swaps
+
+
 def _edits1(w, alphabet):
     splits = [(w[:i], w[i:]) for i in range(len(w) + 1)]
     out = set()
@@ -88,7 +99,7 @@ class Suggester:
         lf = max((self.lemma_freq.get(a.lemma.lower(), 0) for a in self.an._analyze_exact(cand)), default=0)
         bonus = 0.12 * math.log10(1 + self.freq.get(cand.lower(), 0)) + 0.1 * math.log10(1 + lf)
         if fold(cand.lower()) == fold(word):
-            return 0.1 + 0.5 * _cost(word, cand.lower()) - bonus
+            return 0.1 + 0.5 * _diacritic_cost(word, cand.lower()) - bonus
         return _cost(word, cand.lower()) - bonus
 
     def _folded_forms(self, fw):

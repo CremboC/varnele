@@ -104,6 +104,27 @@ const TIME_LEMMAS: &[&str] = &[
     "šimtmetis", "amžius", "laikotarpis", "popietė",
 ];
 const TIME_WORDS: &[&str] = &["visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "ištisas"];
+/// Verbs whose object is practically never a bare instrumental, so "matau viena klaida" is an
+/// accusative typed without diacritics (motion verbs do take one: einu gatve). Principal parts,
+/// matched by ending so prefixed entries count (pamatyti, surado). Verbs that take an
+/// instrument (rašau ranka, valgau šakute) stay out.
+const TRANSITIVE_VERBS: &[&str] = &[
+    "matyti", "mato", "matė", "rasti", "randa", "rado", "turėti", "turi", "turėjo", "gauti", "gauna",
+    "gavo", "pirkti", "perka", "pirko", "žinoti", "žino", "žinojo", "mylėti", "myli", "mylėjo",
+    "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko",
+];
+/// Words that may stand between a verb and its object: matau dar vieną klaidą
+const OBJECT_SKIP: &[&str] = &["dar", "jau", "vėl", "irgi", "tik", "net"];
+/// Verbs of seeing, knowing and saying that take an indirect question: matau, ką man rašo
+/// (principal parts, matched by ending so prefixed entries count)
+const QUESTION_VERBS: &[&str] = &[
+    "matyti", "mato", "matė", "žinoti", "žino", "žinojo", "suprasti", "supranta", "suprato", "sakyti",
+    "sako", "sakė", "klausti", "klausia", "klausė", "girdėti", "girdi", "girdėjo", "galvoti", "galvoja",
+    "galvojo", "manyti", "mano", "manė", "aiškinti", "aiškina", "aiškino", "rodyti", "rodo", "rodė",
+    "pasakoti", "pasakoja", "pasakojo",
+];
+/// These start a clause, they are not the object: manau, kas ... / žinau, kuris ...
+const CLAUSE_WORDS: &[&str] = &["kas", "kuris", "kuri", "kurie", "kurios", "koks", "kokia", "kokie", "kokios"];
 const COPULAS: &[&str] = &[
     "būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
     "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė", "gimsta",
@@ -264,12 +285,16 @@ impl<'a> G<'a> {
         if let Some(v) = self.c.variants.borrow().get(w) {
             return v.clone();
         }
-        let v: Vec<String> = self
+        let mut v: Vec<(f64, String)> = self
             .an
             .folded_forms(&fold(w))
             .into_iter()
             .filter(|f| lower(f) != w && !self.an.analyze_exact(f).is_empty())
+            .map(|f| (crate::suggest::cost(w, &lower(&f)), f))
             .collect();
+        // closest first: šita -> šitą before sytą (y is its own key)
+        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then_with(|| a.1.cmp(&b.1)));
+        let v: Vec<String> = v.into_iter().map(|(_, f)| f).collect();
         self.c.variants.borrow_mut().insert(w.to_string(), v.clone());
         v
     }
@@ -602,6 +627,43 @@ impl Grammar {
             }
         }
 
+        // 7. comma before an indirect question after a verb of seeing, knowing or saying:
+        //    matau, ką man rašo / nežinau, kur jis gyvena (not: ką nors, ką tik)
+        for i in 1..toks.len() {
+            let (w, prev) = (&toks[i], &toks[i - 1]);
+            if !INTERROGATIVES.contains(&w.lower.as_str())
+                || !adjacent[i]
+                || w.text.chars().next().is_some_and(|c| c.is_uppercase())
+            {
+                continue;
+            }
+            let nxt = if i + 1 < toks.len() && adjacent[i + 1] { toks[i + 1].lower.as_str() } else { "" };
+            if ["nors", "tik", "ne"].contains(&nxt) {
+                continue;
+            }
+            let pa = g.analyses(&prev.text);
+            if !(pa.iter().any(|a| g.finite(a) && QUESTION_VERBS.iter().any(|v| a.lemma.ends_with(v))) && g.mostly_verb(&pa)) {
+                continue;
+            }
+            // the question needs a verb of its own
+            let mut verb_follows = false;
+            let mut j = i + 1;
+            while j < toks.len() && j <= i + 5 && adjacent[j] {
+                let an_j = g.analyses(&toks[j].text);
+                if an_j.iter().any(|a| g.finite(a)) && g.mostly_verb(&an_j) {
+                    verb_follows = true;
+                    break;
+                }
+                j += 1;
+            }
+            if verb_follows {
+                add(&mut issues, Issue {
+                    start: w.start, end: w.end, word: w.text.clone(), rule: "comma",
+                    message: format!("comma needed before '{}'", w.text), suggestions: vec![format!(", {}", w.text)],
+                });
+            }
+        }
+
         // 5. verbs: negation + genitive, objects of 1st/2nd person verbs
         for (i, w) in toks.iter().enumerate() {
             if i + 1 >= toks.len() || !adjacent[i + 1] {
@@ -664,11 +726,23 @@ impl Grammar {
                 && !negated
                 && !verbs.iter().any(|a| g.tag(a).ends_with(".refl"))
             {
-                let span = phrase(i);
-                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) {
+                let mut k = i;
+                while k + 1 < toks.len() && adjacent[k + 1] && OBJECT_SKIP.contains(&toks[k + 1].lower.as_str()) {
+                    k += 1;
+                }
+                let span = phrase(k);
+                let transitive = verbs.iter().any(|a| TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)));
+                let allowed: &[&str] = if transitive { &["nom", "voc", "ins"] } else { &["nom", "voc"] };
+                if !span.is_empty()
+                    && toks[*span.last().unwrap()].is_noun(&g)
+                    && !CLAUSE_WORDS.contains(&toks[span[0]].lower.as_str())
+                {
                     for &x in &span {
                         let t = &toks[x];
-                        if !t.own.is_empty() && t.own.iter().all(|r| r.case == "nom" || r.case == "voc") {
+                        if !t.own.is_empty()
+                            && t.own.iter().all(|r| allowed.contains(&r.case))
+                            && t.own.iter().any(|r| r.case == "nom" || r.case == "voc")
+                        {
                             let fix = g.reinflect(t, |tg| tg.ends_with(".nom"), Some("acc"));
                             if !fix.is_empty() {
                                 add(&mut issues, Issue {
@@ -725,15 +799,19 @@ impl Grammar {
             if ["vienas", "viena", "vieni", "vienos"].contains(&a.lower.as_str()) {
                 continue;
             }
+            let mut no_gen = false;
             if n.can_be(&g, "gen") && !a.can_be(&g, "gen") {
                 let mut j = i;
                 while j + 1 < toks.len() && adjacent[j + 1] && toks[j].known && toks[j].can_be(&g, "gen") && toks[j + 1].is_noun(&g) {
                     j += 1;
                 }
-                if j == i || toks[j].can_be(&g, "gen") || !toks[j].known {
+                if j > i && !toks[j].can_be(&g, "gen") && toks[j].known {
+                    n = &toks[j];
+                } else if j > i || !n.own.iter().any(|r| r.pos == Pos::Noun && r.case != "gen") {
                     continue;
+                } else {
+                    no_gen = true; // no head follows: not a modifier (šita žmogų -> šitą)
                 }
-                n = &toks[j];
             }
             // participle as attribute (nukritusią sagutę), not with an object, place or predicate
             if a.is_participle(&g)
@@ -747,7 +825,8 @@ impl Grammar {
                 continue;
             }
             let ar: Vec<Reading> = a.pos_readings(&g).into_iter().filter(|r| r.pos == Pos::Adj).collect();
-            let nr: Vec<Reading> = n.pos_readings(&g).into_iter().filter(|r| r.pos == Pos::Noun).collect();
+            let nr: Vec<Reading> =
+                n.pos_readings(&g).into_iter().filter(|r| r.pos == Pos::Noun && !(no_gen && r.case == "gen")).collect();
             if a.known && n.known && ar.iter().any(|x| nr.iter().any(|y| agree(x, y))) {
                 continue;
             }
