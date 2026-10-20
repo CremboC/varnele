@@ -38,6 +38,9 @@ FLAGGED = [
     ("Mes skaito knygas.", "skaito", "subject", "skaitome"),
     ("Jis einu namo.", "einu", "subject", "eina"),
     ("Vakar mačiau namas.", "namas", "object", "namą"),
+    ("Kuriu tai kas reikalinga.", "kas", "comma", ", kas"),          # relative clause after tai
+    ("Darau viską ką galiu.", "ką", "comma", ", ką"),
+    ("Kodėl jis ziuri?", "ziuri", "unknown", "žiūri"),               # a verb after jis, not žiuri (jury)
     ("Nusipirkau naujas automobilis.", "automobilis", "object", "automobilį"),
     ("Radau nukritusią sagute.", "sagute", "agreement", "sagutę"),
     ("Pagrindinė kylanti grėsme yra kirtimai.", "grėsme", "agreement", "grėsmė"),
@@ -134,6 +137,11 @@ CORRECT = [
     "Aš labai noriu valgyti. Aš ir jis buvome ten.",
     "Tai plunksna, kuria rašau. Tai knyga, kuria didžiuojuosi. Tai knyga, kurios neskaičiau.",
     "Mačiau tuo metu daug žmonių. Matėme tapusią vienuole seserį.",
+    "Jis neatėjo laiku.",                     # laiku = on time, not an object
+    "Įmonė kuria ir parduoda baldus. Įmonė kuria baldus. Ji kuria jį.",   # the verb kurti
+    "Režisierė, kuri kuria vaizdo klipus.",
+    "Dainas kuriu tai, kas reikalinga. Žodžių kuriu ir rašau daug.",
+    "Tai kas dabar?",
 ]
 
 

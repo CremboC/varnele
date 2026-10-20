@@ -127,6 +127,11 @@ const QUESTION_VERBS: &[&str] = &[
 const CLAUSE_WORDS: &[&str] = &["kas", "kuris", "kuri", "kurie", "kurios", "koks", "kokia", "kokie", "kokios"];
 /// Accusative forms of kuris: knyga, kurią skaičiau
 const KURIS_ACC: &[&str] = &["kurį", "kurią", "kuriuos", "kurias"];
+// a demonstrative followed by a kas-word starts a relative clause: tai, kas reikalinga
+const DEMONSTRATIVES: &[&str] = &["tai", "tas", "ta", "tą", "to", "viskas", "viską", "visko"];
+const KAS_FORMS: &[&str] = &["kas", "ką", "ko", "kam", "kuo"];
+// an object right after kuria/kuriu makes it the verb kurti: kuriu tai, kas reikalinga
+const VERB_OBJECTS: &[&str] = &["tai", "tą", "viską", "jį", "ją", "juos", "jas"];
 /// Parenthetical words, set off by commas: Deja, neatėjo. / Jis, beje, sutiko.
 const INTRO_ANYWHERE: &[&str] = &["deja", "beje", "pavyzdžiui"];
 const INTRO_START: &[&str] = &["deja", "beje", "pavyzdžiui", "vadinasi", "žinoma"];
@@ -549,6 +554,27 @@ impl Grammar {
             add(issues, Issue { start: w.start, end: w.end, word: w.text.clone(), rule, message: why.to_string(), suggestions: fixes });
         };
 
+        let verb_at = |k: usize| {
+            let an_k = g.analyses(&toks[k].text);
+            an_k.iter().any(|a| g.finite(a)) && g.mostly_verb(&an_k)
+        };
+        let has_finite = |k: usize| g.analyses(&toks[k].text).iter().any(|a| g.finite(a));
+        // kuria / kuriu as the verb kurti, not kuris: Įmonė kuria ir parduoda, (aš) kuriu tai, kas reikalinga
+        let verb_with_object = |i: usize| {
+            if !has_finite(i) || i + 1 >= toks.len() || !adjacent[i + 1] {
+                return false;
+            }
+            let nx = &toks[i + 1];
+            if VERB_OBJECTS.contains(&nx.lower.as_str()) || (i > 0 && adjacent[i] && KURIS.contains(&toks[i - 1].lower.as_str())) {
+                return true; // kuri kuria, kurie kuria: the relative pronoun is the one before
+            }
+            if nx.known && !nx.own.is_empty() && nx.own.iter().all(|r| r.pos == Pos::Noun && r.case == "acc") {
+                return true; // kuria baldus
+            }
+            // kuria ir parduoda; at the end of the text wait for the next word (the keyboard types on)
+            ["ir", "bei", "arba"].contains(&nx.lower.as_str()) && (i + 2 == toks.len() || adjacent[i + 2] && verb_at(i + 2))
+        };
+
         for (i, w) in toks.iter().enumerate() {
             let nxt_adjacent = i + 1 < toks.len() && adjacent[i + 1];
             // 1. prepositions (also recognised without diacritics: pries, is, i, uz)
@@ -601,7 +627,8 @@ impl Grammar {
                     || chars.get(w.end) == Some(&'.')
                     || ((lw == "bet" || lw == "kai") && indefinite)
                     || (lw == "nors" && (INTERROGATIVES.contains(&prev) || KURIS.contains(&prev) || nxt == "ir"))
-                    || (is_kuris && (prev == "bet" || prev == "kai" || ["nors", "laikui", "laiką", "laiko"].contains(&nxt)));
+                    || (is_kuris && (prev == "bet" || prev == "kai" || verb_with_object(i)     // įmonė kuria ir parduoda
+                        || ["nors", "laikui", "laiką", "laiko"].contains(&nxt)));
                 if !skip {
                     add(&mut issues, Issue {
                         start: w.start, end: w.end, word: w.text.clone(), rule: "comma",
@@ -686,7 +713,7 @@ impl Grammar {
             let cands: Vec<String> = KURIS_FEATURES.iter()
                 .filter(|(k, feats)| fold(k) == fw && agrees(feats))
                 .map(|(k, _)| w.cap(k)).collect();
-            if cands.is_empty() {
+            if cands.is_empty() || verb_with_object(i) {
                 continue;
             }
             // the relative clause needs its own verb, else "kuriu" may be the verb ("dainas kuriu pats")
@@ -720,6 +747,21 @@ impl Grammar {
             }
             let nxt = if i + 1 < toks.len() && adjacent[i + 1] { toks[i + 1].lower.as_str() } else { "" };
             if ["nors", "tik", "ne"].contains(&nxt) {
+                continue;
+            }
+            // a relative clause after a demonstrative: kuriu tai, kas reikalinga / viską, ką turiu
+            // ("Tai kas dabar?" at the start of a sentence is a question)
+            if KAS_FORMS.contains(&w.lower.as_str())
+                && DEMONSTRATIVES.contains(&prev.lower.as_str())
+                && !nxt.is_empty()
+                && !(prev.lower == "tai" && (i < 2 || !adjacent[i - 1]))
+                && !(i >= 2 && adjacent[i - 1] && prep_cases(&toks[i - 2].lower).is_some())
+            {
+                add(&mut issues, Issue {
+                    start: w.start, end: w.end, word: w.text.clone(), rule: "comma",
+                    message: format!("comma needed before '{}' after '{}'", w.text, prev.text),
+                    suggestions: vec![format!(", {}", w.text)],
+                });
                 continue;
             }
             let pa = g.analyses(&prev.text);
@@ -762,11 +804,6 @@ impl Grammar {
             let l = t.lower.as_str();
             NO_COMMA_AFTER.contains(&l) || CLAUSE_STARTERS.contains(&l) || KURIS.contains(&l) || prep_cases(l).is_some()
         };
-        let verb_at = |k: usize| {
-            let an_k = g.analyses(&toks[k].text);
-            an_k.iter().any(|a| g.finite(a)) && g.mostly_verb(&an_k)
-        };
-
         for (i, w) in toks.iter().enumerate() {
             let nxt_adjacent = i + 1 < toks.len() && adjacent[i + 1];
             let lw = w.lower.as_str();
@@ -926,7 +963,10 @@ impl Grammar {
                         || t.is_quantity(&g)
                         || g.analyses(&t.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()))
                 });
-                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey {
+                // an adverb reading is not an object: neatėjo laiku (on time), not laikų
+                let adverbial = span.len() == 1
+                    && g.analyses(&toks[span[0]].text).iter().any(|a| matches!(g.tag(a), "W" | "Adv"));
+                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey && !adverbial {
                     for &x in &span {
                         let t = &toks[x];
                         let why = format!("after the negated verb '{}' use the genitive", w.text);
@@ -1021,6 +1061,21 @@ impl Grammar {
             }
             let v = &toks[k];
             if issues.contains_key(&v.start) {
+                continue;
+            }
+            if !v.known {
+                // an unknown word: candidates that are verbs of that person first
+                // (jis ziuri -> žiūri "looks", not žiuri "jury")
+                let fix: Vec<String> = v.variants(&g).iter()
+                    .filter(|(f, _)| g.analyses(f).iter().any(|a| g.finite(a) && g.parts(a)[2] == want))
+                    .map(|(f, _)| v.cap(f)).collect();
+                if !fix.is_empty() {
+                    add(&mut issues, Issue {
+                        start: v.start, end: v.end, word: v.text.clone(), rule: "context",
+                        message: format!("'{}' needs the {} form of the verb", pron.text, person_name(want)),
+                        suggestions: fix,
+                    });
+                }
                 continue;
             }
             let fin: Vec<Analysis> = g.analyses(&v.text).into_iter().filter(|a| g.finite(a)).collect();

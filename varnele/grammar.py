@@ -95,6 +95,11 @@ QUESTION_VERBS = ("matyti", "mato", "matė", "žinoti", "žino", "žinojo", "sup
                   "rodyti", "rodo", "rodė", "pasakoti", "pasakoja", "pasakojo")
 # these start a clause, they are not the object: manau, kas ... / žinau, kuris ...
 CLAUSE_WORDS = {"kas", "kuris", "kuri", "kurie", "kurios", "koks", "kokia", "kokie", "kokios"}
+# an object right after kuria/kuriu makes it the verb kurti: kuriu tai, kas reikalinga
+VERB_OBJECTS = {"tai", "tą", "viską", "jį", "ją", "juos", "jas"}
+# a demonstrative followed by a kas-word starts a relative clause: tai, kas reikalinga
+DEMONSTRATIVES = {"tai", "tas", "ta", "tą", "to", "viskas", "viską", "visko"}
+KAS_FORMS = {"kas", "ką", "ko", "kam", "kuo"}
 # accusative forms of kuris: knyga, kurią skaičiau
 KURIS_ACC = ("kurį", "kurią", "kuriuos", "kurias")
 
@@ -411,6 +416,23 @@ class Grammar:
                 return            # indeclinable word: nothing to check
             add(Issue(w.start, w.end, w.text, rule if w.known else "context", why, fixes))
 
+        def verb_at(k):
+            an_k = self.analyses(toks[k].text)
+            return any(finite(a) for a in an_k) and self.mostly_verb(an_k)
+
+        def verb_with_object(i):
+            """kuria / kuriu as the verb kurti, not kuris: Įmonė kuria ir parduoda,
+            (aš) kuriu tai, kas reikalinga."""
+            if not any(finite(a) for a in self.analyses(toks[i].text)) or i + 1 >= len(toks) or not adjacent[i + 1]:
+                return False
+            nx = toks[i + 1]
+            if nx.lower in VERB_OBJECTS or (i > 0 and adjacent[i] and toks[i - 1].lower in KURIS):
+                return True       # kuri kuria, kurie kuria: the relative pronoun is the one before
+            if nx.known and nx.own and all(r.pos == "noun" and r.case == "acc" for r in nx.own):
+                return True       # kuria baldus
+            # kuria ir parduoda; at the end of the text wait for the next word (the keyboard types on)
+            return nx.lower in ("ir", "bei", "arba") and (i + 2 == len(toks) or adjacent[i + 2] and verb_at(i + 2))
+
         for i, w in enumerate(toks):
             nxt_adjacent = i + 1 < len(toks) and adjacent[i + 1]
             # 1. prepositions (also recognised without diacritics: pries, is, i, uz)
@@ -442,6 +464,7 @@ class Grammar:
                         or (w.lower in ("bet", "kai") and indefinite)        # bet kas, kai kurie
                         or (w.lower == "nors" and (prev in INTERROGATIVES or nxt == "ir"))  # kas nors
                         or (w.lower in KURIS and (prev in ("bet", "kai")      # bet kuris
+                                                  or verb_with_object(i)            # įmonė kuria ir parduoda
                                                   or nxt in ("nors", "laikui", "laiką", "laiko"))))
                 if not skip:
                     add(Issue(w.start, w.end, w.text, "comma",
@@ -491,7 +514,7 @@ class Grammar:
                               f"'{toks[j].text}' takes an accusative object", [w.cap(c) for c in cands]))
                 continue
             cands = [k for k, feats in KURIS_FEATURES.items() if fold(k) == fw and agrees(feats)]
-            if not cands:
+            if not cands or verb_with_object(i):
                 continue
             # the relative clause needs a verb of its own, otherwise "kuriu" may be the
             # verb itself: "dainas kuriu pats" (I write songs myself)
@@ -514,6 +537,14 @@ class Grammar:
                 continue
             nxt = toks[i + 1].lower if i + 1 < len(toks) and adjacent[i + 1] else ""
             if nxt in ("nors", "tik", "ne"):
+                continue
+            # a relative clause after a demonstrative: kuriu tai, kas reikalinga / viską, ką turiu
+            # ("Tai kas dabar?" at the start of a sentence is a question)
+            if (w.lower in KAS_FORMS and prev.lower in DEMONSTRATIVES and nxt
+                    and not (prev.lower == "tai" and (i < 2 or not adjacent[i - 1]))
+                    and not (i >= 2 and adjacent[i - 1] and toks[i - 2].lower in PREPOSITIONS)):
+                add(Issue(w.start, w.end, w.text, "comma", f"comma needed before '{w.text}' after '{prev.text}'",
+                          [", " + w.text]))
                 continue
             pa = self.analyses(prev.text)
             if not (any(finite(a) and a.lemma.endswith(QUESTION_VERBS) for a in pa) and self.mostly_verb(pa)):
@@ -540,10 +571,6 @@ class Grammar:
 
         def connective(t):
             return t.lower in NO_COMMA_AFTER or t.lower in CLAUSE_STARTERS or t.lower in PREPOSITIONS
-
-        def verb_at(k):
-            an_k = self.analyses(toks[k].text)
-            return any(finite(a) for a in an_k) and self.mostly_verb(an_k)
 
         for i, w in enumerate(toks):
             nxt_adjacent = i + 1 < len(toks) and adjacent[i + 1]
@@ -656,7 +683,9 @@ class Grammar:
                 span = phrase(i)
                 timey = any(x.lower in TIME_WORDS or x.is_quantity() or any(
                             a.lemma in TIME_LEMMAS for a in self.analyses(x.text)) for x in span)
-                if span and span[-1].is_noun and not timey:
+                # an adverb reading is not an object: neatėjo laiku (on time), not laikų
+                adverbial = len(span) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(span[0].text))
+                if span and span[-1].is_noun and not timey and not adverbial:
                     for x in span:
                         cases = {r.case for r in x.own}
                         why = f"after the negated verb '{w.text}' use the genitive"
@@ -715,6 +744,15 @@ class Grammar:
                 k += 1
             v = toks[k]
             if v.start in issues:
+                continue
+            if not v.known:
+                # an unknown word: candidates that are verbs of that person first
+                # (jis ziuri -> žiūri "looks", not žiuri "jury")
+                fix = [v.cap(f) for f, _ in v.variants
+                       if any(finite(a) and a.tag.split(".")[2] == want for a in self.analyses(f))]
+                if fix:
+                    add(Issue(v.start, v.end, v.text, "context",
+                              f"'{pron.text}' needs the {PERSON_NAMES[want]} form of the verb", fix))
                 continue
             fin = [a for a in self.analyses(v.text) if finite(a)]
             if not fin or any(a.tag.split(".")[2] == want for a in fin):
