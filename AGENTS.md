@@ -236,6 +236,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   missing too: check 1sg `-uosi` forms of common ones.
 - ispell-lt lists some pronouns as nouns too (`šita/D`, `kita/D`, `tokia/ND`), which hides
   them from agreement. `-word/FLAGS` in data/extra.txt drops such an entry.
+- Lemma frequencies: a listed particle/preposition reading (tag W) takes the whole count
+  of its form, else `iš` made the verb `ižti` "common" (1175) and `neisiu` was "fixed"
+  to `neišiu` by the rare-twin rule. Names share lowercased lemma keys with verbs
+  (`Klausė`/`klausė`), so a capitalised suggestion for lowercase input costs +0.3.
+- The keyboard inserts a comma only once the next word is typed (`pirk bet` → `bet ką`).
+- `adb install` waits forever when wireless adb has dropped: reconnect first
+  (`adb mdns services`, then `adb connect HOST:PORT`).
 - HeliBoard capitalises sentences only if the text field asks for it
   (TYPE_TEXT_FLAG_CAP_SENTENCES); the test app's field now does.
 - The keyboard fixer's fold keeps `y` (it is a key): i/y changes are never auto-applied.

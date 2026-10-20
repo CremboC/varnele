@@ -52,7 +52,8 @@ def fix_sentence(sentence):
         s = list(sentence)
         for f in sorted(findings(sentence), key=lambda f: -f["start"]):
             if f["rule"] == "comma":
-                if f["start"] >= 2 and sentence[f["start"] - 1] == " " and sentence[f["start"] - 2].isalpha():
+                # wait for the next word: "pirk bet" may become "pirk bet ką" (no comma)
+                if any(ch.isalpha() for ch in sentence[f["end"]:]) and f["start"] >= 2 and sentence[f["start"] - 1] == " " and sentence[f["start"] - 2].isalpha():
                     s.insert(f["start"] - 1, ",")
             elif f["rule"] in SAFE_RULES and f["suggestions"]:
                 fix = f["suggestions"][0]

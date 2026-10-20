@@ -177,9 +177,10 @@ impl Analyzer {
                 if let Some(base) = spoken.get(&c) {
                     sc = sc.min(self.score(base, &c) + 0.05);
                 }
-                // a lowercase word is rarely a misspelt name: dvara -> dvarą, not Dvarą
+                // a lowercase word is rarely a misspelt name: dvara -> dvarą, not Dvarą;
+                // 0.3: a name can share a lemma key with a verb (Klausė / klausė, past of klausti)
                 if first_upper(&c) && word_lower_first {
-                    sc += 0.15;
+                    sc += 0.3;
                 }
                 (sc, c)
             })
