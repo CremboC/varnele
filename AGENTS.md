@@ -183,7 +183,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     and testing teaches it the uncorrected words (`nauja sakini` stayed).
   - gesture typing (batch mode) is left to binary dictionaries
 - `inputlogic/VarneleSentenceFixer.kt`, hooked at the end of
-  `InputLogic.handleSeparatorEvent`: after each finished word, re-check the
+  `InputLogic.handleSeparatorEvent` and `onPickSuggestionManually` (a picked suggestion
+  finishes a word too; the picked word itself is left as chosen): after each finished word, re-check the
   current sentence and apply **only** diacritic-only grammar fixes and missing
   commas, two passes, rewriting from the first changed character through
   `RichInputConnection`. It first re-checks the word the separator just finished and
