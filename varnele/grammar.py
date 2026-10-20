@@ -24,7 +24,7 @@ PREPOSITIONS = {
     **dict.fromkeys(["į", "per", "pro", "prieš", "apie", "pagal", "palei", "pas", "aplink"], {"acc"}),
     **dict.fromkeys(["iš", "be", "nuo", "prie", "iki", "ligi", "dėl", "ant", "virš", "tarp",
                      "anot", "pasak", "šalia", "vietoj", "netoli", "anapus", "šiapus", "abipus",
-                     "vidury", "vidur"], {"gen"}),
+                     "vidury", "vidur", "link"], {"gen"}),
     "už": {"gen", "acc"},
     "su": {"ins"},
     "sulig": {"ins"},
@@ -736,8 +736,8 @@ class Grammar:
             if not (a.is_adj and n.is_noun) or a.can_be_verb or not (a.known or n.known):
                 continue
             no_gen = False
-            if a.lower in ("vienas", "viena", "vieni", "vienos"):
-                continue          # viena kitą = each other
+            if a.lower in ("vienas", "viena", "vieni", "vienos") and n.lower.startswith("kit"):
+                continue          # viena kitą = each other (but: vienos eilutes -> eilutės)
             if n.can_be("gen") and not a.can_be("gen"):
                 # Genitive modifiers sit between an adjective and its noun:
                 # profesionalūs [Lietuvos cirko] artistai. Skip them to the head.

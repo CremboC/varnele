@@ -23,7 +23,7 @@ Keep it current when something changes.
 | Path | What |
 |---|---|
 | `~/git/varnele` | This repo. Python grammar "compiler", Rust runtime, Android spell-checker app, evaluations |
-| `~/git/HeliBoard` | Fork of github.com/Helium314/HeliBoard (GPL-3.0) with Varnelė as the Lithuanian dictionary. Local only; no GitHub fork yet. Its `AI_USAGE.md` forbids AI-generated upstream PRs: **never open PRs upstream from this work** |
+| `~/git/HeliBoard` | **Varnelė Klaviatūra (HeliBoard fork)**: fork of github.com/Helium314/HeliBoard (GPL-3.0) with Varnelė as the Lithuanian dictionary, at github.com/CremboC/HeliBoard, work on branch `varnele` (pushed). Remotes: `origin` = upstream Helium314/HeliBoard (pull only, never push), `fork` = CremboC/HeliBoard (push here). Upstream's `AI_USAGE.md` forbids AI-generated upstream PRs: **never open PRs upstream from this work** |
 
 Layout of this repo:
 
@@ -75,7 +75,7 @@ EOF
 Android (both projects): `JAVA_HOME=$HOME/.sdkman/candidates/java/current`,
 SDK `~/Library/Android/sdk`, adb `~/Library/Android/sdk/platform-tools/adb`.
 `cd android && ./gradlew installDebug`; HeliBoard: `cd ~/git/HeliBoard && ./gradlew assembleDebug`
-then `adb install -r app/build/outputs/apk/debug/HeliBoard_4.3-beta1-debug.apk`.
+then `adb install -r app/build/outputs/apk/debug/VarneleKlaviatura_4.3-beta1-debug.apk`.
 Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 
 ## Architecture and key decisions
@@ -115,9 +115,9 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 
 | Rule | Example | Main exceptions (each from a real false alarm) |
 |---|---|---|
-| case (prepositions) | `prieš pora` → `porą`, `į didele kavine` | genitive modifiers (`su lietuvių kultūra`), `apie` + quantity (`apie pusė`), numerals (`per šešiolika`), phrase must end in a noun, phrase stops at a word that can't agree (`už didžiausią | tuo metu`), participles end the phrase |
+| case (prepositions) | `prieš pora` → `porą`, `į didele kavine`, `link namu` → `namų` | genitive modifiers (`su lietuvių kultūra`), `apie` + quantity (`apie pusė`), numerals (`per šešiolika`), phrase must end in a noun, phrase stops at a word that can't agree (`už didžiausią | tuo metu`), participles end the phrase |
 | quantity | `daug vaiku` → `vaikų` | comparatives (`kiek silpnesnes`), only `kind == num` for -lika/-dešimt (not `Respublika`) |
-| agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų` | `viena kitą`; adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`) |
+| agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų` | `viena kitą` (only before a kitas form: `vienos eilutes` → `eilutės`); adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`) |
 | negation | `neturiu laiką` → `laiko`; a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas |
 | subject | `aš buvo` → `buvau`, `aš vakar buvo`, `jis jau einu` | pronoun + finite verb, up to 2 adverb/particle-only words between (not pronouns, connectives, prepositions, `ne`, `tai`); not a coordinated subject (`aš ir jis buvome`) |
 | object (1st/2nd person verb) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą` | copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`). After a transitive verb the phrase may hold participles and an instrumental-only word takes its accusative diacritic twin (`radau nukritusia sagute` → `nukritusią sagutę`) when the whole phrase is instrumental or the head is already accusative (keyboard order); same POS/number/gender (`tuo metu` ≠ `metų`); not `tapusią vienuole` |
@@ -129,8 +129,14 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 lemma frequency must beat other lemmas (`mačiau` yes, `metu` no). A rule-built
 prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
-## Keyboard (HeliBoard fork) design
+## Keyboard (Varnelė Klaviatūra, HeliBoard fork) design
 
+- Renamed "Varnelė Klaviatūra": app ID `dev.imbrasas.varnele.keyboard` (`.debug` for debug
+  builds), provider authorities under the same ID, so it installs next to HeliBoard.
+  Internal packages stay `helium314.keyboard.*`. Lithuanian is enabled first on a fresh
+  install. Credits are in the fork's README and the About screen.
+- Fork defaults on: key borders, vibration, number row, emoji key, language switch key.
+  A typed space is moved behind `. , ; : ! ?` (`tašką .` → `tašką. `).
 - `dictionary/VarneleDictionary.kt`: main dictionary for locale `lt`, prepended
   in `DictionaryFactory.getMainDictsForLocale`. Calls `Native.check(word, prevWords)`
   (Rust `keyboard_word`). HeliBoard autocorrects when
@@ -150,8 +156,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     0.9 − 0.4·typoCost for one typo, 0.05 otherwise; scores kept strictly decreasing.
   - **rare twin** (Rust `keyboard_word`, keyboard only): a valid word whose form and
     lemma never occur in the frequency corpus, with a diacritic-only twin whose
-    lemma does, gets the twin as a context fix (`sakini` → `sakinį`); vocative-only
-    twins rank last (`sakiny`).
+    lemma does, gets the twin as a context fix (`sakini` → `sakinį`). A twin that is only
+    a participle or a vocative is never kept (`testuoju` no longer → `tęstuoju`). The rule
+    also covers never-seen 2–4 letter words one neighbouring key from a word seen 50+
+    times (`verai` → `gerai`, not the name `Verai`); keyboard-only `kak` → `kai`.
+  - suggestion ranking: a negated form with no frequency of its own borrows the plain
+    form's (`Neturetu` → `Neturėtų`); a suggestion differing from the input only by being a
+    capitalised name costs +0.5.
   - **key-shift** (setting `varnele_key_shift`, default on, Text correction screen):
     if the word is unknown and no correction is within one typo, search words where
     every letter is the typed key or a neighbour (`fofrkua` → `didelis`, `ksbsd` →
@@ -266,6 +277,9 @@ Left deliberately:
 - ispell-lt has no plain reflexive-only verbs (džiaugtis, juoktis, elgtis, domėtis;
   only apsidžiaugti etc. in lietuviu.ivpk). Added to data/extra.txt; others may be
   missing too: check 1sg `-uosi` forms of common ones.
+- data/extra.txt drops `bereikal` (`-bereikal`) and adds `bereikalo`.
+- Idea: `net ne vienos/vieno/vienas` + noun almost always means `nė vienos` (not a single);
+  plain `ne vienas` ("more than one") is valid, so only `net ne` + a vienas form is a signal.
 - ispell-lt lists some pronouns as nouns too (`šita/D`, `kita/D`, `tokia/ND`), which hides
   them from agreement. `-word/FLAGS` in data/extra.txt drops such an entry.
 - Lemma frequencies: a listed particle/preposition reading (tag W) takes the whole count
@@ -294,7 +308,6 @@ Left deliberately:
   be tuned on real typing data.
 - Spoken-form normalisation option in the keyboard (`valgyt` → `valgyti`) is
   available (`--formal`) but not wired to a setting.
-- Create a GitHub fork for HeliBoard changes when the owner asks.
 - iOS later: the Rust core is portable; keyboard extensions have tight memory limits.
 
 ## History (commits on varnele/main)
@@ -312,3 +325,4 @@ Left deliberately:
 9. transitive objects, indirect-question commas, flat diacritic cost, pronoun-noun cleanup
 10. phone list: parenthetical/address/list/participial-phrase/negu/repeated-connective commas,
     relative case from the verb, subject over adverbs, instrumental objects; eval/commas.py
+11. `link` + genitive; `viena kitą` skip narrowed; keyboard rename, fork on GitHub (notes)

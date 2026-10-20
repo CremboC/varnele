@@ -75,6 +75,8 @@ FLAGGED = [
     ("Skaitau įdomia knyga.", "įdomia", "object", "įdomią"),
     ("Radau nukritusia sagutę.", "nukritusia", "object", "nukritusią"),   # noun fixed first (keyboard)
     ("Labas, Jonai kaip sekasi?", "kaip", "comma", ", kaip"),             # first comma already there
+    ("Bebėgiodamas link namu.", "namu", "case", "namų"),
+    ("Aš net ne vienos eilutes kodo neparašiau.", "eilutes", "agreement", "eilutės"),  # not "viena kitą"
 ]
 
 CORRECT = [
@@ -102,6 +104,7 @@ CORRECT = [
     "Per šešiolika mėnesių aplankė daug mažų ežerėlių.",
     "Euromaidano metu palaikė opozicijos pusę.",
     "Seserys viena kitą papildė, nors ir nedaug.",
+    "Vienas kitam padėjo. Ne vienas žmogus atėjo. Bėgau namų link.",
     "Tuo metu žinomas, kuriam laikui tapo vadovu bet kokioms bausmėms.",
     "Karą nutraukė profesorių O. Mauserio darbai.",
     # verb rules: durations, copulas, homonyms of verbs

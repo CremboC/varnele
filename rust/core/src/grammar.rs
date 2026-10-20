@@ -29,7 +29,7 @@ fn prep_cases(p: &str) -> Option<&'static [&'static str]> {
         "į" | "per" | "pro" | "prieš" | "apie" | "pagal" | "palei" | "pas" | "aplink" => &["acc"],
         "iš" | "be" | "nuo" | "prie" | "iki" | "ligi" | "dėl" | "ant" | "virš" | "tarp" | "anot"
         | "pasak" | "šalia" | "vietoj" | "netoli" | "anapus" | "šiapus" | "abipus" | "vidury"
-        | "vidur" => &["gen"],
+        | "vidur" | "link" => &["gen"],
         "už" => &["acc", "gen"],
         "su" | "sulig" => &["ins"],
         "ties" => &["gen", "ins"],
@@ -39,7 +39,7 @@ fn prep_cases(p: &str) -> Option<&'static [&'static str]> {
 const PREP_LIST: &[&str] = &[
     "į", "per", "pro", "prieš", "apie", "pagal", "palei", "pas", "aplink", "iš", "be", "nuo",
     "prie", "iki", "ligi", "dėl", "ant", "virš", "tarp", "anot", "pasak", "šalia", "vietoj",
-    "netoli", "anapus", "šiapus", "abipus", "vidury", "vidur", "už", "su", "sulig", "ties",
+    "netoli", "anapus", "šiapus", "abipus", "vidury", "vidur", "link", "už", "su", "sulig", "ties",
 ];
 
 const QUANTIFIER_WORDS: &[&str] = &[
@@ -1055,7 +1055,8 @@ impl Grammar {
             if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) || !(a.known || n.known) {
                 continue;
             }
-            if ["vienas", "viena", "vieni", "vienos"].contains(&a.lower.as_str()) {
+            // viena kitą = each other (but: vienos eilutes -> eilutės)
+            if ["vienas", "viena", "vieni", "vienos"].contains(&a.lower.as_str()) && n.lower.starts_with("kit") {
                 continue;
             }
             let mut no_gen = false;
