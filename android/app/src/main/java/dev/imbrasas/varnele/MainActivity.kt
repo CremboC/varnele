@@ -39,7 +39,8 @@ class MainActivity : Activity() {
                 "Kad tikrintų visose programose, pasirinkite „Varnelė“ rašybos tikrintuvu."
         })
         val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
             minLines = 4
             gravity = Gravity.TOP
             setText("Vakar maciau, kad pries pora dienu jis nuėjo į didele kavine. Aš buvo namie.")
