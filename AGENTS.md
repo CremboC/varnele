@@ -191,6 +191,16 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   applies `VarneleDictionary.confidentFix` (the whitelisted kind), so punctuation
   (`sakini?`) and learned words can't leave it unfixed. This is how later words fix earlier ones
   (`visu … žodžių` → `visų`, `kuriu … rašau` → `kurių`, `, kurių`).
+- **Red underline for unknown words** (`VarneleDictionary.markMisspelled`, called from
+  `InputLogic.commitChosenWord`): a committed word Varnelė does not know gets a
+  `SuggestionSpan` with `FLAG_MISSPELLED` and its corrections, so the text field draws the
+  underline itself, as Gboard does, whatever the system spell checker is. Only
+  `FLAG_MISSPELLED`: fields drop a span that also has `FLAG_EASY_CORRECT` (tested on the
+  Fold7; `FLAG_GRAMMAR_ERROR` alone draws blue, could mark grammar findings). Underlines
+  are lost when the field is refocused or the keyboard restarts, and the sentence fixer's
+  rewrite drops them for the rewritten text.
+- The system spell checker (`dev.imbrasas.varnele` app) gets no session when its language is
+  "automatic" and the phone language is not Lithuanian: Android matches the system locale.
 - `dev/imbrasas/varnele/Native.kt`: JNI class name must stay exactly this.
   ProGuard keep rule added. Library missing → keyboard works without Varnelė.
 - Gradle task `cargoBuildVarnele` builds the Rust lib for 4 ABIs from
