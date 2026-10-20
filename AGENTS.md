@@ -75,7 +75,7 @@ EOF
 Android (both projects): `JAVA_HOME=$HOME/.sdkman/candidates/java/current`,
 SDK `~/Library/Android/sdk`, adb `~/Library/Android/sdk/platform-tools/adb`.
 `cd android && ./gradlew installDebug`; HeliBoard: `cd ~/git/HeliBoard && ./gradlew assembleDebug`
-then `adb install -r app/build/outputs/apk/debug/VarneleKlaviatura_4.3-beta1-debug.apk`.
+then `adb install -r app/build/outputs/apk/debug/VarneleKlaviatura_1.0-debug.apk`.
 Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 
 ## Architecture and key decisions
@@ -185,6 +185,32 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   ProGuard keep rule added. Library missing → keyboard works without Varnelė.
 - Gradle task `cargoBuildVarnele` builds the Rust lib for 4 ABIs from
   `../varnele` (or `-Pvarnele.dir=`) into `app/src/main/jniLibs` (git-ignored).
+
+## Release builds and Google Play (keyboard)
+
+- CI: `.github/workflows/varnele-release.yml` in the fork, on push to `varnele` and manual
+  dispatch. Checks out this repo (main) next to HeliBoard, Python 3.12, Rust + 4 Android
+  targets, cargo-ndk, NDK 28.0.13004108; builds the **`nouserlib`** build type (the Play
+  build: no user-supplied gesture library, Play forbids loading outside code). Artifacts:
+  signed `.aab` (Play) and signed universal APK (phone testing). Upstream's two workflows
+  only trigger on dispatch/PR and never run on the fork (files kept for merges). While this
+  repo is private, CI checks it out with secret `VARNELE_DEPLOY_KEY` (read-only deploy key
+  on this repo; key pair `~/.keystores/varnele-deploy-key`).
+- Version: versionName **1.0**, versionCode **10000 + GitHub run number** (env
+  `VERSION_CODE`, 10000 locally). It must stay above upstream's codes (4300) because
+  HeliBoard's AppUpgrade runs every `oldVersion <= N` migration; after an upstream merge,
+  check new migrations with N < 10000, they won't run for our upgrades. Renaming the
+  workflow restarts the run number: raise the offset above the last uploaded code.
+- Signing: GitHub secrets on CremboC/HeliBoard `VARNELE_KEYSTORE_BASE64`,
+  `VARNELE_KEYSTORE_PASSWORD`, `VARNELE_KEY_ALIAS` (`upload`), `VARNELE_KEY_PASSWORD`.
+  Gradle reads `VARNELE_KEYSTORE_FILE` + the three others from the environment; without
+  them release builds are unsigned and debug builds are unaffected.
+- **Upload keystore: `~/.keystores/varnele-upload.jks`, passwords in
+  `~/.keystores/varnele-upload.env`** (outside both repos, never commit). Back both up
+  (password manager): losing the key means an upload-key reset through Play support.
+  SHA-256 AA:14:F6:1A:17:FF:0B:A7:66:31:CA:81:66:1D:43:FE:77:38:99:5E:D8:44:2F:47:90:B4:BD:AB:20:81:D4:41.
+- Local signed build: `source ~/.keystores/varnele-upload.env && ./gradlew assembleNouserlib
+  bundleNouserlib`; the APK installs as `dev.imbrasas.varnele.keyboard` next to `.debug`.
 
 ## Latest numbers
 
