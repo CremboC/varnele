@@ -66,6 +66,7 @@ INTERROGATIVES = {"kas", "ką", "ko", "kam", "kuo", "kur", "kada", "kaip", "kod�
                   "kokiam", "kokiu", "kokiame", "kokioje", "kokiems", "kokius", "kokias",
                   "kažkas", "kažkur"} | KURIS
 
+INTERROGATIVES_FOLDED = {fold(w) for w in INTERROGATIVES}
 
 # Negated verbs take a genitive object: neturiu laiko, nemačiau jo.
 NEG_PRONOUNS = {"jį": "jo", "ją": "jos", "juos": "jų", "jas": "jų", "mane": "manęs",
@@ -75,6 +76,14 @@ NEG_PRONOUNS = {"jį": "jo", "ją": "jos", "juos": "jų", "jas": "jų", "mane": 
 TIME_LEMMAS = {"diena", "naktis", "savaitė", "mėnuo", "metai", "valanda", "minutė", "sekundė",
                "kartas", "rytas", "vakaras", "žiema", "vasara", "pavasaris", "ruduo", "para",
                "pusmetis", "dešimtmetis", "šimtmetis", "amžius", "laikotarpis", "popietė"}
+# Verbs that take a genitive object: laukiu tavo žinutės, reikia pagalbos, ieškau raktų
+# (principal parts, matched by ending so prefixed entries count)
+GENITIVE_VERBS = ("laukti", "laukia", "laukė", "ieškoti", "ieško", "ieškojo", "bijoti", "bijo", "bijojo",
+                  "siekti", "siekia", "siekė", "reikėti", "reikia", "reikėjo", "vengti", "vengia", "vengė")
+VERB_PREFIXES = {"ap", "at", "į", "iš", "nu", "pa", "par", "per", "pra", "pri", "su", "už", "api", "ati"}
+POSSESSIVES = {"mano", "tavo", "savo", "jo", "jos", "jų", "mūsų", "jūsų"}
+# A number ending in 0 or 11-19 takes the genitive plural: 10 metų, 15 eurų (not 2,5 or the ordinal 10.)
+GEN_NUMBER = re.compile(r"(?:^|[\s(–—-])(\d+)\s+$")
 TIME_WORDS = {"visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "ištisas"}
 # Linking verbs take a nominative or instrumental, not an object.
 # Verbs whose object is practically never a bare instrumental, so "matau viena klaida" is
@@ -447,6 +456,14 @@ class Grammar:
                     want = " or ".join(CASE_NAMES[c] for c in sorted(cases))
                     for x in span:
                         require(x, cases, "case", f"'{prep}' takes the {want}")
+            # 2b. numbers: 10 metu -> metų
+            # (a noun right after the number: not units "20 m atstumu", manner "12 etniniu pagrindu",
+            # labels "KNM-ER 1813 atveju")
+            m = GEN_NUMBER.search(gaps[i])
+            if (m and int(m.group(1)) > 0 and (int(m.group(1)) % 10 == 0 or 11 <= int(m.group(1)) % 100 <= 19)
+                    and w.known and w.is_noun and len(w.lower) >= 3 and w.text[:1].islower()
+                    and not (i > 0 and len(toks[i - 1].text) > 1 and toks[i - 1].text.isupper())):
+                require(w, {"gen"}, "quantity", f"after '{m.group(1)}' use the genitive plural")
             # 3. quantity words
             if nxt_adjacent and w.is_quantity():
                 span = phrase(i)
@@ -462,7 +479,7 @@ class Grammar:
                         or w.text[:1].isupper()                              # names, initials: O. Mauseris
                         or text[w.end:w.end + 1] == "."
                         or (w.lower in ("bet", "kai") and indefinite)        # bet kas, kai kurie
-                        or (w.lower == "nors" and (prev in INTERROGATIVES or nxt == "ir"))  # kas nors
+                        or (w.lower == "nors" and (fold(prev) in INTERROGATIVES_FOLDED or nxt == "ir"))  # kas nors, koki nors
                         or (w.lower in KURIS and (prev in ("bet", "kai")      # bet kuris
                                                   or verb_with_object(i)            # įmonė kuria ir parduoda
                                                   or nxt in ("nors", "laikui", "laiką", "laiko"))))
@@ -480,6 +497,16 @@ class Grammar:
                     and toks[i + 1].lower in KURIS and toks[i - 1].lower not in NO_COMMA_AFTER):
                 add(Issue(w.start, w.end, w.text, "comma",
                           f"comma needed before '{w.text} {toks[i + 1].text}'", [", " + w.text]))
+
+        # indefinite pronoun typed without diacritics: koki nors -> kokį nors, ka nors -> ką nors
+        for i in range(len(toks) - 1):
+            w = toks[i]
+            if toks[i + 1].lower != "nors" or not adjacent[i + 1] or w.lower in INTERROGATIVES:
+                continue
+            fix = [w.cap(f) for f, _ in w.variants if f.lower() in INTERROGATIVES]
+            if fix:
+                add(Issue(w.start, w.end, w.text, "case" if w.known else "context",
+                          f"'{w.text} nors': an indefinite pronoun", fix))
 
         # 6. relative pronoun typed without diacritics: žodžių kuriu aš rašau -> kurių
         for i in range(1, len(toks)):
@@ -696,6 +723,20 @@ class Grammar:
                                 continue
                         require(x, {"gen"}, "negation", why)  # nepataiso visu žodžių -> visų
                     continue
+
+            # verbs with a genitive object: lauksiu tavo zinutes -> žinutės, reikia pagalbą -> pagalbos
+            if not negated and any(any(a.lemma == v or a.lemma.endswith(v) and a.lemma[:-len(v)] in VERB_PREFIXES
+                                       for v in GENITIVE_VERBS) for a in verbs):
+                k = i       # possessives stand before the noun: laukiu tavo žinutės
+                while k + 1 < len(toks) and adjacent[k + 1] and toks[k + 1].lower in POSSESSIVES:
+                    k += 1
+                span = phrase(k)
+                timey = any(x.lower in TIME_WORDS or x.is_quantity() or any(
+                            a.lemma in TIME_LEMMAS for a in self.analyses(x.text)) for x in span)
+                if span and span[-1].is_noun and not timey:
+                    for x in span:
+                        require(x, {"gen"}, "case", f"'{w.text}' takes the genitive")
+                continue
 
             persons = {a.tag.split(".")[2] for a in verbs if finite(a)}
             # objects after a 1st/2nd person verb can't be its subject: matau namas -> namą

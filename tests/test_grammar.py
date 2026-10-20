@@ -41,6 +41,11 @@ FLAGGED = [
     ("Kuriu tai kas reikalinga.", "kas", "comma", ", kas"),          # relative clause after tai
     ("Darau viską ką galiu.", "ką", "comma", ", ką"),
     ("Kodėl jis ziuri?", "ziuri", "unknown", "žiūri"),               # a verb after jis, not žiuri (jury)
+    ("Parašyk koki nors sakinį.", "koki", "case", "kokį"),          # indefinite pronoun before nors
+    ("Per 10 metu daug pasikeitė.", "metu", "quantity", "metų"),    # number ending in 0 or 11-19
+    ("Kainavo 15 euru.", "euru", "quantity", "eurų"),
+    ("Ieškau raktu.", "raktu", "case", "raktų"),                     # verb with a genitive object
+    ("Lauksiu tavo zinutes.", "zinutes", "unknown", "žinutės"),
     ("Nusipirkau naujas automobilis.", "automobilis", "object", "automobilį"),
     ("Radau nukritusią sagute.", "sagute", "agreement", "sagutę"),
     ("Pagrindinė kylanti grėsme yra kirtimai.", "grėsme", "agreement", "grėsmė"),
@@ -142,6 +147,9 @@ CORRECT = [
     "Režisierė, kuri kuria vaizdo klipus.",
     "Dainas kuriu tai, kas reikalinga. Žodžių kuriu ir rašau daug.",
     "Tai kas dabar?",
+    "Pamėgink rašyti kokį nors sakinį. Ar kas nors ateis?",
+    "Turėjau 2 katinus. Laukiau valandą. 2010 metais. Plaukė vandenynu.",
+    "Rieduliai guli 20 m atstumu. Suskirstyta į 12 etniniu pagrindu suformuotų regionų.",
 ]
 
 

@@ -80,6 +80,9 @@ const INTERROGATIVES: &[&str] = &[
     "kokia", "kokį", "kokią", "kokie", "kokios", "kokių", "kokio", "kokiam", "kokiu", "kokiame",
     "kokioje", "kokiems", "kokius", "kokias", "kažkas", "kažkur",
 ];
+fn interrogative_folded(fw: &str) -> bool {
+    INTERROGATIVES.iter().chain(KURIS.iter()).any(|w| fold(w) == fw)
+}
 fn neg_pronoun(w: &str) -> Option<&'static str> {
     Some(match w {
         "jį" => "jo",
@@ -103,6 +106,36 @@ const TIME_LEMMAS: &[&str] = &[
     "rytas", "vakaras", "žiema", "vasara", "pavasaris", "ruduo", "para", "pusmetis", "dešimtmetis",
     "šimtmetis", "amžius", "laikotarpis", "popietė",
 ];
+// Verbs that take a genitive object: laukiu tavo žinutės, reikia pagalbos, ieškau raktų
+const GENITIVE_VERBS: &[&str] = &[
+    "laukti", "laukia", "laukė", "ieškoti", "ieško", "ieškojo", "bijoti", "bijo", "bijojo",
+    "siekti", "siekia", "siekė", "reikėti", "reikia", "reikėjo", "vengti", "vengia", "vengė",
+];
+const VERB_PREFIXES: &[&str] = &["ap", "at", "į", "iš", "nu", "pa", "par", "per", "pra", "pri", "su", "už", "api", "ati"];
+const POSSESSIVES: &[&str] = &["mano", "tavo", "savo", "jo", "jos", "jų", "mūsų", "jūsų"];
+
+/// A number ending in 0 or 11-19 right before the word (gap "… 10 "): it takes the genitive plural.
+fn gen_number(gap: &str) -> Option<String> {
+    let g: Vec<char> = gap.chars().collect();
+    let mut e = g.len();
+    while e > 0 && g[e - 1].is_whitespace() {
+        e -= 1;
+    }
+    if e == g.len() {
+        return None;
+    }
+    let mut b = e;
+    while b > 0 && g[b - 1].is_ascii_digit() {
+        b -= 1;
+    }
+    if b == e || (b > 0 && !(g[b - 1].is_whitespace() || "(–—-".contains(g[b - 1]))) {
+        return None;
+    }
+    let d: String = g[b..e].iter().collect();
+    let last2: u32 = d[d.len().saturating_sub(2)..].parse().unwrap_or(0);
+    let nonzero = d.chars().any(|c| c != '0');
+    (nonzero && (last2 % 10 == 0 || (11..=19).contains(&last2))).then_some(d)
+}
 const TIME_WORDS: &[&str] = &["visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "ištisas"];
 /// Verbs whose object is practically never a bare instrumental, so "matau viena klaida" is an
 /// accusative typed without diacritics (motion verbs do take one: einu gatve). Principal parts,
@@ -601,6 +634,18 @@ impl Grammar {
                     }
                 }
             }
+            // 2b. numbers: 10 metu -> metų (a noun right after the number: not units "20 m atstumu",
+            // manner "12 etniniu pagrindu", labels "KNM-ER 1813 atveju")
+            let gap: String = chars[if i > 0 { toks[i - 1].end } else { 0 }..w.start].iter().collect();
+            if let Some(n) = gen_number(&gap) {
+                let upper = |t: &str| t.chars().any(|c| c.is_uppercase()) && !t.chars().any(|c| c.is_lowercase());
+                if w.known && w.is_noun(&g) && clen(&w.lower) >= 3
+                    && w.text.chars().next().is_some_and(|c| c.is_lowercase())
+                    && !(i > 0 && clen(&toks[i - 1].text) > 1 && upper(&toks[i - 1].text))
+                {
+                    require(&mut issues, w, &["gen"], "quantity", &format!("after '{n}' use the genitive plural"));
+                }
+            }
             // 3. quantity words
             if nxt_adjacent && w.is_quantity(&g) {
                 let span = phrase(i, false);
@@ -626,7 +671,7 @@ impl Grammar {
                     || first_upper(&w.text)
                     || chars.get(w.end) == Some(&'.')
                     || ((lw == "bet" || lw == "kai") && indefinite)
-                    || (lw == "nors" && (INTERROGATIVES.contains(&prev) || KURIS.contains(&prev) || nxt == "ir"))
+                    || (lw == "nors" && (interrogative_folded(&fold(prev)) || nxt == "ir")) // kas nors, koki nors
                     || (is_kuris && (prev == "bet" || prev == "kai" || verb_with_object(i)     // įmonė kuria ir parduoda
                         || ["nors", "laikui", "laiką", "laiko"].contains(&nxt)));
                 if !skip {
@@ -659,6 +704,24 @@ impl Grammar {
                     start: w.start, end: w.end, word: w.text.clone(), rule: "comma",
                     message: format!("comma needed before '{} {}'", w.text, toks[i + 1].text),
                     suggestions: vec![format!(", {}", w.text)],
+                });
+            }
+        }
+
+        // indefinite pronoun typed without diacritics: koki nors -> kokį nors, ka nors -> ką nors
+        for i in 0..toks.len().saturating_sub(1) {
+            let w = &toks[i];
+            let l = w.lower.as_str();
+            if toks[i + 1].lower != "nors" || !adjacent[i + 1] || INTERROGATIVES.contains(&l) || KURIS.contains(&l) {
+                continue;
+            }
+            let fix: Vec<String> = w.variants(&g).iter()
+                .filter(|(f, _)| { let fl = lower(f); INTERROGATIVES.contains(&fl.as_str()) || KURIS.contains(&fl.as_str()) })
+                .map(|(f, _)| w.cap(f)).collect();
+            if !fix.is_empty() {
+                add(&mut issues, Issue {
+                    start: w.start, end: w.end, word: w.text.clone(), rule: if w.known { "case" } else { "context" },
+                    message: format!("'{} nors': an indefinite pronoun", w.text), suggestions: fix,
                 });
             }
         }
@@ -981,6 +1044,29 @@ impl Grammar {
                             }
                         }
                         require(&mut issues, t, &["gen"], "negation", &why); // nepataiso visu žodžių -> visų
+                    }
+                }
+                continue;
+            }
+
+            // verbs with a genitive object: lauksiu tavo zinutes -> žinutės, reikia pagalbą -> pagalbos
+            if !negated && verbs.iter().any(|a| GENITIVE_VERBS.iter().any(|v| {
+                a.lemma == *v || (a.lemma.ends_with(v) && VERB_PREFIXES.contains(&&a.lemma[..a.lemma.len() - v.len()]))
+            })) {
+                let mut k = i; // possessives stand before the noun: laukiu tavo žinutės
+                while k + 1 < toks.len() && adjacent[k + 1] && POSSESSIVES.contains(&toks[k + 1].lower.as_str()) {
+                    k += 1;
+                }
+                let span = phrase(k, false);
+                let timey = span.iter().any(|&x| {
+                    let t = &toks[x];
+                    TIME_WORDS.contains(&t.lower.as_str())
+                        || t.is_quantity(&g)
+                        || g.analyses(&t.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()))
+                });
+                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey {
+                    for &x in &span {
+                        require(&mut issues, &toks[x], &["gen"], "case", &format!("'{}' takes the genitive", w.text));
                     }
                 }
                 continue;
