@@ -135,8 +135,10 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   `score/1e6 * (1 - editDistance/len)` ≥ threshold (~0.185) or the suggestion is
   `KIND_WHITELIST`.
   - valid typed word → returned with score 1.2M (never "corrected")
-  - context fix of a valid word: diacritic-only → whitelisted, 1.3M (autocorrects);
-    otherwise 1.1M (shown only)
+  - context fix of a valid word: diacritic-only or the subject rule (`aš buvo` →
+    `buvau`, owner's choice) → whitelisted, 1.3M (autocorrects); otherwise 1.1M (shown
+    only). The sentence fixer applies subject fixes only to the word just finished, so a
+    backspace revert of an earlier word is not undone.
   - unknown word: whitelisted if diacritic-only and clearly best (margin 0.08,
     or context chose); autocorrect-appropriate if **typoCost ≤ 1.0**, where
     typoCost is the edit cost ignoring diacritics (`zodzou` → `žodžių` = 0.8).

@@ -31,7 +31,10 @@ def autocorrect(word, context):
     """What VarneleDictionary + HeliBoard would commit for this word on space."""
     r = kb(word, context)
     if r["status"] != "unknown":
-        fixes = [c for c in r["contextFixes"] if c["diacritic"]]
+        fixes = r["contextFixes"]
+        if fixes and (fixes[0]["diacritic"] or r["contextRule"] == "subject"):   # aš buvo -> buvau
+            return fixes[0]["w"]
+        fixes = [c for c in fixes if c["diacritic"]]
         return fixes[0]["w"] if fixes else word
     s = r["suggestions"]
     if not s:
