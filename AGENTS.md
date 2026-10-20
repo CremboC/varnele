@@ -219,6 +219,24 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 ## Ideas and open problems (backlog)
 
+### Not handled yet (from phone testing, 2026-10-19) — next session's list
+
+- **Relative pronoun case**: `tai knyga kuria skaičiau` keeps `kuria` (should be `kurią`).
+  The relative rule matches number/gender only; the case comes from the verb of the
+  relative clause (skaičiau → acc), so it needs verb government (transitivity, below).
+- **Commas around participial/gerund phrases**: `Žmogus stovintis prie lango, ...`,
+  `Grįžęs namo jis ...` (dalyvinės/padalyvinės aplinkybės). Need phrase boundaries.
+- **Commas after introductory words**: `žinoma`, `beje`, `deja`, `be abejo`, `pavyzdžiui`,
+  `atrodo`, `vadinasi`, `galbūt` when used parenthetically (`Žinoma, aš ateisiu`).
+- **Commas around address (vocative)**: `Labas, Jonai, kaip sekasi?`
+- **Commas in lists**: `obuoliai, kriaušės ir slyvos`; repeated connectives
+  (`ir ... ir`, `nei ... nei`, `tai ... tai`).
+- **Other comma cases**: comparisons with `negu/nei/kaip` + clause, `ne ..., o ...`,
+  `ne tik ..., bet ir ...`.
+- **Subject–verb beyond adjacent pronoun**: `aš vakar buvo` (adverb between), and
+  3rd-person subjects (`jis esu`).
+- **`Radau nukritusia sagute`** (see transitivity below).
+
 - Verify on the phone (owner's tests so far found real gaps every time): the
   score compensation for `zodzou`, rare twins, key-shift autocorrect.
 - The frequency corpus (600 articles, 173k words) is too small for the rare-twin
