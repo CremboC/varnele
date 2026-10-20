@@ -67,6 +67,36 @@ the top suggestion for each flagged word and counts what comes back:
 Most of what is still missed is valid without diacritics and needs wider
 context: `kalba`/`kalbą`, `nedidele`/`nedidelė`, `virs`/`virš`.
 
+## Rust runtime and Android app
+
+Python is the grammar compiler; Rust is the runtime. `python3 -m varnele export`
+writes `data/varnele.bin` (5.3 MB, 1.7 MB gzipped): stems, ending signatures,
+frequencies and derivation tables. `rust/core` loads it and does all checking.
+
+```
+python3 -m varnele export
+cargo build --release --manifest-path rust/Cargo.toml
+rust/target/release/varnele check FILE
+rust/target/release/varnele bench
+python3 eval/parity.py        # Rust and Python must give identical findings
+```
+
+On the 150 test articles all 7,678 findings are identical. On an M-series Mac
+Rust checks a misspelled word with suggestions in ~0.8 ms and a 12-word
+sentence with all grammar rules in ~1.6 ms (load: 22 ms, ~90 MB peak).
+
+`android/` is an app with the checker built in (`rust/android`, a JNI bridge).
+It registers a system spell checker (red underlines for misspellings, blue for
+grammar on Android 12+) and has a test screen. Needs the Android SDK + NDK
+27.2, `cargo-ndk` and the Rust target `aarch64-linux-android`:
+
+```
+cd android && ./gradlew installDebug
+```
+
+Then pick Varnelė as the spell checker (Settings → search "spell checker").
+It cannot replace a keyboard's own autocorrect (Gboard, Samsung Keyboard).
+
 ## Known gaps
 
 - The lexicon (2020) lacks many loanwords and names (`klipas`, `singlas`, foreign surnames).

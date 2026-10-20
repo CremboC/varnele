@@ -11,7 +11,6 @@ satisfy them, so a correct but unusual construction is not flagged.
 import re
 from dataclasses import dataclass, field
 
-from .index import generate
 from .phonology import fold
 from .suggest import _load_freq
 
@@ -231,8 +230,7 @@ class Grammar:
         if analysis.entry < 0:
             return []
         if analysis.entry not in self._forms:
-            lemma, kind, flags = self.an.index.entries[analysis.entry]
-            self._forms[analysis.entry] = generate(lemma, kind, flags)
+            self._forms[analysis.entry] = self.an.index.entry_forms(analysis.entry)
         out = []
         for form, t in self._forms[analysis.entry]:
             f = analysis.prefix + form

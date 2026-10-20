@@ -1,0 +1,107 @@
+"""Compile everything the runtime needs into one binary file (for the Rust port).
+
+The paradigms, sound rules and ispell-lt parsing run here, once. The phone only
+loads the result: stems, ending signatures, frequencies and derivation tables.
+
+Format (little-endian). str = u16 byte length + UTF-8 bytes. Sections in order:
+  magic "VRNL", u32 version
+  tags          u32 n, str*n
+  entries       u32 n, (str lemma, u8 kind, str flags)*n
+  signatures    u32 n, (u16 m, (str suffix, u8 k, u16 tag*k)*m)*n
+  stems         u32 n, (str stem, u16 m, (u16 sig, u32 entry)*m)*n     in index order
+  blacklist     u32 n, str*n
+  freq          u32 n, (str, u32)*n
+  lemma_freq    u32 n, (str, u32)*n
+  abbreviations u32 n, str*n
+  deriv_stems   u32 n, str*n
+  suffix_rests  u32 n, (str rest, str label)*n
+  head_rests    u32 n, str*n
+"""
+
+import struct
+
+from .derivation import Derivation
+from .index import Index
+from .lexicon import ROOT
+from .suggest import _load_freq
+
+VERSION = 1
+KINDS = ["noun", "adj", "pron", "num", "inf", "prs", "pst", "word"]
+OUT = ROOT / "data" / "varnele.bin"
+
+
+class Writer:
+    def __init__(self):
+        self.buf = bytearray(b"VRNL") + struct.pack("<I", VERSION)
+
+    def u8(self, x):
+        self.buf += struct.pack("<B", x)
+
+    def u16(self, x):
+        self.buf += struct.pack("<H", x)
+
+    def u32(self, x):
+        self.buf += struct.pack("<I", x)
+
+    def str(self, s):
+        b = s.encode("utf-8")
+        self.u16(len(b))
+        self.buf += b
+
+    def strs(self, items):
+        items = list(items)
+        self.u32(len(items))
+        for s in items:
+            self.str(s)
+
+
+def export(path=OUT):
+    idx = Index.load()
+    deriv = Derivation(idx)
+    abbrev = (ROOT / "data" / "abbreviations.txt").read_text("utf-8").split()
+
+    tags = sorted({t for sig in idx.sigs for ts in sig.values() for t in ts})
+    tag_id = {t: i for i, t in enumerate(tags)}
+    w = Writer()
+    w.strs(tags)
+
+    w.u32(len(idx.entries))
+    for lemma, kind, flags in idx.entries:
+        w.str(lemma)
+        w.u8(KINDS.index(kind))
+        w.str(flags)
+
+    w.u32(len(idx.sigs))
+    for sig in idx.sigs:
+        w.u16(len(sig))
+        for suf, ts in sig.items():
+            w.str(suf)
+            w.u8(len(ts))
+            for t in ts:
+                w.u16(tag_id[t])
+
+    w.u32(len(idx.stems))
+    for st, hits in idx.stems.items():
+        w.str(st)
+        w.u16(len(hits))
+        for sid, eid in hits:
+            w.u16(sid)
+            w.u32(eid)
+
+    w.strs(sorted(idx.blacklist))
+    for name in ("freq.tsv", "lemma_freq.tsv"):
+        f = _load_freq(name)
+        w.u32(len(f))
+        for word, n in f.items():
+            w.str(word)
+            w.u32(n)
+    w.strs(abbrev)
+    w.strs(sorted(deriv.stems))
+    w.u32(len(deriv.suffix_rests))
+    for rest, labels in sorted(deriv.suffix_rests.items()):
+        w.str(rest)
+        w.str(sorted(labels)[0])
+    w.strs(sorted(deriv.head_rests))
+
+    path.write_bytes(bytes(w.buf))
+    return path, len(w.buf)

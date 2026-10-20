@@ -1,0 +1,84 @@
+//! varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W...
+
+use std::io::Read;
+use std::time::Instant;
+
+use varnele::Checker;
+
+fn read_input(path: &str) -> String {
+    if path == "-" {
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s).unwrap();
+        s
+    } else {
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"))
+    }
+}
+
+fn main() {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut data_path = "data/varnele.bin".to_string();
+    if let Some(i) = args.iter().position(|a| a == "--data") {
+        data_path = args[i + 1].clone();
+        args.drain(i..i + 2);
+    }
+    let t = Instant::now();
+    let bytes = std::fs::read(&data_path).unwrap_or_else(|e| panic!("{data_path}: {e}"));
+    let ck = Checker::from_bytes(&bytes).unwrap();
+    let load = t.elapsed();
+    let formal = args.iter().any(|a| a == "--formal");
+    let grammar = !args.iter().any(|a| a == "--no-grammar");
+    match args.first().map(String::as_str) {
+        Some("words") => {
+            for w in &args[1..] {
+                let (st, sugg) = ck.check_word(w);
+                println!("{w}: {st:?}{}", if sugg.is_empty() { String::new() } else { format!(" -> {}", sugg.join(", ")) });
+                for a in ck.an.analyze(w).iter().take(8) {
+                    let pre = if a.prefix.is_empty() { String::new() } else { format!("{}+", a.prefix) };
+                    println!("    {pre}{}  {}", a.lemma, ck.an.tag_str(a));
+                }
+            }
+        }
+        Some("check") => {
+            let text = read_input(&args[1]);
+            for f in ck.check_text(&text, formal, grammar) {
+                let line = text.chars().take(f.start).filter(|&c| c == '\n').count() + 1;
+                let sugg = if f.suggestions.is_empty() { String::new() } else { format!(" -> {}", f.suggestions.join(", ")) };
+                let msg = if f.message.is_empty() { String::new() } else { format!("   ({})", f.message) };
+                println!("{line}:{} {}{sugg}{msg}", f.rule, f.word);
+            }
+        }
+        Some("json") => {
+            // one finding per line, for comparing with the Python implementation
+            let text = read_input(&args[1]);
+            let t = Instant::now();
+            let fs = ck.check_text(&text, formal, grammar);
+            for f in &fs {
+                println!("{}", varnele::json::finding(f, |i| i));
+            }
+            eprintln!("load {:?}, check {:?}", load, t.elapsed());
+        }
+        Some("bench") => {
+            // per-call latency: correct words, misspellings (with suggestions), sentences
+            let time = |label: &str, items: &[&str], f: &dyn Fn(&str)| {
+                let mut ts: Vec<f64> = Vec::new();
+                for round in 0..3 {
+                    for it in items {
+                        let t = Instant::now();
+                        f(it);
+                        if round > 0 { ts.push(t.elapsed().as_secs_f64() * 1000.0); }
+                    }
+                }
+                ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                println!("{label:28} median {:7.3} ms   max {:7.3} ms", ts[ts.len() / 2], ts[ts.len() - 1]);
+            };
+            let t = Instant::now();
+            let _ = ck.check_word("sviesa");
+            println!("first suggestion (builds lookup tables): {:?}", t.elapsed());
+            time("correct word", &["šviesa", "namas", "mačiau", "nusiprausė", "Vilniaus", "kavinę"], &|w| { ck.check_word(w); });
+            time("misspelled + suggestions", &["maciau", "pakeiciau", "dziaugias", "isvaziavo", "temperaturos", "pulininkai", "virma", "atuželti"], &|w| { ck.check_word(w); });
+            time("sentence (12 words)", &["Vakar maciau, kad pries pora dienu jis nuėjo į didele kavine su draugais."], &|s| { ck.check_text(s, false, true); });
+        }
+        _ => eprintln!("usage: varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W..."),
+    }
+}

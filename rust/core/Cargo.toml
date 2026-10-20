@@ -1,0 +1,13 @@
+[package]
+name = "varnele"
+version = "0.1.0"
+edition = "2021"
+description = "Rule-based Lithuanian spell checker (runtime for data compiled by the Python package)"
+license = "BSD-3-Clause"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "varnele"
+path = "src/main.rs"

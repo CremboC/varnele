@@ -1,0 +1,14 @@
+[package]
+name = "varnele-android"
+version = "0.1.0"
+edition = "2021"
+description = "JNI bridge exposing the Varnelė checker to the Android app"
+license = "BSD-3-Clause"
+
+[lib]
+name = "varnele_android"
+crate-type = ["cdylib"]
+
+[dependencies]
+varnele = { path = "../core" }
+jni = "=0.21.1"

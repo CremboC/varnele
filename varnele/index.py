@@ -44,6 +44,7 @@ class Index:
         self.sigs = sigs            # [ {suffix: (tag, ...)} ]
         self.blacklist = blacklist
         self._folded = None
+        self._entry_stems = None
 
     @classmethod
     def build(cls, verbose=True):
@@ -104,6 +105,17 @@ class Index:
                     if tags:
                         out.extend((eid, t) for t in tags)
         return out
+
+    def entry_forms(self, eid):
+        """Every (form, tag) of one entry, read back from the index (same order as the Rust port)."""
+        if self._entry_stems is None:
+            m = {}
+            for st, hits in self.stems.items():
+                for sid, e in hits:
+                    m.setdefault(e, []).append((st, sid))
+            self._entry_stems = m
+        return [(st + suf, t) for st, sid in self._entry_stems.get(eid, ())
+                for suf, tags in self.sigs[sid].items() for t in tags]
 
     def folded(self):
         """Lazily built index keyed by diacritic-free stems and endings."""

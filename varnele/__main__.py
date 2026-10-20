@@ -57,7 +57,7 @@ class Checker:
             pass
         elif len(w) == 1:
             fix = sorted((f for f in self.an.folded_forms(w.lower()) if f != w.lower()),
-                         key=lambda f: self.sg._score(w.lower(), f))
+                         key=lambda f: (self.sg._score(w.lower(), f), f))
             return ("unknown", fix) if fix else ("skip", [])   # i -> į; else a variable/marker
         elif "-" in w or "‑" in w:
             parts = [p for p in re.split("[-‑]", w) if p]
@@ -106,10 +106,16 @@ def main(argv=None):
     w = sub.add_parser("words", help="analyse individual words")
     w.add_argument("words", nargs="+")
     sub.add_parser("build", help="rebuild the form index")
+    sub.add_parser("export", help="write data/varnele.bin for the Rust runtime")
     a = ap.parse_args(argv)
 
     if a.cmd == "build":
         Index.load(rebuild=True)
+        return
+    if a.cmd == "export":
+        from .export import export
+        path, size = export()
+        print(f"wrote {path} ({size / 1e6:.1f} MB)")
         return
     ck = Checker()
     if a.cmd == "words":
