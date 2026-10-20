@@ -38,7 +38,8 @@ def _cost(a, b):
     for i in range(1, n + 1):
         for j in range(1, m + 1):
             ca, cb = a[i - 1], b[j - 1]
-            sub = 0.0 if ca == cb else 0.3 if fold(ca) == fold(cb) else 0.8 if _near(ca, cb) else 1.0
+            sub = (0.0 if ca == cb else 0.6 if {ca.lower(), cb.lower()} == {"i", "y"}   # y is its own key
+                   else 0.3 if fold(ca) == fold(cb) else 0.8 if _near(ca, cb) else 1.0)
             d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + sub)
             if i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
                 d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)

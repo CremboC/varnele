@@ -7,3 +7,18 @@ esa/ENX
 -neesa
 nėra
 esti   # archaic/bookish 3rd person of būti
+
+# reflexive-only verbs missing from ispell-lt (it lists only apsidžiaugti, apsijuokti...);
+# modelled on stengti/stengia/stengė and gailėti/gaili/gailėjo
+džiaugti/TRSXmrw
+džiaugia/ERSXmrw
+džiaugė/PRSXmrw
+juokti/TRSXmpqrv
+juokia/ERSXmpqrv
+juokė/PRSXmpqrv
+elgti/TRSXr
+elgia/ERSXr
+elgė/PRSXr
+domėti/TRSXrw
+domi/EOSXrw
+domėjo/POSXrw

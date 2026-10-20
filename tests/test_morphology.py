@@ -19,6 +19,7 @@ VALID = {
                    "dirbęs dirbusi dirbamas dirbtas dirbtinas",
     "verbal nouns": "matymas nešimas buvimas abejojimas",
     "prefixes": "nusiprausė neapsimoka nesijaučia apibūdina neapibūdina",
+    "reflexive-only": "džiaugiuosi juokiuosi elgiuosi domiuosi pasidžiaugiau susidomėjau",
     "closed classes": "tokių tiems tuos penkių keturis trisdešimties trečiojo vienuolikos",
 }
 
@@ -28,7 +29,8 @@ SPOKEN = {"valgyt": "valgyti", "buvom": "buvome", "jaučias": "jaučiasi", "moky
           "namuos": "namuose", "dirbkit": "dirbkite"}
 
 FIXES = {"sviesa": "šviesa", "ivikis": "įvykis", "isvaziavo": "išvažiavo",
-         "nesidziaugia": "nesidžiaugia", "vilniaus": "Vilniaus", "rasyt": "rašyti"}
+         "nesidziaugia": "nesidžiaugia", "vilniaus": "Vilniaus", "rasyt": "rašyti",
+         "sita": "šita"}   # y is its own key: not syta
 
 
 class Morphology(unittest.TestCase):

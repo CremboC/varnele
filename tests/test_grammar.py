@@ -13,6 +13,7 @@ def findings(text):
 
 # (sentence, word, rule, expected first suggestion)
 FLAGGED = [
+    ("Kodėl nepataiso visų zodziou?", "zodziou", "unknown", "žodžių"),   # agree with visų
     ("Grįžau prieš pora dienų.", "pora", "case", "porą"),
     ("Nuėjome į didele kavine.", "didele", "case", "didelę"),
     ("Nuėjome į didele kavine.", "kavine", "case", "kavinę"),

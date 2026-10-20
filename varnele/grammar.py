@@ -346,9 +346,18 @@ class Grammar:
                 return
             if "gen" not in cases and any(r.case == "gen" for r in w.own):
                 return            # may be a genitive modifier of a later noun: su lietuvių kultūra
-            fixes = [w.cap(f) for f, rs in w.variants if any(r.case in cases for r in rs)]
-            if not fixes:
+            variants = [(f, rs) for f, rs in w.variants if any(r.case in cases for r in rs)]
+            if not variants:
                 return
+            # an unknown word's candidates: prefer those agreeing with the adjective before it
+            # (nepataiso visų zodziou -> žodžių, not žodžio)
+            i = next(k for k, t in enumerate(toks) if t.start == w.start)
+            if not w.known and i > 0 and adjacent[i] and toks[i - 1].known and toks[i - 1].is_adj:
+                prev = toks[i - 1]      # its diacritic variants too: visu (not fixed yet) -> visų
+                ar = [r for r in prev.pos_readings() + [r for _, rs in prev.variants for r in rs] if r.pos == "adj"]
+                variants.sort(key=lambda v: not any(_agree(x, y) for x in ar for y in v[1]
+                                                    if y.pos == "noun" and y.case in cases))
+            fixes = [w.cap(f) for f, _ in variants]
             if w.known and not w.own:
                 return            # indeclinable word: nothing to check
             add(Issue(w.start, w.end, w.text, rule if w.known else "context", why, fixes))

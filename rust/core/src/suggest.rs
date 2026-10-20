@@ -50,8 +50,11 @@ pub fn cost(a: &str, b: &str) -> f64 {
     for i in 1..=n {
         for j in 1..=m {
             let (ca, cb) = (a[i - 1], b[j - 1]);
+            let iy = |c: char| matches!(c, 'i' | 'I' | 'y' | 'Y');
             let sub = if ca == cb {
                 0.0
+            } else if iy(ca) && iy(cb) && ca.to_ascii_lowercase() != cb.to_ascii_lowercase() {
+                0.6 // y is its own key: sita means šita, not syta
             } else if fold_char(ca) == fold_char(cb) {
                 0.3
             } else if near(ca, cb) {

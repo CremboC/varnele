@@ -95,7 +95,8 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
    geo-/neo-/anti-…) with **blocking**: a guessed analysis is rejected if a
    dictionary word is one slip (diacritics or one typo) away.
 7. **Suggestions**: diacritic-blind lookup + one typo on folded text; ranking =
-   weighted edit distance (same-class diacritic 0.3, adjacent key 0.8, other 1.0)
+   weighted edit distance (same-class diacritic 0.3, i/y 0.6 because y is its own key
+   so `sita` means `šita` not `syta`, adjacent key 0.8, other 1.0)
    minus form and lemma frequency bonuses. Lowercase input penalises capitalised names.
 8. **Context rules** (`grammar.py` / `grammar.rs`), see list below. Case rules
    only fire when a **diacritic-only** variant satisfies them; re-inflection
@@ -113,7 +114,7 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 | case (prepositions) | `prieš pora` → `porą`, `į didele kavine` | genitive modifiers (`su lietuvių kultūra`), `apie` + quantity (`apie pusė`), numerals (`per šešiolika`), phrase must end in a noun, phrase stops at a word that can't agree (`už didžiausią | tuo metu`), participles end the phrase |
 | quantity | `daug vaiku` → `vaikų` | comparatives (`kiek silpnesnes`), only `kind == num` for -lika/-dešimt (not `Respublika`) |
 | agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes` | `viena kitą`; adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`) |
-| negation | `neturiu laiką` → `laiko`, `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas |
+| negation | `neturiu laiką` → `laiko`; a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas |
 | subject | `aš buvo` → `buvau` | only adjacent pronoun + finite verb |
 | object (1st/2nd person verb) | `mačiau namas` → `namą` | copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`) |
 | relative | `žodžių kuriu aš rašau` → `kurių` | needs a following finite verb (`dainas kuriu pats` stays) |
@@ -226,6 +227,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   (pronoun/numeral before adj+noun).
 - Bigger frequency corpus (full Wikipedia dump) and word-pair counts for ranking
   ambiguous diacritic choices (`žmones`/`žmonės`).
+- ispell-lt has no plain reflexive-only verbs (džiaugtis, juoktis, elgtis, domėtis;
+  only apsidžiaugti etc. in lietuviu.ivpk). Added to data/extra.txt; others may be
+  missing too: check 1sg `-uosi` forms of common ones.
 - Lexicon gaps: loanwords and names (`klipas`, `singlas`); induce stems from a
   corpus by finding multiple forms of a guessed paradigm.
 - Keyboard: completions for half-typed words (now we show corrections);
@@ -249,3 +253,4 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 6. keyboard: rare-twin rule, key-shift search (+ HeliBoard setting), score
    compensation for HeliBoard's normalisation
 7. keyboard: fixes survive punctuation and user history (HeliBoard fork)
+8. reflexive-only verbs, i/y cost, case requirements prefer candidates agreeing with the adjective

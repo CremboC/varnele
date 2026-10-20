@@ -465,12 +465,24 @@ impl Grammar {
             if !cases.contains(&"gen") && w.own.iter().any(|r| r.case == "gen") {
                 return;
             }
-            let fixes: Vec<String> = w
-                .variants(&g)
-                .iter()
-                .filter(|(_, rs)| rs.iter().any(|r| cases.contains(&r.case)))
-                .map(|(f, _)| w.cap(f))
-                .collect();
+            let mut variants: Vec<&(String, Vec<Reading>)> =
+                w.variants(&g).iter().filter(|(_, rs)| rs.iter().any(|r| cases.contains(&r.case))).collect();
+            // an unknown word's candidates: prefer those agreeing with the adjective before it
+            // (nepataiso visų zodziou -> žodžių, not žodžio)
+            let i = toks.iter().position(|t| t.start == w.start).unwrap();
+            if !w.known && i > 0 && adjacent[i] && toks[i - 1].known && toks[i - 1].is_adj(&g) {
+                let prev = &toks[i - 1]; // its diacritic variants too: visu (not fixed yet) -> visų
+                let ar: Vec<Reading> = prev
+                    .pos_readings(&g)
+                    .into_iter()
+                    .chain(prev.variants(&g).iter().flat_map(|(_, rs)| rs.iter().cloned()))
+                    .filter(|r| r.pos == Pos::Adj)
+                    .collect();
+                variants.sort_by_key(|(_, rs)| {
+                    !ar.iter().any(|x| rs.iter().any(|y| y.pos == Pos::Noun && cases.contains(&y.case) && agree(x, y)))
+                });
+            }
+            let fixes: Vec<String> = variants.iter().map(|(f, _)| w.cap(f)).collect();
             if fixes.is_empty() || (w.known && w.own.is_empty()) {
                 return;
             }
