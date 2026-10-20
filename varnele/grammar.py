@@ -83,7 +83,8 @@ TIME_WORDS = {"visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "
 # instrument (rašau ranka, valgau šakute) stay out.
 TRANSITIVE_VERBS = ("matyti", "mato", "matė", "rasti", "randa", "rado", "turėti", "turi", "turėjo",
                     "gauti", "gauna", "gavo", "pirkti", "perka", "pirko", "žinoti", "žino", "žinojo",
-                    "mylėti", "myli", "mylėjo", "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko")
+                    "mylėti", "myli", "mylėjo", "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko",
+                    "skaityti", "skaito", "skaitė")
 # words that may stand between a verb and its object: matau dar vieną klaidą
 OBJECT_SKIP = {"dar", "jau", "vėl", "irgi", "tik", "net"}
 # verbs of seeing, knowing and saying that take an indirect question: matau, ką man rašo
@@ -94,6 +95,23 @@ QUESTION_VERBS = ("matyti", "mato", "matė", "žinoti", "žino", "žinojo", "sup
                   "rodyti", "rodo", "rodė", "pasakoti", "pasakoja", "pasakojo")
 # these start a clause, they are not the object: manau, kas ... / žinau, kuris ...
 CLAUSE_WORDS = {"kas", "kuris", "kuri", "kurie", "kurios", "koks", "kokia", "kokie", "kokios"}
+# accusative forms of kuris: knyga, kurią skaičiau
+KURIS_ACC = ("kurį", "kurią", "kuriuos", "kurias")
+
+# Parenthetical words, set off by commas: Deja, neatėjo. / Jis, beje, sutiko.
+# (galbūt, turbūt, tikriausiai are not set off; atrodo, aišku, pagaliau are also plain words)
+INTRO_ANYWHERE = {"deja", "beje", "pavyzdžiui"}
+INTRO_START = INTRO_ANYWHERE | {"vadinasi", "žinoma"}
+INTRO_PAIRS = {("kita", "vertus"), ("be", "abejo"), ("mano", "nuomone"), ("ko", "gero")}
+# Greetings: a vocative or a new clause after them takes a comma (Labas, Jonai, kaip sekasi?)
+GREETINGS = {"labas", "laba", "labi", "labos", "sveikas", "sveika", "sveiki", "sveikos", "ačiū",
+             "dėkui", "labanakt", "sudie", "sveikinu"}
+SUBJECT_PRONOUNS = {"aš", "tu", "jis", "ji", "mes", "jūs", "jie", "jos"}
+# Between a subject pronoun and its verb (aš vakar buvo): not these
+SUBJECT_NO_SKIP = {"tai", "tas", "ta", "šis", "ši", "tie", "tos", "ne", "nei", "ar", "jo", "jos", "jų"}
+# a participial phrase does not run across these
+PHRASE_STOP = {"ir", "bei", "ar", "arba", "o", "bet", "nei", "negu", "kaip"} | CLAUSE_STARTERS
+SENTENCE_GAP = re.compile(r"[.!?…\n(„“\"«»–—-]")
 
 COPULAS = {"būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
            "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė",
@@ -307,6 +325,16 @@ class Grammar:
                 other = max(other, f, 1)
         return other == 0 or verb > other
 
+    def active_participle(self, w):
+        """Every reading is an active participle (or a gerund): stovintis, nukritusią."""
+        an = self.analyses(w)
+        return bool(an) and all(a.tag.startswith(("V.pap.", "V.pprs.", "V.ger.")) for a in an)
+
+    def adverb(self, w):
+        """Only adverb or particle readings: vakar, dar, tikrai (not tikras)."""
+        an = self.analyses(w)
+        return bool(an) and all(a.tag in ("W", "Adv") for a in an)
+
     def known(self, w):
         if w not in self._known:
             self._known[w] = self.an.check(w).status != "unknown"
@@ -344,8 +372,9 @@ class Grammar:
         def add(issue):
             issues.setdefault(issue.start, issue)
 
-        def phrase(i):
-            """Adjectives/pronouns/participles up to and including the first noun after i."""
+        def phrase(i, participles=False):
+            """Adjectives/pronouns up to and including the first noun after i; participles
+            end the phrase unless allowed (radau nukritusią sagutę)."""
             span, j = [], i + 1
             while j < len(toks) and adjacent[j]:
                 w = toks[j]
@@ -354,7 +383,7 @@ class Grammar:
                 if w.is_noun:
                     span.append(w)
                     break
-                if not w.is_adj or w.is_participle:
+                if not w.is_adj or (w.is_participle and not participles):
                     break
                 span.append(w)
                 j += 1
@@ -432,7 +461,7 @@ class Grammar:
         # 6. relative pronoun typed without diacritics: žodžių kuriu aš rašau -> kurių
         for i in range(1, len(toks)):
             w, prev = toks[i], toks[i - 1]
-            if w.lower in KURIS or not (adjacent[i] or gaps[i].strip() == ",") or not prev.is_noun:
+            if w.lower in KURIS_ACC or not (adjacent[i] or gaps[i].strip() == ",") or not prev.is_noun:
                 continue
             fw = fold(w.lower)
             nouns = [r for r in prev.pos_readings() if r.pos == "noun"]
@@ -441,6 +470,26 @@ class Grammar:
                 # kuris agrees with its noun in number and gender (not case)
                 return any((r.number is None or r.number == num) and (g is None or r.gender is None or r.gender == g)
                            for r in nouns for num, g in feats)
+            if w.lower in KURIS:
+                # its case comes from the verb of the clause: knyga kuria skaičiau -> kurią
+                cands = [k for k in KURIS_ACC if fold(k) == fw and agrees(KURIS_FEATURES[k])]
+                j = i + 1
+                while j < len(toks) and j <= i + 2 and adjacent[j] and not toks[j].lower in PHRASE_STOP:
+                    an_j = self.analyses(toks[j].text)
+                    # (skaičiau is a verb here although the noun skaičius is more frequent)
+                    if any(finite(a) and a.lemma.endswith(TRANSITIVE_VERBS) and not a.prefix.startswith("ne")
+                           and not a.tag.endswith(".refl") for a in an_j):
+                        break
+                    if any(finite(a) for a in an_j) and self.mostly_verb(an_j):
+                        cands = []
+                        break
+                    j += 1
+                else:
+                    cands = []
+                if cands:
+                    add(Issue(w.start, w.end, w.text, "relative",
+                              f"'{toks[j].text}' takes an accusative object", [w.cap(c) for c in cands]))
+                continue
             cands = [k for k, feats in KURIS_FEATURES.items() if fold(k) == fw and agrees(feats)]
             if not cands:
                 continue
@@ -478,6 +527,110 @@ class Grammar:
                 j += 1
             if verb_follows:
                 add(Issue(w.start, w.end, w.text, "comma", f"comma needed before '{w.text}'", [", " + w.text]))
+
+        # 8. more commas: parenthetical words, greetings and address, repeated connectives,
+        #    participial phrases
+        def starts_sentence(i):
+            return i == 0 or bool(SENTENCE_GAP.search(gaps[i]))
+
+        def comma_before(k, why):
+            if k < len(toks) and adjacent[k]:
+                t = toks[k]
+                add(Issue(t.start, t.end, t.text, "comma", why, [", " + t.text]))
+
+        def connective(t):
+            return t.lower in NO_COMMA_AFTER or t.lower in CLAUSE_STARTERS or t.lower in PREPOSITIONS
+
+        def verb_at(k):
+            an_k = self.analyses(toks[k].text)
+            return any(finite(a) for a in an_k) and self.mostly_verb(an_k)
+
+        for i, w in enumerate(toks):
+            nxt_adjacent = i + 1 < len(toks) and adjacent[i + 1]
+            # Deja, neatėjo. / Kita vertus, ... / Jis, beje, sutiko.
+            if starts_sentence(i) and nxt_adjacent:
+                pair = i + 2 < len(toks) and adjacent[i + 2] and (w.lower, toks[i + 1].lower) in INTRO_PAIRS
+                if pair:
+                    comma_before(i + 2, f"comma needed after '{w.text} {toks[i + 1].text}'")
+                elif w.lower in INTRO_START and not toks[i + 1].text[:1].isupper():
+                    nx = toks[i + 1]
+                    # žinoma = "it is known" (Žinoma tik viena rūšis): only before a subject or verb
+                    if w.lower != "žinoma" or nx.lower in SUBJECT_PRONOUNS or verb_at(i + 1):
+                        comma_before(i + 1, f"comma needed after '{w.text}'")
+            elif (w.lower in INTRO_ANYWHERE and not w.text[:1].isupper() and adjacent[i]
+                  and not connective(toks[i - 1])):
+                comma_before(i, f"'{w.text}' is set off by commas")
+                if nxt_adjacent:
+                    comma_before(i + 1, f"'{w.text}' is set off by commas")
+            # Labas, Jonai, kaip sekasi? / Ačiū, drauge.
+            # (the gap may already hold the first comma: Labas, Jonai kaip ...)
+            if (starts_sentence(i) and w.lower in GREETINGS and i + 1 < len(toks)
+                    and (adjacent[i + 1] or gaps[i + 1].strip() == ",")):
+                nx = toks[i + 1]
+                vocative = (nx.known and any(r.case == "voc" for r in nx.own)
+                            and not any(_agree(a, b) for a in self.readings_of(w.lower) if a.pos == "adj" for b in nx.own))
+                if vocative:
+                    comma_before(i + 1, f"the address '{nx.text}' is set off by commas")
+                    if i + 2 < len(toks) and adjacent[i + 2] and not any(r.case == "voc" for r in toks[i + 2].own):
+                        comma_before(i + 2, f"the address '{nx.text}' is set off by commas")
+                elif nx.lower in SUBJECT_PRONOUNS or nx.lower in INTERROGATIVES:
+                    comma_before(i + 1, f"comma needed after '{w.text}'")
+            # comparison with a clause: geriau, negu tikėjausi
+            if w.lower == "negu" and i > 0 and adjacent[i] and not connective(toks[i - 1]):
+                j = i + 1
+                while j < len(toks) and j <= i + 3 and adjacent[j] and not verb_at(j):
+                    j += 1
+                if j < len(toks) and j <= i + 3 and adjacent[j] and verb_at(j):
+                    comma_before(i, f"comma needed before '{w.text}' + clause")
+            # repeated connectives: nei Jonas, nei Petras / arba tu, arba aš / ar ateisi, ar ne
+            # ("ar" = "or" in a sentence: only the question particle at the start counts)
+            if w.lower in ("nei", "arba", "ar") and (starts_sentence(i) or w.lower != "ar" and gaps[i].strip() == ","):
+                j = i + 1
+                while j < len(toks) and j <= i + 6 and adjacent[j] and toks[j].lower != w.lower:
+                    j += 1
+                if j < len(toks) and j <= i + 6 and adjacent[j] and j > i + 1 and not connective(toks[j - 1]):
+                    comma_before(j, f"repeated '{w.text}': comma before the second one")
+            # participial phrase after its noun: Žmogus, stovintis prie lango, žiūri
+            if (i > 0 and adjacent[i] and nxt_adjacent and toks[i - 1].known
+                    and not toks[i + 1].lower in PHRASE_STOP and self.active_participle(w.text)):
+                nr = [r for r in toks[i - 1].own if r.pos == "noun"]
+                # a nominative past participle is mostly a predicate: Pavadinimas kilęs iš ..., Miestas įsikūręs
+                pr = [r for r in w.own if r.pos == "adj"
+                      and not (r.case == "nom" and any(a.tag.startswith("V.pap.") for a in self.analyses(w.text)))]
+                agreeing = [b for b in nr if any(_agree(a, b) for a in pr)]
+                later = any((toks[k].text[:1].isupper() or any(_agree(a, b) for a in pr for b in toks[k].own
+                                                              if b.pos == "noun"))
+                            for k in range(i + 1, min(i + 4, len(toks))) if adjacent[k])
+                # nominative: a predicate unless the sentence has a verb of its own (Laumės mėgstančios ...)
+                j = i
+                while j > 0 and not starts_sentence(j):
+                    j -= 1
+                sentence_verb = any(verb_at(k) for k in range(j, min(i + 8, len(toks))) if k != i
+                                    and (k < i or all(adjacent[m] for m in range(i + 1, k + 1))))
+                if (agreeing and not later                       # žygiavusia Aleksandro kariauna: attribute of the later noun
+                        and any(b.case != "gen" for b in agreeing)  # upės buvusios ...: genitive chains are ambiguous
+                        and (sentence_verb or all(b.case != "nom" for b in agreeing))):
+                    comma_before(i, f"the phrase '{w.text} …' is set off by commas")
+                    j = i + 1
+                    while j < len(toks) and j <= i + 6 and adjacent[j] and toks[j].lower not in PHRASE_STOP:
+                        if verb_at(j):
+                            comma_before(j, f"the phrase '{w.text} …' is set off by commas")
+                            break
+                        j += 1
+            # list: obuoliai, kriaušės ir slyvos
+            if (i > 0 and adjacent[i] and i + 2 < len(toks) and adjacent[i + 1] and adjacent[i + 2]
+                    and toks[i + 1].lower in ("ir", "bei", "arba") and toks[i - 1].lower != w.lower):
+                three = [toks[i - 1], w, toks[i + 2]]
+                if i >= 2 and adjacent[i - 1] and toks[i - 2].is_adj:
+                    three = []        # tomis pačiomis spalvomis ir ...: a modifier may cover more than one word
+                # no genitive readings at all: bangos amplitudės ir fazės = "the wave's amplitude and phase"
+                if three and all(t.known and t.text[:1].islower() and t.own
+                       and all(r.pos == "noun" and r.case != "gen" for r in t.own) for t in three):
+                    shared = set.intersection(*({(r.case, r.number) for r in t.own} for t in three))
+                    if any(a.lemma in TIME_LEMMAS for t in three for a in self.analyses(t.text)):
+                        shared = set()   # pavasarį gegužę ir birželį
+                    if shared:
+                        comma_before(i, f"comma between list items '{toks[i - 1].text}' and '{w.text}'")
 
         # 5. verbs: negation + genitive, subject-verb agreement, objects of 1st/2nd person
         for i, w in enumerate(toks):
@@ -522,24 +675,46 @@ class Grammar:
                 k = i
                 while k + 1 < len(toks) and adjacent[k + 1] and toks[k + 1].lower in OBJECT_SKIP:
                     k += 1
-                span = phrase(k)
                 transitive = any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)
+                span = phrase(k, participles=transitive)
                 allowed = {"nom", "voc", "ins"} if transitive else {"nom", "voc"}
+                # the whole phrase instrumental (radau nukritusia sagute), not tapusią vienuole; or
+                # only the modifiers, once the noun is fixed (radau nukritusia sagutę)
+                ins_phrase = transitive and all(any(r.case == "ins" for r in t.own) for t in span)
+                head_acc = transitive and bool(span) and any(r.case == "acc" for r in span[-1].own)
                 if span and span[-1].is_noun and span[0].lower not in CLAUSE_WORDS:
                     for x in span:
                         cases = {r.case for r in x.own}
+                        fix = []
                         if cases and cases <= allowed and cases & {"nom", "voc"}:
                             fix = self.reinflect(x, lambda t: t.endswith((".nom", ".voc")) and ".voc" not in t,
                                                  case="acc")
-                            if fix:
-                                add(Issue(x.start, x.end, x.text, "object",
-                                          f"the object of '{w.text}' takes the accusative", fix))
+                        if not fix and (ins_phrase or head_acc and x is not span[-1]) and cases <= {"ins", "voc"}:
+                            # radau nukritusia sagute -> nukritusią sagutę (the accusative lost its diacritic);
+                            # same part of speech, number and gender (tuo metu is not metų)
+                            own = [r for r in x.own if r.case == "ins"]
+                            fix = [x.cap(f) for f, rs in x.variants
+                                   if any(r.case == "acc" and r.pos == o.pos and r.number == o.number
+                                          and r.gender == o.gender for r in rs for o in own)]
+                        if fix:
+                            add(Issue(x.start, x.end, x.text, "object",
+                                      f"the object of '{w.text}' takes the accusative", fix))
 
         # subject pronoun + verb: aš buvo -> buvau
         for i in range(len(toks) - 1):
-            pron, v = toks[i], toks[i + 1]
+            pron = toks[i]
             want = SUBJECT_PERSON.get(pron.lower)
-            if not want or not adjacent[i + 1] or v.start in issues:
+            if not want or not adjacent[i + 1] or (i > 0 and toks[i - 1].lower in ("ir", "bei", "arba", "ar", "nei")):
+                continue          # aš ir jis buvome: a coordinated subject
+            # adverbs and particles may stand between: aš vakar buvo -> buvau
+            k = i + 1
+            while (k + 1 < len(toks) and k <= i + 2 and adjacent[k + 1] and self.adverb(toks[k].text)
+                   and toks[k].lower not in SUBJECT_NO_SKIP and toks[k].lower not in SUBJECT_PERSON
+                   and toks[k].lower not in NO_COMMA_AFTER and toks[k].lower not in CLAUSE_STARTERS
+                   and toks[k].lower not in PREPOSITIONS and toks[k].lower not in INTERROGATIVES):
+                k += 1
+            v = toks[k]
+            if v.start in issues:
                 continue
             fin = [a for a in self.analyses(v.text) if finite(a)]
             if not fin or any(a.tag.split(".")[2] == want for a in fin):

@@ -47,6 +47,34 @@ FLAGGED = [
     # unknown word: context picks the suggestion order
     ("Grįžau prieš porą dienu.", "dienu", "unknown", "dienų"),
     ("Vakar pries porą dienų.", "pries", "unknown", "prieš"),
+    # parenthetical words, greetings and address
+    ("Deja jis neatėjo.", "jis", "comma", ", jis"),
+    ("Jis deja neatėjo į susitikimą.", "deja", "comma", ", deja"),
+    ("Jis deja neatėjo į susitikimą.", "neatėjo", "comma", ", neatėjo"),
+    ("Žinoma aš ateisiu.", "aš", "comma", ", aš"),
+    ("Kita vertus tai brangu.", "tai", "comma", ", tai"),
+    ("Labas Jonai kaip sekasi?", "Jonai", "comma", ", Jonai"),
+    ("Labas Jonai kaip sekasi?", "kaip", "comma", ", kaip"),
+    ("Ačiū drauge.", "drauge", "comma", ", drauge"),
+    # comparison clause, repeated connectives, lists, participial phrases
+    ("Padariau daugiau negu reikėjo.", "negu", "comma", ", negu"),
+    ("Nei Jonas nei Petras neatėjo.", "nei", "comma", ", nei"),
+    ("Ar ateisi ar ne?", "ar", "comma", ", ar"),
+    ("Mėgstu ne tik obuolius bet ir kriaušes.", "bet", "comma", ", bet"),
+    ("Mėgstu obuolius kriaušes ir slyvas.", "kriaušes", "comma", ", kriaušes"),
+    ("Žmogus stovintis prie lango žiūri į mus.", "stovintis", "comma", ", stovintis"),
+    ("Žmogus stovintis prie lango žiūri į mus.", "žiūri", "comma", ", žiūri"),
+    ("Pamačiau turistus norinčius patirti egzotikos.", "norinčius", "comma", ", norinčius"),
+    # subject with an adverb between, relative case from the verb, instrumental-looking objects
+    ("Aš vakar buvo namie.", "buvo", "subject", "buvau"),
+    ("Jis jau einu.", "einu", "subject", "eina"),
+    ("Tai knyga, kuria skaičiau.", "kuria", "relative", "kurią"),
+    ("Tai mergina, kuria aš mačiau vakar.", "kuria", "relative", "kurią"),
+    ("Radau nukritusia sagute.", "nukritusia", "object", "nukritusią"),
+    ("Radau nukritusia sagute.", "sagute", "object", "sagutę"),
+    ("Skaitau įdomia knyga.", "įdomia", "object", "įdomią"),
+    ("Radau nukritusia sagutę.", "nukritusia", "object", "nukritusią"),   # noun fixed first (keyboard)
+    ("Labas, Jonai kaip sekasi?", "kaip", "comma", ", kaip"),             # first comma already there
 ]
 
 CORRECT = [
@@ -88,6 +116,21 @@ CORRECT = [
     "Tai veiksmažodis, išreiškianti liepimą forma.",
     "Forma, einanti sakinio gale kaip tarinys. Esantis mieste namas.",
     "Dainas kuriu pats. Einu gatve namo.",
+    # new comma rules: the predicate use of participles, genitive chains, modifiers, "known"
+    "Žinoma tik viena rūšis. Žinoma, kad jis gimė Vilniuje.",
+    "Laba diena. Labas rytas. Sveiki atvykę. Ačiū tau.",
+    "Jis aukštesnis negu aš. Arba tu, arba aš.",
+    "Ar žinai, kad jis grįžo ir ar jis sveikas?",
+    "Pavadinimas kilęs iš vardo. Miestas įsikūręs prie upės.",
+    "Laumės mėgstančios rinktis prie upių.",
+    "Gruodį susitiko su sausuma žygiavusia Aleksandro kariauna.",
+    "Bangų fizika nagrinėja bangos amplitudės ir fazės pokyčius.",
+    "Sienos atkurtos tomis pačiomis spalvomis ir medžiagomis.",
+    "Ruja būna pavasarį gegužę ir birželį.",
+    "Grįžęs namo jis atsigulė.",              # the comma here is optional
+    "Aš labai noriu valgyti. Aš ir jis buvome ten.",
+    "Tai plunksna, kuria rašau. Tai knyga, kuria didžiuojuosi. Tai knyga, kurios neskaičiau.",
+    "Mačiau tuo metu daug žmonių. Matėme tapusią vienuole seserį.",
 ]
 
 

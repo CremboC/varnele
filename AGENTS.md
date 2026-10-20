@@ -51,6 +51,7 @@ cargo build --release --manifest-path rust/Cargo.toml
 rust/target/release/varnele check FILE | json FILE | words W... | kb WORD [CONTEXT...] | bench
 python3 eval/parity.py                             # Rust must equal Python: 100% identical findings
 python3 eval/restore.py --sentences 300            # strip all diacritics, measure restoration
+python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precision of each comma rule
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
 .venv/bin/python eval/evaluate.py                  # vs Hunspell lt_LT (needs spylls + make myspell)
 ```
@@ -118,10 +119,11 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 | quantity | `daug vaiku` → `vaikų` | comparatives (`kiek silpnesnes`), only `kind == num` for -lika/-dešimt (not `Respublika`) |
 | agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų` | `viena kitą`; adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`) |
 | negation | `neturiu laiką` → `laiko`; a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas |
-| subject | `aš buvo` → `buvau` | only adjacent pronoun + finite verb |
-| object (1st/2nd person verb) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą` | copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`) |
-| relative | `žodžių kuriu aš rašau` → `kurių` | needs a following finite verb (`dainas kuriu pats` stays) |
+| subject | `aš buvo` → `buvau`, `aš vakar buvo`, `jis jau einu` | pronoun + finite verb, up to 2 adverb/particle-only words between (not pronouns, connectives, prepositions, `ne`, `tai`); not a coordinated subject (`aš ir jis buvome`) |
+| object (1st/2nd person verb) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą` | copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`). After a transitive verb the phrase may hold participles and an instrumental-only word takes its accusative diacritic twin (`radau nukritusia sagute` → `nukritusią sagutę`) when the whole phrase is instrumental or the head is already accusative (keyboard order); same POS/number/gender (`tuo metu` ≠ `metų`); not `tapusią vienuole` |
+| relative | `žodžių kuriu aš rašau` → `kurių`; case from the clause verb: `knyga, kuria skaičiau` → `kurią` | needs a following finite verb (`dainas kuriu pats` stays); the case fix needs a non-negated, non-reflexive TRANSITIVE_VERBS verb within 2 words (a transitive reading counts even if not "mostly a verb": `skaičiau`/`skaičius`); not `plunksna, kuria rašau`, `kuria didžiuojuosi` |
 | comma | `sakė kad` → `, kad`; before `net`/`ypač` + connective (`veikia, net jeigu`); indirect question after QUESTION_VERBS when a verb follows (`matau, ką man rašo`, not `ką nors`, `ką tik`), before kuris-forms and preps + kuris | `bet kas`, `kai kurie`, `kas nors`, `nors ir`, names/initials, after another connective |
+| comma (section 8) | parenthetical `Deja, …`, `Beje`, `Pavyzdžiui`, `Vadinasi`, `Kita vertus`, `Be abejo`, `Mano nuomone`, `Ko gero` at sentence start; `jis, deja, …` / `beje` / `pavyzdžiui` inside (both sides); greeting + address `Labas, Jonai, kaip…`, `Ačiū, drauge`; `…, negu` + verb within 3 words; repeated `nei…, nei`, `arba…, arba`, `Ar…, ar`; postposed participial phrase `žmogus, stovintis prie lango, žiūri`; lists `obuolius, kriaušes ir slyvas` | `Žinoma` only before a pronoun/verb (`Žinoma tik viena rūšis`); not after a connective; `Laba diena`, `Sveiki draugai` (agreeing adjective); mid-sentence `ar` = "or"; participle: not a nominative past participle (predicate `Pavadinimas kilęs`), not a nominative with no other verb in the sentence (`Laumės mėgstančios`), not if a capitalised word or agreeing noun follows within 3 words (`žygiavusia Aleksandro kariauna`), not genitive-only agreement; list: three lowercase nouns with no genitive reading sharing case+number, not time words, not after a modifier (`tomis pačiomis spalvomis ir`) |
 
 "Mostly a verb": listed particles/adverbs (`W`) are never verbs; otherwise verb
 lemma frequency must beat other lemmas (`mačiau` yes, `metu` no). A rule-built
@@ -175,8 +177,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 ## Latest numbers
 
-- Wikipedia (150 articles, 65k words): 18 context flags, **all real errors**
-  (15 commas, `kylanti grėsme`, `prastos kokybes`, `daugybę metu`).
+- Wikipedia (150 articles, 65k words): 19 context flags, **all real errors**
+  (16 commas incl. `nariu, pasiekusiu tokį aukštą postą`, `kylanti grėsme`, `prastos kokybes`, `daugybę metu`).
+  The 600 freq articles: 85 flags (one new, also real: `išaugas, esančias`).
+- Commas removed from the articles (`eval/commas.py`), new rules, right/wrong on test+freq:
+  participial phrase 91/10 (8 of the 10 are commas missing in the articles), lists 27/0,
+  parenthetical 31/0, address 2/0, negu 2/0, repeated connective 1/0. Old rules 2440/62
+  (the wrong ones are mostly article errors, as in the Wikipedia check).
 - vs Hunspell lt_LT: fewer false alarms on lowercase words (2,018 vs 2,483 tokens),
   better diacritic fixes (#1 correct 56.7% vs 40.0%), worse on keyboard typos
   (detect 89.3 vs 95.3%, #1 70.0 vs 76.0%).
@@ -219,23 +226,30 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 ## Ideas and open problems (backlog)
 
-### Not handled yet (from phone testing, 2026-10-19) — next session's list
+### Phone-testing list of 2026-10-19: done, and what was left on purpose
 
-- **Relative pronoun case**: `tai knyga kuria skaičiau` keeps `kuria` (should be `kurią`).
-  The relative rule matches number/gender only; the case comes from the verb of the
-  relative clause (skaičiau → acc), so it needs verb government (transitivity, below).
-- **Commas around participial/gerund phrases**: `Žmogus stovintis prie lango, ...`,
-  `Grįžęs namo jis ...` (dalyvinės/padalyvinės aplinkybės). Need phrase boundaries.
-- **Commas after introductory words**: `žinoma`, `beje`, `deja`, `be abejo`, `pavyzdžiui`,
-  `atrodo`, `vadinasi`, `galbūt` when used parenthetically (`Žinoma, aš ateisiu`).
-- **Commas around address (vocative)**: `Labas, Jonai, kaip sekasi?`
-- **Commas in lists**: `obuoliai, kriaušės ir slyvos`; repeated connectives
-  (`ir ... ir`, `nei ... nei`, `tai ... tai`).
-- **Other comma cases**: comparisons with `negu/nei/kaip` + clause, `ne ..., o ...`,
-  `ne tik ..., bet ir ...`.
-- **Subject–verb beyond adjacent pronoun**: `aš vakar buvo` (adverb between), and
-  3rd-person subjects (`jis esu`).
-- **`Radau nukritusia sagute`** (see transitivity below).
+Done (rules in the table above, tests in tests/test_grammar.py): relative case from the
+verb (`kuria skaičiau` → `kurią`), postposed participial phrases, parenthetical words,
+greeting + address, lists, `nei/arba/ar` repeated, `negu` + clause, subject with adverbs
+between, `Radau nukritusia sagute`. `ne tik …, bet ir` and `ne …, o …` were already
+covered by the clause-starter rule (`bet`, `o`).
+
+Left deliberately:
+- **Sentence-initial participial phrases** (`Grįžęs namo, jis …`): under the current
+  VLKK rules separating an adverbial participle phrase is optional, and Wikipedia mostly
+  doesn't (prototype: 7 commas in the articles vs 23 without). An auto-inserted comma
+  would be a style choice, not a fix.
+- **`atrodo`, `aišku`, `pagaliau`**: also plain verbs/adverbs (`jis atrodo pavargęs`);
+  **`galbūt`, `turbūt`, `tikriausiai`** are not set off at all in Lithuanian; **`be to`**
+  is also "without it" (`be to negalima`).
+- **`ir … ir`, `tai … tai`**: `Ir tai buvo gerai ir naudinga` (sentence `ir` + ordinary
+  `ir`), and `tai` is mostly a pronoun; `nei` alone is comparative (`geriau nei aš`) and
+  `kaip` has too many uses for a comma-before-clause rule.
+- **Vocative without a greeting** (`Kaip sekasi Jonai?`): vocatives are mostly also
+  nominative plural (`Jonai`, `draugai`), and `drauge` is also "together".
+- **3rd-person noun subjects** (`Jonas esu`): `Mama einu namo` is a missing comma after
+  an address, not a wrong verb.
+- Only the word after the greeting is checked (`Laba diena Jonai` gets no comma).
 
 - Verify on the phone (owner's tests so far found real gaps every time): the
   score compensation for `zodzou`, rare twins, key-shift autocorrect.
@@ -259,6 +273,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   to `neišiu` by the rare-twin rule. Names share lowercased lemma keys with verbs
   (`Klausė`/`klausė`), so a capitalised suggestion for lowercase input costs +0.3.
 - The keyboard inserts a comma only once the next word is typed (`pirk bet` → `bet ką`).
+  Commas *after* a word (`Deja, jis`) are issues on the following word, so they wait one
+  more word: `Deja jis.` at the end of a message stays without the comma.
+- Rules that need the first fix to see the second: `labas, jonai kaip` (gap may be a comma),
+  `radau nukritusia sagutę` (autocorrect fixes the last word first). Test both orders.
+- Found while testing, not fixed (outside this list): `ziuri` autocorrects to the indeclinable
+  `žiuri` (jury), not `žiūri`; `Įmonė kuria ir parduoda` gets a comma before `kuria` (the verb
+  kurti); `neatėjo laiku` is "fixed" to `laikų` by the negation rule.
 - `adb install` waits forever when wireless adb has dropped: reconnect first
   (`adb mdns services`, then `adb connect HOST:PORT`).
 - HeliBoard capitalises sentences only if the text field asks for it
@@ -289,3 +310,5 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 7. keyboard: fixes survive punctuation and user history (HeliBoard fork)
 8. reflexive-only verbs, i/y cost, case requirements prefer candidates agreeing with the adjective
 9. transitive objects, indirect-question commas, flat diacritic cost, pronoun-noun cleanup
+10. phone list: parenthetical/address/list/participial-phrase/negu/repeated-connective commas,
+    relative case from the verb, subject over adverbs, instrumental objects; eval/commas.py

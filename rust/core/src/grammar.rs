@@ -111,7 +111,7 @@ const TIME_WORDS: &[&str] = &["visą", "visus", "visas", "kiekvieną", "ištisą
 const TRANSITIVE_VERBS: &[&str] = &[
     "matyti", "mato", "matė", "rasti", "randa", "rado", "turėti", "turi", "turėjo", "gauti", "gauna",
     "gavo", "pirkti", "perka", "pirko", "žinoti", "žino", "žinojo", "mylėti", "myli", "mylėjo",
-    "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko",
+    "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko", "skaityti", "skaito", "skaitė",
 ];
 /// Words that may stand between a verb and its object: matau dar vieną klaidą
 const OBJECT_SKIP: &[&str] = &["dar", "jau", "vėl", "irgi", "tik", "net"];
@@ -125,6 +125,23 @@ const QUESTION_VERBS: &[&str] = &[
 ];
 /// These start a clause, they are not the object: manau, kas ... / žinau, kuris ...
 const CLAUSE_WORDS: &[&str] = &["kas", "kuris", "kuri", "kurie", "kurios", "koks", "kokia", "kokie", "kokios"];
+/// Accusative forms of kuris: knyga, kurią skaičiau
+const KURIS_ACC: &[&str] = &["kurį", "kurią", "kuriuos", "kurias"];
+/// Parenthetical words, set off by commas: Deja, neatėjo. / Jis, beje, sutiko.
+const INTRO_ANYWHERE: &[&str] = &["deja", "beje", "pavyzdžiui"];
+const INTRO_START: &[&str] = &["deja", "beje", "pavyzdžiui", "vadinasi", "žinoma"];
+const INTRO_PAIRS: &[(&str, &str)] = &[("kita", "vertus"), ("be", "abejo"), ("mano", "nuomone"), ("ko", "gero")];
+/// Greetings: a vocative or a new clause after them takes a comma (Labas, Jonai, kaip sekasi?)
+const GREETINGS: &[&str] = &[
+    "labas", "laba", "labi", "labos", "sveikas", "sveika", "sveiki", "sveikos", "ačiū", "dėkui",
+    "labanakt", "sudie", "sveikinu",
+];
+const SUBJECT_PRONOUNS: &[&str] = &["aš", "tu", "jis", "ji", "mes", "jūs", "jie", "jos"];
+/// Between a subject pronoun and its verb (aš vakar buvo): not these
+const SUBJECT_NO_SKIP: &[&str] = &["tai", "tas", "ta", "šis", "ši", "tie", "tos", "ne", "nei", "ar", "jo", "jos", "jų"];
+/// A participial phrase does not run across these (plus CLAUSE_STARTERS and KURIS)
+const PHRASE_STOP: &[&str] = &["ir", "bei", "ar", "arba", "o", "bet", "nei", "negu", "kaip"];
+const SENTENCE_GAP: &str = ".!?…\n(„“\"«»–—-";
 const COPULAS: &[&str] = &[
     "būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
     "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė", "gimsta",
@@ -363,6 +380,18 @@ impl<'a> G<'a> {
         other == 0 || verb > other
     }
 
+    /// Every reading is an active participle (or a gerund): stovintis, nukritusią.
+    fn active_participle(&self, w: &str) -> bool {
+        let an = self.analyses(w);
+        !an.is_empty() && an.iter().all(|a| { let t = self.tag(a); t.starts_with("V.pap.") || t.starts_with("V.pprs.") || t.starts_with("V.ger.") })
+    }
+
+    /// Only adverb or particle readings: vakar, dar, tikrai (not tikras).
+    fn adverb(&self, w: &str) -> bool {
+        let an = self.analyses(w);
+        !an.is_empty() && an.iter().all(|a| matches!(self.tag(a), "W" | "Adv"))
+    }
+
     fn word(&self, text: String, start: usize, end: usize) -> Word {
         let own = self.readings_of(&text);
         let known = self.known(&text);
@@ -438,6 +467,10 @@ impl Word {
     }
 }
 
+fn phrase_stop(w: &str) -> bool {
+    PHRASE_STOP.contains(&w) || CLAUSE_STARTERS.contains(&w) || KURIS.contains(&w)
+}
+
 fn could_agree(g: &G, w1: &Word, w2: &Word) -> bool {
     let mut r1 = w1.pos_readings(g);
     r1.extend(w1.variants(g).iter().flat_map(|(_, rs)| rs.iter().cloned()));
@@ -460,7 +493,8 @@ impl Grammar {
             issues.entry(x.start).or_insert(x);
         };
 
-        let phrase = |i: usize| -> Vec<usize> {
+        // participles end the phrase unless allowed (radau nukritusią sagutę)
+        let phrase = |i: usize, participles: bool| -> Vec<usize> {
             let mut span: Vec<usize> = Vec::new();
             let mut j = i + 1;
             while j < toks.len() && adjacent[j] {
@@ -474,7 +508,7 @@ impl Grammar {
                     span.push(j);
                     break;
                 }
-                if !w.is_adj(&g) || w.is_participle(&g) {
+                if !w.is_adj(&g) || (w.is_participle(&g) && !participles) {
                     break;
                 }
                 span.push(j);
@@ -527,7 +561,7 @@ impl Grammar {
                 None
             };
             if let (Some(prep), true) = (prep, nxt_adjacent) {
-                let span = phrase(i);
+                let span = phrase(i, false);
                 let numeral = !span.is_empty() && g.analyses(&toks[span[0]].text).iter().any(|a| a.kind == Kind::Num);
                 if !span.is_empty()
                     && toks[*span.last().unwrap()].is_noun(&g)
@@ -543,7 +577,7 @@ impl Grammar {
             }
             // 3. quantity words
             if nxt_adjacent && w.is_quantity(&g) {
-                let span = phrase(i);
+                let span = phrase(i, false);
                 if !span.is_empty()
                     && toks[*span.last().unwrap()].is_noun(&g)
                     && !span.iter().any(|&x| toks[x].is_comparative(&g))
@@ -606,7 +640,7 @@ impl Grammar {
         for i in 1..toks.len() {
             let (w, prev) = (&toks[i], &toks[i - 1]);
             let gap: String = chars[prev.end..w.start].iter().collect();
-            if KURIS.contains(&w.lower.as_str()) || !(adjacent[i] || gap.trim() == ",") || !prev.is_noun(&g) {
+            if KURIS_ACC.contains(&w.lower.as_str()) || !(adjacent[i] || gap.trim() == ",") || !prev.is_noun(&g) {
                 continue;
             }
             let fw = fold(&w.lower);
@@ -616,6 +650,39 @@ impl Grammar {
                     (r.number.is_none() || r.number == Some(num)) && (gen.is_none() || r.gender.is_none() || r.gender == *gen)
                 }))
             };
+            if KURIS.contains(&w.lower.as_str()) {
+                // its case comes from the verb of the clause: knyga kuria skaičiau -> kurią
+                let mut cands: Vec<String> = KURIS_ACC.iter()
+                    .filter(|k| fold(k) == fw && agrees(KURIS_FEATURES.iter().find(|(f, _)| f == *k).unwrap().1))
+                    .map(|k| w.cap(k)).collect();
+                let mut j = i + 1;
+                let mut hit = false;
+                while j < toks.len() && j <= i + 2 && adjacent[j] && !phrase_stop(&toks[j].lower) {
+                    let an_j = g.analyses(&toks[j].text);
+                    // (skaičiau is a verb here although the noun skaičius is more frequent)
+                    if an_j.iter().any(|a| {
+                        g.finite(a) && TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v))
+                            && !a.prefix.starts_with("ne") && !g.tag(a).ends_with(".refl")
+                    }) {
+                        hit = true;
+                        break;
+                    }
+                    if an_j.iter().any(|a| g.finite(a)) && g.mostly_verb(&an_j) {
+                        break;
+                    }
+                    j += 1;
+                }
+                if !hit {
+                    cands.clear();
+                }
+                if !cands.is_empty() {
+                    add(&mut issues, Issue {
+                        start: w.start, end: w.end, word: w.text.clone(), rule: "relative",
+                        message: format!("'{}' takes an accusative object", toks[j].text), suggestions: cands,
+                    });
+                }
+                continue;
+            }
             let cands: Vec<String> = KURIS_FEATURES.iter()
                 .filter(|(k, feats)| fold(k) == fw && agrees(feats))
                 .map(|(k, _)| w.cap(k)).collect();
@@ -678,6 +745,152 @@ impl Grammar {
             }
         }
 
+        // 8. more commas: parenthetical words, greetings and address, repeated connectives,
+        //    participial phrases, lists
+        let gap_of = |i: usize| -> String { if i == 0 { String::new() } else { chars[toks[i - 1].end..toks[i].start].iter().collect() } };
+        let starts_sentence = |i: usize| i == 0 || gap_of(i).chars().any(|c| SENTENCE_GAP.contains(c));
+        let comma_before = |issues: &mut BTreeMap<usize, Issue>, k: usize, why: String| {
+            if k < toks.len() && adjacent[k] {
+                let t = &toks[k];
+                add(issues, Issue {
+                    start: t.start, end: t.end, word: t.text.clone(), rule: "comma", message: why,
+                    suggestions: vec![format!(", {}", t.text)],
+                });
+            }
+        };
+        let connective = |t: &Word| {
+            let l = t.lower.as_str();
+            NO_COMMA_AFTER.contains(&l) || CLAUSE_STARTERS.contains(&l) || KURIS.contains(&l) || prep_cases(l).is_some()
+        };
+        let verb_at = |k: usize| {
+            let an_k = g.analyses(&toks[k].text);
+            an_k.iter().any(|a| g.finite(a)) && g.mostly_verb(&an_k)
+        };
+
+        for (i, w) in toks.iter().enumerate() {
+            let nxt_adjacent = i + 1 < toks.len() && adjacent[i + 1];
+            let lw = w.lower.as_str();
+            // Deja, neatėjo. / Kita vertus, ... / Jis, beje, sutiko.
+            if starts_sentence(i) && nxt_adjacent {
+                let pair = i + 2 < toks.len() && adjacent[i + 2] && INTRO_PAIRS.contains(&(lw, toks[i + 1].lower.as_str()));
+                if pair {
+                    comma_before(&mut issues, i + 2, format!("comma needed after '{} {}'", w.text, toks[i + 1].text));
+                } else if INTRO_START.contains(&lw) && !first_upper(&toks[i + 1].text) {
+                    let nx = &toks[i + 1];
+                    // žinoma = "it is known" (Žinoma tik viena rūšis): only before a subject or verb
+                    if lw != "žinoma" || SUBJECT_PRONOUNS.contains(&nx.lower.as_str()) || verb_at(i + 1) {
+                        comma_before(&mut issues, i + 1, format!("comma needed after '{}'", w.text));
+                    }
+                }
+            } else if INTRO_ANYWHERE.contains(&lw) && !first_upper(&w.text) && adjacent[i] && !connective(&toks[i - 1]) {
+                comma_before(&mut issues, i, format!("'{}' is set off by commas", w.text));
+                if nxt_adjacent {
+                    comma_before(&mut issues, i + 1, format!("'{}' is set off by commas", w.text));
+                }
+            }
+            // Labas, Jonai, kaip sekasi? / Ačiū, drauge.
+            // (the gap may already hold the first comma: Labas, Jonai kaip ...)
+            if starts_sentence(i) && GREETINGS.contains(&lw) && i + 1 < toks.len()
+                && (adjacent[i + 1] || gap_of(i + 1).trim() == ",")
+            {
+                let nx = &toks[i + 1];
+                let vocative = nx.known
+                    && nx.own.iter().any(|r| r.case == "voc")
+                    && !g.readings_of(lw).iter().filter(|a| a.pos == Pos::Adj).any(|a| nx.own.iter().any(|b| agree(a, b)));
+                if vocative {
+                    comma_before(&mut issues, i + 1, format!("the address '{}' is set off by commas", nx.text));
+                    if i + 2 < toks.len() && adjacent[i + 2] && !toks[i + 2].own.iter().any(|r| r.case == "voc") {
+                        comma_before(&mut issues, i + 2, format!("the address '{}' is set off by commas", nx.text));
+                    }
+                } else if SUBJECT_PRONOUNS.contains(&nx.lower.as_str())
+                    || INTERROGATIVES.contains(&nx.lower.as_str())
+                    || KURIS.contains(&nx.lower.as_str())
+                {
+                    comma_before(&mut issues, i + 1, format!("comma needed after '{}'", w.text));
+                }
+            }
+            // comparison with a clause: geriau, negu tikėjausi
+            if lw == "negu" && i > 0 && adjacent[i] && !connective(&toks[i - 1]) {
+                let mut j = i + 1;
+                while j < toks.len() && j <= i + 3 && adjacent[j] && !verb_at(j) {
+                    j += 1;
+                }
+                if j < toks.len() && j <= i + 3 && adjacent[j] && verb_at(j) {
+                    comma_before(&mut issues, i, format!("comma needed before '{}' + clause", w.text));
+                }
+            }
+            // repeated connectives: nei Jonas, nei Petras / arba tu, arba aš / ar ateisi, ar ne
+            // ("ar" = "or" in a sentence: only the question particle at the start counts)
+            if ["nei", "arba", "ar"].contains(&lw) && (starts_sentence(i) || (lw != "ar" && gap_of(i).trim() == ",")) {
+                let mut j = i + 1;
+                while j < toks.len() && j <= i + 6 && adjacent[j] && toks[j].lower != w.lower {
+                    j += 1;
+                }
+                if j < toks.len() && j <= i + 6 && adjacent[j] && j > i + 1 && !connective(&toks[j - 1]) {
+                    comma_before(&mut issues, j, format!("repeated '{}': comma before the second one", w.text));
+                }
+            }
+            // participial phrase after its noun: Žmogus, stovintis prie lango, žiūri
+            if i > 0 && adjacent[i] && nxt_adjacent && toks[i - 1].known
+                && !phrase_stop(&toks[i + 1].lower) && g.active_participle(&w.text)
+            {
+                let nr: Vec<&Reading> = toks[i - 1].own.iter().filter(|r| r.pos == Pos::Noun).collect();
+                // a nominative past participle is mostly a predicate: Pavadinimas kilęs iš ..., Miestas įsikūręs
+                let pap = g.analyses(&w.text).iter().any(|a| g.tag(a).starts_with("V.pap."));
+                let pr: Vec<&Reading> = w.own.iter().filter(|r| r.pos == Pos::Adj && !(r.case == "nom" && pap)).collect();
+                let agreeing: Vec<&Reading> = nr.iter().copied().filter(|b| pr.iter().any(|a| agree(a, b))).collect();
+                let later = (i + 1..(i + 4).min(toks.len())).filter(|&k| adjacent[k]).any(|k| {
+                    first_upper(&toks[k].text)
+                        || pr.iter().any(|a| toks[k].own.iter().any(|b| b.pos == Pos::Noun && agree(a, b)))
+                });
+                // nominative: a predicate unless the sentence has a verb of its own (Laumės mėgstančios ...)
+                let mut j = i;
+                while j > 0 && !starts_sentence(j) {
+                    j -= 1;
+                }
+                let sentence_verb = (j..(i + 8).min(toks.len()))
+                    .filter(|&k| k != i && (k < i || (i + 1..=k).all(|m| adjacent[m])))
+                    .any(|k| verb_at(k));
+                if !agreeing.is_empty()
+                    && !later // žygiavusia Aleksandro kariauna: attribute of the later noun
+                    && agreeing.iter().any(|b| b.case != "gen") // upės buvusios ...: genitive chains are ambiguous
+                    && (sentence_verb || agreeing.iter().all(|b| b.case != "nom"))
+                {
+                    comma_before(&mut issues, i, format!("the phrase '{} …' is set off by commas", w.text));
+                    let mut j = i + 1;
+                    while j < toks.len() && j <= i + 6 && adjacent[j] && !phrase_stop(&toks[j].lower) {
+                        if verb_at(j) {
+                            comma_before(&mut issues, j, format!("the phrase '{} …' is set off by commas", w.text));
+                            break;
+                        }
+                        j += 1;
+                    }
+                }
+            }
+            // list: obuoliai, kriaušės ir slyvos
+            if i > 0 && adjacent[i] && i + 2 < toks.len() && adjacent[i + 1] && adjacent[i + 2]
+                && ["ir", "bei", "arba"].contains(&toks[i + 1].lower.as_str())
+                && toks[i - 1].lower != w.lower
+            {
+                // tomis pačiomis spalvomis ir ...: a modifier may cover more than one word
+                let modified = i >= 2 && adjacent[i - 1] && toks[i - 2].is_adj(&g);
+                let three = [&toks[i - 1], w, &toks[i + 2]];
+                // no genitive readings at all: bangos amplitudės ir fazės = "the wave's amplitude and phase"
+                if !modified && three.iter().all(|t| {
+                    t.known && first_lower(&t.text) && !t.own.is_empty()
+                        && t.own.iter().all(|r| r.pos == Pos::Noun && r.case != "gen")
+                }) {
+                    let shared = three[0].own.iter().any(|r| {
+                        three[1..].iter().all(|t| t.own.iter().any(|x| x.case == r.case && x.number == r.number))
+                    });
+                    let timey = three.iter().any(|t| g.analyses(&t.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str())));
+                    if shared && !timey {
+                        comma_before(&mut issues, i, format!("comma between list items '{}' and '{}'", toks[i - 1].text, w.text));
+                    }
+                }
+            }
+        }
+
         // 5. verbs: negation + genitive, objects of 1st/2nd person verbs
         for (i, w) in toks.iter().enumerate() {
             if i + 1 >= toks.len() || !adjacent[i + 1] {
@@ -706,7 +919,7 @@ impl Grammar {
                     });
                     continue;
                 }
-                let span = phrase(i);
+                let span = phrase(i, false);
                 let timey = span.iter().any(|&x| {
                     let t = &toks[x];
                     TIME_WORDS.contains(&t.lower.as_str())
@@ -744,27 +957,45 @@ impl Grammar {
                 while k + 1 < toks.len() && adjacent[k + 1] && OBJECT_SKIP.contains(&toks[k + 1].lower.as_str()) {
                     k += 1;
                 }
-                let span = phrase(k);
                 let transitive = verbs.iter().any(|a| TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)));
+                let span = phrase(k, transitive);
                 let allowed: &[&str] = if transitive { &["nom", "voc", "ins"] } else { &["nom", "voc"] };
+                // the whole phrase instrumental (radau nukritusia sagute), not tapusią vienuole; or
+                // only the modifiers, once the noun is fixed (radau nukritusia sagutę)
+                let ins_phrase = transitive && span.iter().all(|&x| toks[x].own.iter().any(|r| r.case == "ins"));
+                let head_acc = transitive && !span.is_empty() && toks[*span.last().unwrap()].own.iter().any(|r| r.case == "acc");
                 if !span.is_empty()
                     && toks[*span.last().unwrap()].is_noun(&g)
                     && !CLAUSE_WORDS.contains(&toks[span[0]].lower.as_str())
                 {
                     for &x in &span {
                         let t = &toks[x];
+                        let mut fix: Vec<String> = Vec::new();
                         if !t.own.is_empty()
                             && t.own.iter().all(|r| allowed.contains(&r.case))
                             && t.own.iter().any(|r| r.case == "nom" || r.case == "voc")
                         {
-                            let fix = g.reinflect(t, |tg| tg.ends_with(".nom"), Some("acc"));
-                            if !fix.is_empty() {
-                                add(&mut issues, Issue {
-                                    start: t.start, end: t.end, word: t.text.clone(), rule: "object",
-                                    message: format!("the object of '{}' takes the accusative", w.text),
-                                    suggestions: fix,
-                                });
-                            }
+                            fix = g.reinflect(t, |tg| tg.ends_with(".nom"), Some("acc"));
+                        }
+                        if fix.is_empty()
+                            && (ins_phrase || (head_acc && x != *span.last().unwrap()))
+                            && t.own.iter().all(|r| r.case == "ins" || r.case == "voc")
+                        {
+                            // radau nukritusia sagute -> nukritusią sagutę (the accusative lost its diacritic);
+                            // same part of speech, number and gender (tuo metu is not metų)
+                            let own: Vec<&Reading> = t.own.iter().filter(|r| r.case == "ins").collect();
+                            fix = t.variants(&g).iter()
+                                .filter(|(_, rs)| rs.iter().any(|r| r.case == "acc" && own.iter().any(|o| {
+                                    r.pos == o.pos && r.number == o.number && r.gender == o.gender
+                                })))
+                                .map(|(f, _)| t.cap(f)).collect();
+                        }
+                        if !fix.is_empty() {
+                            add(&mut issues, Issue {
+                                start: t.start, end: t.end, word: t.text.clone(), rule: "object",
+                                message: format!("the object of '{}' takes the accusative", w.text),
+                                suggestions: fix,
+                            });
                         }
                     }
                 }
@@ -773,9 +1004,23 @@ impl Grammar {
 
         // subject pronoun + verb: aš buvo -> buvau
         for i in 0..toks.len().saturating_sub(1) {
-            let (pron, v) = (&toks[i], &toks[i + 1]);
+            let pron = &toks[i];
             let Some(want) = subject_person(&pron.lower) else { continue };
-            if !adjacent[i + 1] || issues.contains_key(&v.start) {
+            if !adjacent[i + 1] || (i > 0 && ["ir", "bei", "arba", "ar", "nei"].contains(&toks[i - 1].lower.as_str())) {
+                continue; // aš ir jis buvome: a coordinated subject
+            }
+            // adverbs and particles may stand between: aš vakar buvo -> buvau
+            let mut k = i + 1;
+            while k + 1 < toks.len() && k <= i + 2 && adjacent[k + 1] && g.adverb(&toks[k].text) && {
+                let l = toks[k].lower.as_str();
+                !SUBJECT_NO_SKIP.contains(&l) && subject_person(l).is_none() && !NO_COMMA_AFTER.contains(&l)
+                    && !CLAUSE_STARTERS.contains(&l) && !KURIS.contains(&l) && prep_cases(l).is_none()
+                    && !INTERROGATIVES.contains(&l)
+            } {
+                k += 1;
+            }
+            let v = &toks[k];
+            if issues.contains_key(&v.start) {
                 continue;
             }
             let fin: Vec<Analysis> = g.analyses(&v.text).into_iter().filter(|a| g.finite(a)).collect();
