@@ -104,3 +104,9 @@ It cannot replace a keyboard's own autocorrect (Gboard, Samsung Keyboard).
 - Verb rules only fire on unambiguous verbs and phrases, so ambiguous cases pass:
   `pakeičiau pora` (`pora` could be instrumental), objects of 3rd person verbs
   (the noun could be the subject), and anything with words in between.
+
+## Licence
+
+BSD 3-Clause, see [LICENSE](LICENSE). The word list in `vendor/ispell-lt` and the
+data generated from it (`data/varnele.bin`) also carry the ispell-lt notice
+([vendor/ispell-lt/COPYING](vendor/ispell-lt/COPYING)); ship both with any binary.
