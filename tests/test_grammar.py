@@ -85,6 +85,24 @@ FLAGGED = [
     ("Labas, Jonai kaip sekasi?", "kaip", "comma", ", kaip"),             # first comma already there
     ("Bebėgiodamas link namu.", "namu", "case", "namų"),
     ("Aš net ne vienos eilutes kodo neparašiau.", "eilutes", "agreement", "eilutės"),  # not "viena kitą"
+    # a noun before another noun is its genitive
+    ("Miesto gyventoju skaičius auga.", "gyventoju", "case", "gyventojų"),
+    ("Vietoves gyventojai pyksta.", "Vietoves", "case", "Vietovės"),
+    ("Lietuvos kariuomenes pulkas žygiavo.", "kariuomenes", "case", "kariuomenės"),
+    ("Sutartis dėl branduoliniu ginklu kontrolės.", "branduoliniu", "case", "branduolinių"),
+    ("Sutartis dėl branduoliniu ginklu kontrolės.", "ginklu", "case", "ginklų"),
+    # objects of 3rd person transitive verbs once the subject is in front; adverbs in between
+    ("Jonas mato namas.", "namas", "object", "namą"),
+    ("Mama skaito knyga.", "knyga", "object", "knygą"),
+    ("Jis vakar nupirko nauja knyga.", "nauja", "object", "naują"),
+    ("Jis turi didele mašina.", "mašina", "object", "mašiną"),
+    ("Mačiau labai gražus namas.", "gražus", "object", "gražų"),
+    # agreement: change the word typed without diacritics; predicate adjectives
+    ("Tai buvo nedidele mergaitė.", "nedidele", "agreement", "nedidelė"),
+    ("Ėjo pro nedideles gyvenvietės.", "gyvenvietės", "agreement", "gyvenvietes"),   # pro takes the accusative
+    ("Ji nedidele.", "nedidele", "agreement", "nedidelė"),
+    ("Mergaitė buvo labai nedidele.", "nedidele", "agreement", "nedidelė"),
+    ("Lempa kabo virs stalo.", "virs", "case", "virš"),               # virs = will become, unless a verb came before
 ]
 
 CORRECT = [
@@ -150,6 +168,14 @@ CORRECT = [
     "Pamėgink rašyti kokį nors sakinį. Ar kas nors ateis?",
     "Turėjau 2 katinus. Laukiau valandą. 2010 metais. Plaukė vandenynu.",
     "Rieduliai guli 20 m atstumu. Suskirstyta į 12 etniniu pagrindu suformuotų regionų.",
+    # instrumentals and accusatives before a noun that are not genitives
+    "Karo metu žmonės slėpėsi. Šiuo metu dirbu. Sovietmečiu dvarai nugriauti. Vienu metu kaime veikė mokykla.",
+    "Pamatė mergaites mokykloje. Grįžo su broliu namo. Dirbo mokytoju kaimo mokykloje.",
+    "Tapo oficialiu ekipos pilotu bandytoju. Garsėja aktyviu naktiniu gyvenimu.",
+    "Knygą skaito mama. Jonas ir Petras mato namą. Ši kolekcija atsirado kartu su muziejumi.",
+    "Jie sutiko baigti partiją. Intervencija turėtų būti suprantama plačiau. Vaikai gavo dovanų.",
+    "Cerkvė tapo parapine. Ji buvo mokytoja. Jos buvo gražios. Jis buvo geru draugu. Ji grįžo laiminga.",
+    "Mama virs sriubos. Vanduo greitai virs.",
 ]
 
 

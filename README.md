@@ -25,7 +25,7 @@ python3 -m unittest discover tests
 | Prefix grammar | `varnele/analyzer.py` | `ne-/nebe-/be-/te-/tebe-` + 12 verbal prefixes + the `-si-` infix, checked against each verb's prefix flags |
 | Spoken register | `varnele/analyzer.py` | `-ti→-t`, `-me→-m`, `-te→-t`, `-si→-s`, `-oje→-oj`, `-uose→-uos`, `-oms→-om`, … mapped back to formal forms |
 | Word formation | `varnele/derivation.py` | Productive suffixes (`-inis`, `-iškas`, `-ininkas`, diminutives…), compounds, `geo-/anti-/neo-…` prefixes. **Blocked** whenever a dictionary word is one slip away |
-| Context rules | `varnele/grammar.py` | Preposition government (`prieš pora` → `porą`), adjective–noun agreement in case/number/gender, genitive after quantities (`daug vaiku` → `vaikų`), missing commas before `kad`, `nes`, `bet`, `kuris`…; genitive after negation (`neturiu laiką` → `laiko`), subject–verb person (`aš buvo` → `buvau`), objects of 1st/2nd person verbs (`mačiau namas` → `namą`). Fixes are generated from the word's own paradigm |
+| Context rules | `varnele/grammar.py` | Preposition government (`prieš pora` → `porą`, `kabo virs stalo` → `virš`), adjective–noun agreement in case/number/gender, predicate adjectives (`ji nedidele` → `nedidelė`), genitive after quantities (`daug vaiku` → `vaikų`) and before a head noun (`gyventoju skaičius` → `gyventojų`), missing commas before `kad`, `nes`, `bet`, `kuris`…; genitive after negation (`neturiu laiką` → `laiko`), subject–verb person (`aš buvo` → `buvau`), objects of 1st/2nd person verbs and of 3rd person ones whose subject comes first (`mačiau namas`, `Jonas mato namas` → `namą`). Fixes are generated from the word's own paradigm |
 | Suggestions | `varnele/suggest.py` | Diacritic-blind lookup + one typo, ranked by weighted edit distance (diacritic swaps cheap, adjacent keys cheaper), form and lemma frequency |
 
 Additions to the lexicon go in `data/extra.txt` (same `word/FLAGS` syntax as ispell-lt).
@@ -47,25 +47,27 @@ ispell-lt data; it's the checker in LibreOffice, Firefox and Chrome.
 | Keyboard typo: detected / #1 / top 5 | 89.3 / 70.0 / 87.7 % | **95.3 / 76.0 / 92.0 %** |
 
 Undetected one-diacritic errors are mostly real-word errors
-(`žmonės → žmones`). Catching those needs sentence context.
+(`žmonės → žmones`). The context rules below catch the ones grammar decides.
 
 ### Context rules
 
 On the same 150 articles (edited text, so nearly every flag ought to be wrong)
-the context rules raise 17 flags in 65 k words. All 17 are real errors in the
-articles: 15 missing commas plus `prastos kokybes` and `daugybę metu`.
+the context rules raise 19 flags in 65 k words. All 19 are real errors in the
+articles: 16 missing commas plus `prastos kokybes`, `kylanti grėsme` and `daugybę metu`.
 
 `python3 eval/restore.py` strips every diacritic from 300 real sentences, applies
 the top suggestion for each flagged word and counts what comes back:
 
 | | words only | + context rules |
 |---|---|---|
-| Words needing a diacritic, restored correctly | 59.7 % | **62.8 %** |
+| Words needing a diacritic, restored correctly | 63.1 % | **67.7 %** |
 | Correct words wrongly changed | 0 | 1 |
-| Whole sentence exactly right | 23.0 % | **26.7 %** |
+| Whole sentence exactly right | 24.3 % | **28.3 %** |
 
-Most of what is still missed is valid without diacritics and needs wider
-context: `kalba`/`kalbą`, `nedidele`/`nedidelė`, `virs`/`virš`.
+Most of what is still missed is valid without diacritics and grammar can't decide
+it (`kalba` is "speaks" and "language", `žmones` an accusative). A model of case
+sequences trained on the frequency corpus was tried for these and left out: on
+173 k words of training text it changed too many correct words (see AGENTS.md).
 
 ## Rust runtime and Android app
 
@@ -102,8 +104,8 @@ It cannot replace a keyboard's own autocorrect (Gboard, Samsung Keyboard).
 - The lexicon (2020) lacks many loanwords and names (`klipas`, `singlas`, foreign surnames).
 - Ordinary typos are detected and ranked less well than by Hunspell.
 - Verb rules only fire on unambiguous verbs and phrases, so ambiguous cases pass:
-  `pakeičiau pora` (`pora` could be instrumental), objects of 3rd person verbs
-  (the noun could be the subject), and anything with words in between.
+  `pakeičiau pora` (`pora` could be instrumental), objects of 3rd person verbs with no
+  subject before them (`Mato namas Jonas`), and words in between other than adverbs.
 
 ## Licence
 

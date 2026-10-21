@@ -131,6 +131,9 @@ COPULAS = {"būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "li
            "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė",
            "gimsta", "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "pasidaryti",
            "pasidarė", "pasidaro", "pasirodyti", "pasirodė", "pasirodo", "dirbti", "dirbo", "dirba"}
+# Linking verbs whose predicate adjective is nominative (tapo parapine, dirbo vienas: not these)
+NOMINATIVE_COPULAS = {"būti", "buvo", "būna", "esa", "yra", "atrodyti", "atrodė", "atrodo", "likti", "liko",
+                      "lieka", "jaustis", "jautėsi", "jaučiasi"}
 # Participles of these verbs take a predicate instrumental, not an agreeing noun:
 # tapusią vienuole, išrinktas prezidentu, vadinamas tėvu, laikomas didvyriu.
 # Principal parts; matched by ending so prefixed entries (išrinkti) count too.
@@ -145,8 +148,14 @@ COPULA_FORMS = {"nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esam
 SUBJECT_PERSON = {"aš": "1sg", "tu": "2sg", "mes": "1pl", "jūs": "2pl",
                   "jis": "3", "ji": "3", "jie": "3"}
 PERSONS = {"1sg", "2sg", "3", "1pl", "2pl"}
+# subject pronoun -> (number, gender) of its predicate adjective
+PRONOUN_FEATURES = {"jis": ("sg", "m"), "ji": ("sg", "f"), "jie": ("pl", "m"), "jos": ("pl", "f")}
 PERSON_NAMES = {"1sg": "1st person singular", "2sg": "2nd person singular", "3": "3rd person",
                 "1pl": "1st person plural", "2pl": "2nd person plural"}
+
+
+def has_diacritics(w):
+    return any(c in "ąčęėįšųūžĄČĘĖĮŠŲŪŽ" for c in w)
 
 
 def retag(tag, **change):
@@ -294,6 +303,7 @@ class Grammar:
         self._read, self._var, self._known, self._an, self._forms = {}, {}, {}, {}, {}
         self._sugg = {}
         self.lemma_freq = _load_freq("lemma_freq.tsv")
+        self.freq = _load_freq("freq.tsv")
 
     def analyses(self, w):
         if w not in self._an:
@@ -338,6 +348,11 @@ class Grammar:
             else:
                 other = max(other, f, 1)
         return other == 0 or verb > other
+
+    def mostly_particle(self, analyses):
+        """A listed particle/adverb reading that is the frequent one: labai (very), not labas."""
+        w = max((self.lemma_freq.get(a.lemma.lower(), 0) for a in analyses if a.tag == "W"), default=-1)
+        return w > 0 and all(self.lemma_freq.get(a.lemma.lower(), 0) <= w for a in analyses)
 
     def active_participle(self, w):
         """Every reading is an active participle (or a gerund): stovintis, nukritusią."""
@@ -425,6 +440,9 @@ class Grammar:
                 return            # indeclinable word: nothing to check
             add(Issue(w.start, w.end, w.text, rule if w.known else "context", why, fixes))
 
+        def starts_sentence(i):
+            return i == 0 or bool(SENTENCE_GAP.search(gaps[i]))
+
         def verb_at(k):
             an_k = self.analyses(toks[k].text)
             return any(finite(a) for a in an_k) and self.mostly_verb(an_k)
@@ -497,6 +515,23 @@ class Grammar:
                     and toks[i + 1].lower in KURIS and toks[i - 1].lower not in NO_COMMA_AFTER):
                 add(Issue(w.start, w.end, w.text, "comma",
                           f"comma needed before '{w.text} {toks[i + 1].text}'", [", " + w.text]))
+
+        # a preposition that lost its diacritic and became a verb: kabo virs stalo -> virš
+        # (only when the clause has another verb: mama virs sriubos = will boil)
+        for i, w in enumerate(toks):
+            prep = PREP_BY_FOLD.get(fold(w.lower))
+            if not prep or prep == w.lower or not w.known or i + 1 >= len(toks) or not adjacent[i + 1]:
+                continue
+            span = phrase(i)
+            if not span or not span[-1].is_noun or not all(x.known and any(x.can_be(c) for c in PREPOSITIONS[prep])
+                                                            for x in span):
+                continue
+            j = i
+            while j > 0 and not starts_sentence(j):
+                j -= 1
+            if any(verb_at(k) for k in range(j, i)):
+                add(Issue(w.start, w.end, w.text, "case", f"'{w.text}' before '{span[-1].text}' is the preposition '{prep}'",
+                          [w.cap(prep)]))
 
         # indefinite pronoun typed without diacritics: koki nors -> kokį nors, ka nors -> ką nors
         for i in range(len(toks) - 1):
@@ -588,9 +623,6 @@ class Grammar:
 
         # 8. more commas: parenthetical words, greetings and address, repeated connectives,
         #    participial phrases
-        def starts_sentence(i):
-            return i == 0 or bool(SENTENCE_GAP.search(gaps[i]))
-
         def comma_before(k, why):
             if k < len(toks) and adjacent[k]:
                 t = toks[k]
@@ -686,6 +718,33 @@ class Grammar:
                     if shared:
                         comma_before(i, f"comma between list items '{toks[i - 1].text}' and '{w.text}'")
 
+        def between(k):
+            """An adverb that may stand between a verb and its object or subject: vakar, labai."""
+            t = toks[k]
+            return ((self.adverb(t.text) or self.mostly_particle(self.analyses(t.text)))
+                    and t.lower not in SUBJECT_NO_SKIP and t.lower not in SUBJECT_PERSON
+                    and t.lower not in NO_COMMA_AFTER and t.lower not in CLAUSE_STARTERS
+                    and t.lower not in PREPOSITIONS and t.lower not in INTERROGATIVES and not t.is_quantity())
+
+        def subject_before(i):
+            """The verb at i has its subject in front of it: jis (vakar) nupirko, mano mama skaito."""
+            k = i - 1
+            while k >= 0 and adjacent[k + 1] and between(k):
+                k -= 1
+            if k < 0 or not adjacent[k + 1]:
+                return False
+            t = toks[k]
+            if t.lower in ("jis", "ji", "jie"):
+                return k == 0 or toks[k - 1].lower not in ("ir", "bei", "arba", "ar", "nei") or not adjacent[k]
+            # a noun that can only be the subject (not Knygą skaito mama, not kas/ką); by its most
+            # frequent lemma (Jonas, not the accusative plural of Jona); mama is also instrumental
+            nouns = [a for a in self.analyses(t.text) if a.tag.startswith("N.")]
+            top = max((self.lemma_freq.get(a.lemma.lower(), 0) for a in nouns), default=0)
+            cases = {a.tag.split(".")[-1] for a in nouns if self.lemma_freq.get(a.lemma.lower(), 0) == top}
+            return (t.known and t.is_noun and cases <= {"nom", "voc", "ins"} and "nom" in cases
+                    and t.lower not in INTERROGATIVES and t.lower not in CLAUSE_WORDS
+                    and not (k > 0 and adjacent[k] and toks[k - 1].lower in ("ir", "bei", "arba", "ar", "nei")))
+
         # 5. verbs: negation + genitive, subject-verb agreement, objects of 1st/2nd person
         for i, w in enumerate(toks):
             if i + 1 >= len(toks) or not adjacent[i + 1]:
@@ -739,14 +798,21 @@ class Grammar:
                 continue
 
             persons = {a.tag.split(".")[2] for a in verbs if finite(a)}
-            # objects after a 1st/2nd person verb can't be its subject: matau namas -> namą
-            if (persons and persons <= {"1sg", "2sg", "1pl", "2pl"} and not copula
-                    and not negated and not any(a.tag.endswith(".refl") for a in verbs)):
-                k = i
-                while k + 1 < len(toks) and adjacent[k + 1] and toks[k + 1].lower in OBJECT_SKIP:
+            transitive = any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)
+            # a real prefix, not reflexive: pamato, nupirko (not atsirado = atsi+rado)
+            plain_transitive = any(any(a.lemma == v or a.lemma.endswith(v) and a.lemma[:-len(v)] in VERB_PREFIXES
+                                       for v in TRANSITIVE_VERBS) and "si" not in a.prefix for a in verbs)
+            # objects after a 1st/2nd person verb can't be its subject: matau namas -> namą;
+            # nor after a 3rd person transitive verb whose subject came before it: Jonas mato namas
+            if (persons and (persons <= {"1sg", "2sg", "1pl", "2pl"} or plain_transitive and subject_before(i))
+                    and not copula and not negated and not any(a.tag.endswith(".refl") for a in verbs)):
+                k = i     # dar, jau and adverbs may stand between: mačiau labai gražų namą
+                while k + 1 < len(toks) and adjacent[k + 1] and (toks[k + 1].lower in OBJECT_SKIP or between(k + 1)):
                     k += 1
-                transitive = any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)
                 span = phrase(k, participles=transitive)
+                if any(any(a.tag == "V.inf" for a in self.analyses(x.text)) for x in span) or (
+                        len(span) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(span[0].text))):
+                    span = []     # turėtų būti suprantama, sutiko baigti; atsirado kartu (together)
                 allowed = {"nom", "voc", "ins"} if transitive else {"nom", "voc"}
                 # the whole phrase instrumental (radau nukritusia sagute), not tapusią vienuole; or
                 # only the modifiers, once the noun is fixed (radau nukritusia sagutę)
@@ -807,6 +873,55 @@ class Grammar:
                 add(Issue(v.start, v.end, v.text, "subject",
                           f"'{pron.text}' needs the {PERSON_NAMES[want]} form of the verb", fix))
 
+        # predicate adjective: ji nedidele -> nedidelė, mergaitė buvo nedidele -> nedidelė
+        def is_copula(t):
+            return t.lower in COPULA_FORMS or any(a.lemma in NOMINATIVE_COPULAS for a in self.analyses(t.text)
+                                                  if a.tag.startswith("V."))
+
+        def fits(r, feats):
+            return r.pos == "adj" and r.case == "nom" and any(
+                (r.number is None or r.number == num) and (r.gender is None or r.gender == gen) for num, gen in feats)
+
+        for i in range(len(toks) - 1):
+            sub = toks[i]
+            if not adjacent[i + 1] or (i > 0 and adjacent[i] and toks[i - 1].lower in ("ir", "bei", "arba", "ar", "nei")):
+                continue
+            if sub.lower in PRONOUN_FEATURES:
+                feats = {PRONOUN_FEATURES[sub.lower]}
+            elif sub.known and sub.is_noun and not sub.text[:1].isupper() or starts_sentence(i) and sub.known and sub.is_noun:
+                nouns = [a for a in self.analyses(sub.text) if a.tag.startswith("N.")]
+                top = max((self.lemma_freq.get(a.lemma.lower(), 0) for a in nouns), default=0)
+                best = readings([a for a in nouns if self.lemma_freq.get(a.lemma.lower(), 0) == top])
+                if not best or not {r.case for r in best} <= {"nom", "voc", "ins"} or not any(r.case == "nom" for r in best):
+                    continue
+                feats = {(r.number, r.gender) for r in best if r.case == "nom"}
+            else:
+                continue
+            k = i + 1
+            while k + 1 < len(toks) and k <= i + 3 and adjacent[k + 1] and between(k) and not is_copula(toks[k]):
+                k += 1
+            copula = is_copula(toks[k])
+            if copula:
+                k += 1
+                while k + 1 < len(toks) and k <= i + 5 and adjacent[k] and adjacent[k + 1] and between(k):
+                    k += 1
+            elif sub.lower not in ("jis", "ji", "jie"):
+                continue          # a noun needs the copula: jos (her) gražios suknelės
+            if k >= len(toks) or not adjacent[k] or k <= i:
+                continue
+            a = toks[k]
+            end = k + 1 == len(toks) or not adjacent[k + 1] or toks[k + 1].lower in PHRASE_STOP
+            if not end or not a.is_adj or a.is_participle or a.start in issues:
+                continue
+            if a.known and any(fits(r, feats) for r in a.own):
+                continue
+            fix = [a.cap(f) for f, rs in a.variants if any(fits(r, feats) for r in rs)]
+            if a.known and not a.own:
+                continue
+            if fix:
+                add(Issue(a.start, a.end, a.text, "agreement" if a.known else "context",
+                          f"'{sub.text} … {a.text}': the predicate adjective agrees with the subject", fix))
+
         # 2. adjective-noun agreement
         for i in range(1, len(toks)):
             a, n = toks[i - 1], toks[i]
@@ -853,9 +968,101 @@ class Grammar:
                 fix_a = []
             if not a.known:
                 fix_n = []
+            # a preposition before decides the case: pro nedideles gyvenvietės -> gyvenvietes
+            prep = toks[i - 2].lower if i >= 2 and adjacent[i - 1] and toks[i - 2].lower in PREPOSITIONS else None
+            if prep and fix_n and fix_a:
+                if not any(r.case in PREPOSITIONS[prep] for r in ar):
+                    fix_n = []
+                elif not any(r.case in PREPOSITIONS[prep] for r in nr):
+                    fix_a = []
+            # otherwise change the word typed without diacritics: nedidele mergaitė -> nedidelė (not mergaite)
+            if fix_a and not has_diacritics(a.text) and has_diacritics(n.text) and not prep:
+                fix_n = []
             if fix_n:
                 add(Issue(n.start, n.end, n.text, "agreement" if n.known else "context", msg, fix_n))
             elif fix_a:
                 add(Issue(a.start, a.end, a.text, "agreement" if a.known else "context", msg, fix_a))
+
+        # 9. a noun right before another noun is its genitive modifier: gyventoju skaičius ->
+        #    gyventojų, vietoves gyventojai -> vietovės (the -ų/-ės lost their diacritics)
+        for i in range(len(toks) - 1):
+            w = toks[i]
+            if (w.start in issues or not adjacent[i + 1] or not w.known
+                    or w.text[:1].isupper() and not starts_sentence(i)):
+                continue
+            an_w = self.analyses(w.text)
+            nouns = [a for a in an_w if a.tag.startswith("N.")]
+            if (not nouns or any(a.tag.endswith(".gen") for a in an_w) or any(a.tag in ("W", "Adv") for a in an_w)
+                    or self.mostly_verb(an_w) and any(finite(a) for a in an_w)):
+                continue          # laiku (on time), metu (I throw) are not modifiers
+            lemmas = {a.lemma for a in nouns}
+            fix = [w.cap(f) for f, _ in w.variants if f[:1].islower()
+                   and any(a.lemma in lemmas and a.tag.startswith("N.") and a.tag.endswith(".gen")
+                           for a in self.analyses(f))]
+            if not fix:
+                continue
+            span = phrase(i)
+            head = span[-1] if span else None
+            if (not head or not head.is_noun or not head.known or head.text[:1].isupper()
+                    or any(a.tag in ("W", "Adv") for a in self.analyses(head.text)) or verb_at(i + len(span))):
+                continue          # su broliu namo: namo is an adverb
+            if {r.case for r in w.own} & {r.case for r in head.own} or {r.case for r in head.own} == {"gen"}:
+                continue          # one phrase: pilotu bandytoju, naktiniu gyvenimu; tarpininku liaudies švietime
+            if lemmas == {"metas"}:
+                continue          # vienu metu, tam tikru metu: "at a time"
+            # an adverbial instrumental seen as often as its genitive: Sovietmečiu, laikotarpiu, būdu
+            own_f = self.freq.get(w.lower, 0)
+            if own_f and own_f * 3 >= max(self.freq.get(f.lower(), 0) for f in fix):
+                continue
+            # modifiers before it must agree with the genitive too: branduoliniu ginklu -> branduolinių
+            # ginklų; tuo metu žmonės stays (tuo has no genitive twin)
+            gen = [r for f in fix for r in self.readings_of(f.lower()) if r.pos == "noun" and r.case == "gen"]
+            mods, k, ok = [], i - 1, True
+            while k >= 0 and adjacent[k + 1] and toks[k].is_adj:
+                m = toks[k]
+                if not any(_agree(x, y) for x in m.own for y in w.own):
+                    break
+                mf = [m.cap(f) for f, rs in m.variants if any(_agree(x, y) for x in rs if x.pos == "adj" for y in gen)]
+                if not mf:
+                    ok = False
+                    break
+                mods.append((m, mf))
+                k -= 1
+            if not ok:
+                continue
+            if k >= 0 and adjacent[k + 1]:
+                p = toks[k]
+                an_p = self.analyses(p.text)
+                if p.lower in PREPOSITIONS and any(r.case in PREPOSITIONS[p.lower] for r in w.own):
+                    continue      # su metaliniu lankeliu dugne
+                if any(a.tag.startswith("V.") for a in an_p) and self.mostly_verb(an_p):
+                    continue      # pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
+                pr = p.pos_readings()      # an unknown word (typed without diacritics): its candidates
+                if p.lower in POSSESSIVES or an_p and all(a.tag == "W" for a in an_p):
+                    continue      # jos pasirodymu danguje, šiuo metu
+                # after a genitive (or a name) an instrumental is often its head: karo metu,
+                # Vyriausybės potvarkiu, Aifelio dialektu; only a genitive the corpus knows well
+                # wins there (vidaus reikalų, Čikagos lietuvių)
+                if (any(r.case == "ins" for r in w.own)
+                        and (any(r.pos == "noun" and r.case == "gen" for r in pr) or not pr)
+                        and max(self.freq.get(f.lower(), 0) for f in fix) < 5):
+                    continue
+            # a governor further left, across genitives: į Kalavijuočių ordino žemes,
+            # tapo antruoju pagal dydį miestu
+            j, governed = k, False
+            while j >= 0 and j >= k - 3 and adjacent[j + 1] and not governed:
+                t = toks[j]
+                if t.lower in PREPOSITIONS:
+                    governed = any(r.case in PREPOSITIONS[t.lower] for r in w.own)
+                else:
+                    governed = any(r.case == "ins" for r in w.own) and any(
+                        a.tag.startswith("V.") and a.lemma.endswith(PREDICATIVE_VERBS) for a in self.analyses(t.text))
+                j -= 1
+            if governed:
+                continue
+            why = f"'{w.text} {head.text}': a noun before another noun is usually its genitive"
+            for m, mf in mods:
+                add(Issue(m.start, m.end, m.text, "case", why, mf))
+            add(Issue(w.start, w.end, w.text, "case", why, fix))
 
         return sorted(issues.values(), key=lambda x: x.start)
