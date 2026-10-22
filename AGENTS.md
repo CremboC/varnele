@@ -64,8 +64,8 @@ rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tC
 rust/target/release/varnele swipe WORD...         # decode each word's ideal swipe path
 python3 eval/swipe_sim.py [--noise 0.3] [--cut 0.4] # restore.py's 300 sentences swiped through the gesture decoder + keyboard model
 python3 eval/extract_wiki.py                       # corpus/wiki/ltwiki-latest-pages-articles.xml.bz2 -> corpus/wiki/text
-python3 eval/build_freq.py                         # training text -> data/freq.tsv, lemma_freq.tsv (words seen 10+ times)
-python3 eval/build_ngrams.py                       # training text -> data/bigrams.tsv (pairs seen 10+ times; then export)
+python3 eval/build_freq.py [--conv-weight W]       # Wikipedia + conversational text -> data/freq.tsv, lemma_freq.tsv (words seen 10+ times)
+python3 eval/build_ngrams.py [--conv-weight W]     # the same -> data/bigrams.tsv (pairs seen 10+ times; then export)
 python3 eval/predict_sim.py                        # next word among the top 3 predictions, same 300 sentences
 python3 eval/clean_conv.py                         # what cleaning repairs/drops in corpus/raw/{opensubtitles,tatoeba}, with examples
 python3 eval/extract_conv.py                       # cleaned -> corpus/conv/{subtitles,tatoeba} (tests), heldout.tsv, train/*.txt
@@ -261,7 +261,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   `../varnele` (or `-Pvarnele.dir=`) into `app/src/main/jniLibs` (git-ignored).
 
 - **Language model** (`rust/core/src/lm.rs`, keyboard only): P(word | previous word) from the
-  Wikipedia dump's word pairs (`eval/build_ngrams.py` → `data/bigrams.tsv` → varnele.bin: word counts
+  word pairs of the Wikipedia dump and the conversational text (`eval/build_ngrams.py` → `data/bigrams.tsv` → varnele.bin: word counts
   tokenised like the keyboard, and per previous word its total and distinct followers over all pairs,
   then the pairs seen 10+ times), absolute discounting (D 0.75) backing off to word frequency; `<s>` =
   sentence start. Plus a paragraph cache: lemmas of the last 150 words, the form's share of its
@@ -336,7 +336,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   checker; a most-frequent-spelling baseline gets 71.9%.
 - Rust: load 31 ms, correct word 0.001 ms, misspelling + suggestions ~0.9 ms,
   sentence ~2.5 ms (Mac, data v3). Phone (Fold7, measured with the old 5.3 MB data): 0.05–0.8 ms valid
-  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 10.9 MB (v3).
+  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 13.0 MB (v3, with the conversational counts).
 - Keyboard simulation: `kodel nepataiso visu zodzou kuriu as rasau?` →
   `kodėl nepataiso visų žodžių, kurių aš rašau?`; `dabar meginu nauja sakini` →
   `dabar mėginu naują sakinį`; Rust key-shift search 0.4 ms, sentence 1.5 ms (Mac).
@@ -359,8 +359,23 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   times). With the 600 articles (167k words, 13.6k pairs seen twice): 12.9 / 26.3% (no paragraph:
   12.4 / 22.7%; previous word only, with the paragraph's words as candidates: 12.5 / 21.5%). All test
   sentences are Wikipedia: conversational text scores lower, see below.
+- **Conversational counts** (W=1: subtitles and Tatoeba count like Wikipedia; `eval/training.py`
+  `conversational()`, lines of 4+ words once, cutoffs on raw counts so a pair seen once in a subtitle
+  never ships; data file 10.9 → 13.0 MB), on the three test sets, before → after:
+
+  | | OpenSubtitles | Tatoeba | Wikipedia |
+  |---|---|---|---|
+  | prediction top 3, before typing / after 1 letter | 8.2 / 24.2 → **12.0 / 31.5%** | 6.2 / 26.1 → **13.0 / 44.9%** | 16.2 / 33.1 → 16.5 / 32.0% |
+  | swipe σ 0.3: keys top 1 / final word | 75.0 / 68.6 → **81.8 / 74.4%** | 78.4 / 72.9 → **85.6 / 79.3%** | 82.5 / 73.9 → 82.1 / 73.4% |
+  | restore.py with context rules | 70.9 → 71.5%, 0 changed | 77.1 → 77.6%, 0 changed | 70.1 → 70.0%, 0 |
+  | keyboard_restore.py: restored, whole sentences | 73.9 / 45.0 → 74.0 / 44.0%, 4 changed | 81.3 / 58.0 → 81.5 / 58.0%, 10 changed | 74.0 / 36.0%, 2 (same) |
+
+  Wikipedia flags unchanged (20, all real). W=3 (dialogue counted three times): +0.3 points on
+  dialogue, −0.5 on Wikipedia, 13.4 MB; W=10 the same trade, larger. Before the cutoffs used raw
+  counts, W=3/W=10 shipped pairs seen once or twice in subtitles (16.7 / 59.9 MB).
+
 - **Conversational test sets** (`eval/extract_conv.py`, cleaned, held out, never counted;
-  Wikipedia-dump data, 300 sentences each, Wikipedia figures from above in brackets):
+  Wikipedia-dump data before the conversational counts, 300 sentences each, Wikipedia figures from above in brackets):
 
   | | OpenSubtitles (with dialogue before) | Tatoeba (`--no-paragraph`) | Wikipedia |
   |---|---|---|---|
@@ -481,9 +496,10 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   `per didelė rizika`; `ką gali` → `galį`; `Kiek tu` → `tų`), suggestions guess (`salsa` → `sala`),
   and the test sets would grade Varnelė against itself. Those false alarms are worth fixing in
   the rules: a keyboard sees this register all day.
-  Plan as before: keep Wikipedia for vocabulary breadth (names, rare forms); only counts ship in
-  varnele.bin, not text. The restore/swipe/predict evaluations so far are all Wikipedia sentences
-  and would understate the gain.
+  Done 2026-10-22 (owner: attribution is enough): subtitles and Tatoeba counted with Wikipedia at
+  weight 1, see "Conversational counts" under Latest numbers; credits in README.md and the
+  keyboard's About screen. Still open: the keyboard's false alarms on dialogue (4 and 10 correct
+  words changed in the test sets), HPLT/Leipzig for more breadth.
 
 ### Phone-testing list of 2026-10-19: done, and what was left on purpose
 
@@ -611,3 +627,6 @@ Left deliberately:
 19. frequencies and word pairs from the full Wikipedia dump (eval/extract_wiki.py, eval/training.py; the
     `metais.` double count fixed), count tables as FSTs (`counts.rs`, data version 3, 10.9 MB),
     "mostly a verb" ignores rule-built prefixes shadowed by a dictionary verb (`apsiuvu`)
+20. swipe in the keyboard (JNI `gestureNative`, threaded prefix chains), eval/phone_ready.sh; conversational
+    test sets and cleaning (eval/extract_conv.py, eval/clean_conv.py); subtitles and Tatoeba counted with
+    Wikipedia (W=1, cutoffs on raw counts, 13.0 MB), credits for the frequency sources

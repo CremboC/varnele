@@ -112,3 +112,10 @@ It cannot replace a keyboard's own autocorrect (Gboard, Samsung Keyboard).
 BSD 3-Clause, see [LICENSE](LICENSE). The word list in `vendor/ispell-lt` and the
 data generated from it (`data/varnele.bin`) also carry the ispell-lt notice
 ([vendor/ispell-lt/COPYING](vendor/ispell-lt/COPYING)); ship both with any binary.
+
+The word and word-pair counts (`data/freq.tsv`, `data/lemma_freq.tsv`, `data/bigrams.tsv`, and
+in `data/varnele.bin`) are counted from [Lithuanian Wikipedia](https://lt.wikipedia.org)
+(CC BY-SA 4.0), subtitles from [OpenSubtitles.org](https://www.opensubtitles.org) via the
+[OPUS](https://opus.nlpl.eu) collection (P. Lison and J. Tiedemann, 2016, *OpenSubtitles2016:
+Extracting Large Parallel Corpora from Movie and TV Subtitles*) and [Tatoeba](https://tatoeba.org)
+(CC BY 2.0 FR). Only counts are kept, no text; credit these sources with any binary.
