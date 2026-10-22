@@ -166,7 +166,16 @@ def retag(tag, **change):
             parts[i] = change["case"]
         if "person" in change and p in PERSONS:
             parts[i] = change["person"]
+        if change.get("number") and p in ("sg", "pl"):
+            parts[i] = change["number"]
+        if change.get("gender") and p in ("m", "f"):
+            parts[i] = change["gender"]
     return ".".join(parts)
+
+
+def adds_diacritics(w, f):
+    """f is w with diacritics added, none of w's own changed: ta -> tą, not kavinę -> kavine."""
+    return len(w) == len(f) and all(a == b or b in "ąčęėįšųūž" and fold(b) == a for a, b in zip(w, f))
 
 
 def finite(a):
@@ -288,6 +297,11 @@ def _could_agree(w1, w2):
     r1 = w1.pos_readings() + [r for _, rs in w1.variants for r in rs]
     r2 = w2.pos_readings() + [r for _, rs in w2.variants for r in rs]
     return any(_agree(a, b) for a in r1 for b in r2)
+
+
+def _could_agree_own(w1, w2):
+    """Do these two words agree as they are spelled?"""
+    return any(_agree(a, b) for a in w1.own for b in w2.own)
 
 
 def _agree(r1, r2):
@@ -417,6 +431,9 @@ class Grammar:
             span, j = [], i + 1
             while j < len(toks) and adjacent[j]:
                 w = toks[j]
+                if span and w.lower in ("mano", "tavo", "savo", "mūsų", "jūsų") and j + 1 < len(toks) and adjacent[j + 1]:
+                    j += 1
+                    continue      # tą mano didelę kavinę (not jo: žino visas jo užnugaris yra ...)
                 if span and not _could_agree(span[-1], w):
                     break         # už didžiausią | tuo metu: a new phrase starts
                 if w.is_noun:
@@ -841,7 +858,12 @@ class Grammar:
                 ins_phrase = transitive and all(any(r.case == "ins" for r in t.own) for t in span)
                 head_acc = transitive and bool(span) and any(r.case == "acc" for r in span[-1].own)
                 if span and span[-1].is_noun and span[0].lower not in CLAUSE_WORDS:
+                    hn = [r for r in span[-1].own if r.pos == "noun"]
                     for x in span:
+                        if x is not span[-1] and hn and not any(
+                                (not r.number or not h.number or r.number == h.number)
+                                and (not r.gender or not h.gender or r.gender == h.gender) for r in x.own for h in hn):
+                            continue      # mačiau dideli namą: the number is wrong, not the case (didelį, not didelius)
                         cases = {r.case for r in x.own}
                         fix = []
                         if cases and cases <= allowed and cases & {"nom", "voc"}:
@@ -974,10 +996,163 @@ class Grammar:
                 add(Issue(a.start, a.end, a.text, "agreement" if a.known else "context",
                           f"'{sub.text} … {a.text}': the predicate adjective agrees with the subject", fix))
 
+        # 2a. agreement across a phrase of 2+ modifiers and its noun: the case, number and gender
+        #     that cost the fewest changes win (viena nukritusią sagutė -> nukritusi, ta mano didele
+        #     kavinę -> tą, didelę). Adding a lost diacritic costs 1, re-inflecting a modifier 2,
+        #     changing a typed diacritic 3 (the noun is never re-inflected).
+        def modifier(k):
+            """Not an adverb (paprastai, dažniausiai), a neuter pronoun (tai, tam tikras) or a preposition."""
+            t = toks[k]
+            return (t.known and t.own and t.is_adj and not t.can_be_verb and t.lower not in POSSESSIVES
+                    and t.lower not in KURIS and t.lower not in INTERROGATIVES and t.lower not in PREPOSITIONS
+                    and t.lower not in ("tai", "tam", "to", "tuo")
+                    and not any(a.tag == "W" or a.tag.startswith(("Adv", "Num")) for a in self.analyses(t.text))
+                    and (t.text[:1].islower() or starts_sentence(k)))
+
+        def fits(r, feats, pos):
+            return (r.pos == pos and r.case == feats[0] and (not r.number or not feats[1] or r.number == feats[1])
+                    and (not r.gender or not feats[2] or r.gender == feats[2]))
+
+        def phrase_fix(t, feats, head):
+            """(cost, fixes) of giving t these features."""
+            pos = "noun" if head else "adj"
+            if any(fits(r, feats, pos) for r in t.own):
+                return 0, []
+            dia = [t.cap(f) for f, rs in t.variants if any(fits(r, feats, pos) for r in rs)]
+            added = [f for f in dia if adds_diacritics(t.lower, f.lower())]
+            if added:
+                return 1, added
+            if not head:
+                out = []
+                for a in self.analyses(t.text):
+                    if a.tag.split(".")[0] in ("A", "P", "Num") or a.tag.startswith("V.p"):
+                        for f in self.inflect(a, retag(a.tag, case=feats[0], number=feats[1], gender=feats[2])):
+                            f = t.cap(f)
+                            if f not in out and f.lower() != t.lower and any(fits(r, feats, pos) for r in self.readings_of(f)):
+                                out.append(f)
+                if out:
+                    return 2, out
+            return (3, dia) if dia else (99, [])
+
+        settled = set()
+        for h in range(len(toks)):
+            head = toks[h]
+            if not head.known or not any(r.pos == "noun" for r in head.own):
+                continue
+            mods, coord, k = [], None, h - 1
+            while k >= 0 and adjacent[k + 1]:
+                if (modifier(k) and mods and toks[k].is_participle and not _could_agree_own(toks[k], toks[mods[-1]])
+                        and not _could_agree_own(toks[k], head)):
+                    break         # a participle with its object: įrengtas | modernų baseiną (publikuotame genetinis tyrime: no)
+                if modifier(k):
+                    mods.append(k)
+                elif toks[k].lower in POSSESSIVES and k > 0 and adjacent[k] and modifier(k - 1):
+                    pass          # ta mano didelę kavinę
+                elif toks[k].lower in ("ir", "bei") and mods and coord is None and k > 0 and adjacent[k] and modifier(k - 1):
+                    coord = k     # didelę ir gražią kavinę
+                else:
+                    break
+                k -= 1
+            if len(mods) < 2:
+                continue
+            idx = sorted(mods) + [h]
+            words = [toks[j] for j in idx]
+            if any(t.start in issues for t in words):
+                continue          # an earlier rule knows the case: mačiau didele graži kavinę
+            if head.can_be("gen") and h + 1 == len(toks) and not text[head.end:].strip():
+                continue          # it may be a modifier of a noun still to come: apgultos užbaigta taikos | sutartimi
+            if (head.can_be("gen") and h + 1 < len(toks) and adjacent[h + 1] and toks[h + 1].is_noun
+                    or any(t.lower in ("vienas", "viena", "vieni", "vienos") for t in words)
+                    and any(t.lower.startswith("kit") for t in words)):
+                continue          # tos gražios mergaitės batai; vienas kitam simbolis
+            last = toks[max(mods)]
+            if any(t.is_participle and any(a.lemma.endswith(PREDICATIVE_VERBS) for a in self.analyses(t.text))
+                   for t in words[:-1]):
+                continue          # tapusią vienuole
+            if (last.is_participle and (head.can_be("acc") or head.can_be("loc"))
+                    and not any(_agree(x, y) for x in last.own for y in head.own if y.pos == "noun")
+                    and not _could_agree_own(toks[idx[-3]], head)):
+                continue          # viena baigusi mokyklą: the participle takes an object (didžiules keliaujančios parodas: no)
+            prep = PREPOSITIONS.get(toks[idx[0] - 1].lower) if idx[0] > 0 and adjacent[idx[0]] else None
+            targets = []
+            for rs in [head.own] + [rs for _, rs in head.variants]:
+                for r in rs:
+                    feats = (r.case, r.number, r.gender)
+                    if r.pos == "noun" and feats not in targets and (not prep or r.case in prep):
+                        targets.append(feats)
+            scored = []
+            for feats in targets:
+                fixes = [(t, *phrase_fix(t, feats, t is head)) for t in words]
+                scored.append((sum(c for _, c, _ in fixes), feats, [x for x in fixes if x[1]]))
+            if not scored:
+                continue
+            best = min(c for c, _, _ in scored)
+            if best == 0:
+                settled.update(idx)
+                continue
+            top = [s for s in scored if s[0] == best]
+            if best > 3 or any([(t.start, f) for t, _, f in s[2]] != [(t.start, f) for t, _, f in top[0][2]] for s in top):
+                continue          # nothing close, or two readings as good
+            _, feats, outliers = top[0]
+            first = toks[idx[0]]
+            j = idx[0] - 1
+            while j >= 0 and adjacent[j + 1] and between(j):
+                j -= 1
+            # the first word may end something before the phrase: a predicate (žinomos visame pasaulyje,
+            # buvo lengva visą dieną) or a partitive head (vienas didžiausių miestų): only a lost diacritic
+            if feats[0] == "gen" and not prep and any(t is first or t.lower.startswith("vien") for t, _, _ in outliers):
+                continue          # a partitive genitive: vienas didžiausių miestų, turinčių vieną storiausių kamienų
+            if last.is_participle and any(t is head for t, _, _ in outliers) and not _could_agree_own(last, head):
+                continue          # the participle may govern the noun: vieną pašovęs strėle
+            if any(t is first and (c > 1 or t.lower.endswith("iausia")       # pirmiausia, svarbiausia: adverbs
+                                   or j >= 0 and adjacent[j + 1] and is_copula(toks[j])
+                                   or feats[0] == "acc" and any(a.lemma in TIME_LEMMAS for a in self.analyses(head.text)))
+                   for t, c, _ in outliers):
+                continue
+            if coord is not None and any(t.start < toks[coord].start or c > 1 for t, c, _ in outliers):
+                continue          # only the word after "ir", by a lost diacritic: didelę ir gražia kavinę -> gražią
+                                  # (rezervines ir pagrindinę komandas: two teams)
+            if any(t.is_participle and t is not last for t, _, _ in outliers):
+                continue          # a predicate further left: Sienos atkurtos tomis pačiomis spalvomis
+            if any(t is not head and t.own and (all(r.case == "gen" for r in t.own) or all(
+                    ".def." in a.tag for a in self.analyses(t.text)) and any(r.case in ("gen", "dat") for r in t.own))
+                   for t, _, _ in outliers):
+                continue          # an adjective as a noun: pirmoji kairiųjų pergalė, palankesnė baltiesiems baigmė,
+                                  # nuolatinį pirmosios virsmą
+            # an outlier agrees with no neighbour that stays: du nauji | rusiška heraldika
+            out = {t.start for t, _, _ in outliers}
+            if any(any(_could_agree_own(t, words[m]) for m in (n - 1, n + 1)
+                       if 0 <= m < len(words) and words[m].start not in out)
+                   for n, t in enumerate(words) if t.start in out):
+                continue
+            settled.update(idx)
+            text_ = " ".join(t.text for t in words)
+            for t, _, f in outliers:
+                add(Issue(t.start, t.end, t.text, "phrase",
+                          f"'{text_}': the words of a phrase agree in case, number and gender", f))
+
+        # an unknown word after a modifier, typed as one itself: its candidates agreeing with it first
+        # (visa sita -> šita, not the more frequent šitą). The keyboard autocorrects it before the noun is
+        # typed, and the phrase rule then trusts the diacritic chosen. Nouns are the pair rule's.
+        for i in range(1, len(toks)):
+            a, w = toks[i - 1], toks[i]
+            if not adjacent[i] or w.known or w.start in issues or not modifier(i - 1) or not w.variants:
+                continue
+            def modifier_form(f):
+                return self.analyses(f) and all(x.tag.split(".")[0] in ("A", "P") for x in self.analyses(f))
+            if not modifier_form(self.ranked(w.text, [f for f, _ in w.variants])[0]):
+                continue          # likely a pronoun or adjective: nebereikalingi isaugus is išaugus, not išaugūs
+            ar = [r for r in a.own if r.pos == "adj"]
+            fix = [w.cap(f) for f, rs in w.variants if modifier_form(f) and any(_agree(x, y) for x in ar for y in rs)]
+            if fix and len(fix) < len(w.variants):
+                add(Issue(w.start, w.end, w.text, "context",
+                          f"'{a.text} {w.text}': the words of a phrase agree in case, number and gender",
+                          self.ranked(w.text, fix)))
+
         # 2. adjective-noun agreement
         for i in range(1, len(toks)):
             a, n = toks[i - 1], toks[i]
-            if not adjacent[i] or a.start in issues:
+            if not adjacent[i] or a.start in issues or i - 1 in settled and i in settled:
                 continue
             if not (a.is_adj and n.is_noun) or a.can_be_verb:
                 continue

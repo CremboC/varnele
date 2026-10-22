@@ -284,6 +284,32 @@ fn retag(tag: &str, case: Option<&str>, person: Option<&str>) -> String {
         .join(".")
 }
 
+/// retag() for agreement: case, number and gender (None keeps the tag's own).
+fn retag_feats(tag: &str, case: &str, number: Option<&str>, gender: Option<&str>) -> String {
+    tag.split('.')
+        .map(|p| {
+            if CASES.contains(&p) {
+                case
+            } else if let (Some(n), true) = (number, p == "sg" || p == "pl") {
+                n
+            } else if let (Some(x), true) = (gender, p == "m" || p == "f") {
+                x
+            } else {
+                p
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// f is w with diacritics added, none of w's own changed: ta -> tą, not kavinę -> kavine.
+fn adds_diacritics(w: &str, f: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (w.chars().collect(), f.chars().collect());
+    a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| x == y || ("ąčęėįšųūž".contains(*y) && fold_char(*y) == *x))
+}
+
+type Feats = (&'static str, Option<&'static str>, Option<&'static str>);
+
 #[derive(Default)]
 pub struct Grammar {
     analyses: RefCell<FxMap<String, Vec<Analysis>>>,
@@ -562,6 +588,11 @@ fn phrase_stop(w: &str) -> bool {
     PHRASE_STOP.contains(&w) || CLAUSE_STARTERS.contains(&w) || KURIS.contains(&w)
 }
 
+/// Do these two words agree as they are spelled?
+fn could_agree_own(w1: &Word, w2: &Word) -> bool {
+    w1.own.iter().any(|a| w2.own.iter().any(|b| agree(a, b)))
+}
+
 fn could_agree(g: &G, w1: &Word, w2: &Word) -> bool {
     let mut r1 = w1.pos_readings(g);
     r1.extend(w1.variants(g).iter().flat_map(|(_, rs)| rs.iter().cloned()));
@@ -590,6 +621,14 @@ impl Grammar {
             let mut j = i + 1;
             while j < toks.len() && adjacent[j] {
                 let w = &toks[j];
+                if !span.is_empty()
+                    && ["mano", "tavo", "savo", "mūsų", "jūsų"].contains(&w.lower.as_str())
+                    && j + 1 < toks.len()
+                    && adjacent[j + 1]
+                {
+                    j += 1;
+                    continue; // tą mano didelę kavinę (not jo: žino visas jo užnugaris yra ...)
+                }
                 if let Some(&last) = span.last() {
                     if !could_agree(&g, &toks[last], w) {
                         break;
@@ -1247,8 +1286,18 @@ impl Grammar {
                     && toks[*span.last().unwrap()].is_noun(&g)
                     && !CLAUSE_WORDS.contains(&toks[span[0]].lower.as_str())
                 {
+                    let hn: Vec<&Reading> = toks[*span.last().unwrap()].own.iter().filter(|r| r.pos == Pos::Noun).collect();
                     for &x in &span {
                         let t = &toks[x];
+                        if x != *span.last().unwrap()
+                            && !hn.is_empty()
+                            && !t.own.iter().any(|r| hn.iter().any(|h| {
+                                (r.number.is_none() || h.number.is_none() || r.number == h.number)
+                                    && (r.gender.is_none() || h.gender.is_none() || r.gender == h.gender)
+                            }))
+                        {
+                            continue; // mačiau dideli namą: the number is wrong, not the case (didelį, not didelius)
+                        }
                         let mut fix: Vec<String> = Vec::new();
                         if !t.own.is_empty()
                             && t.own.iter().all(|r| allowed.contains(&r.case))
@@ -1460,11 +1509,262 @@ impl Grammar {
             }
         }
 
+        // 2a. agreement across a phrase of 2+ modifiers and its noun: the case, number and gender
+        //     that cost the fewest changes win (viena nukritusią sagutė -> nukritusi, ta mano didele
+        //     kavinę -> tą, didelę). Adding a lost diacritic costs 1, re-inflecting a modifier 2,
+        //     changing a typed diacritic 3 (the noun is never re-inflected).
+        // not an adverb (paprastai, dažniausiai), a neuter pronoun (tai, tam tikras) or a preposition
+        let modifier = |k: usize| {
+            let t = &toks[k];
+            t.known
+                && !t.own.is_empty()
+                && t.is_adj(&g)
+                && !t.can_be_verb(&g)
+                && !POSSESSIVES.contains(&t.lower.as_str())
+                && !KURIS.contains(&t.lower.as_str())
+                && !INTERROGATIVES.contains(&t.lower.as_str())
+                && prep_cases(&t.lower).is_none()
+                && !["tai", "tam", "to", "tuo"].contains(&t.lower.as_str())
+                && !g.analyses(&t.text).iter().any(|a| {
+                    let tg = g.tag(a);
+                    tg == "W" || tg.starts_with("Adv") || tg.starts_with("Num")
+                })
+                && (first_lower(&t.text) || starts_sentence(k))
+        };
+        let fits_phrase = |r: &Reading, f: &Feats, pos: Pos| {
+            r.pos == pos
+                && r.case == f.0
+                && (r.number.is_none() || f.1.is_none() || r.number == f.1)
+                && (r.gender.is_none() || f.2.is_none() || r.gender == f.2)
+        };
+        // (cost, fixes) of giving t these features
+        let phrase_fix = |t: &Word, f: &Feats, head: bool| -> (u32, Vec<String>) {
+            let pos = if head { Pos::Noun } else { Pos::Adj };
+            if t.own.iter().any(|r| fits_phrase(r, f, pos)) {
+                return (0, vec![]);
+            }
+            let dia: Vec<String> = t.variants(&g).iter()
+                .filter(|(_, rs)| rs.iter().any(|r| fits_phrase(r, f, pos)))
+                .map(|(x, _)| t.cap(x)).collect();
+            let added: Vec<String> = dia.iter().filter(|x| adds_diacritics(&t.lower, &lower(x))).cloned().collect();
+            if !added.is_empty() {
+                return (1, added);
+            }
+            if !head {
+                let mut out: Vec<String> = Vec::new();
+                for a in g.analyses(&t.text) {
+                    let tg = g.tag(&a);
+                    if matches!(g.parts(&a)[0].as_str(), "A" | "P" | "Num") || tg.starts_with("V.p") {
+                        for x in g.inflect(&a, &retag_feats(tg, f.0, f.1, f.2)) {
+                            let x = t.cap(&x);
+                            if !out.contains(&x) && lower(&x) != t.lower && g.readings_of(&x).iter().any(|r| fits_phrase(r, f, pos)) {
+                                out.push(x);
+                            }
+                        }
+                    }
+                }
+                if !out.is_empty() {
+                    return (2, out);
+                }
+            }
+            if dia.is_empty() { (99, vec![]) } else { (3, dia) }
+        };
+        let mut settled = vec![false; toks.len()];
+        for h in 0..toks.len() {
+            let head = &toks[h];
+            if !head.known || !head.own.iter().any(|r| r.pos == Pos::Noun) {
+                continue;
+            }
+            let (mut mods, mut coord): (Vec<usize>, Option<usize>) = (Vec::new(), None);
+            let mut k = h as isize - 1;
+            while k >= 0 && adjacent[k as usize + 1] {
+                let ku = k as usize;
+                if modifier(ku) && !mods.is_empty() && toks[ku].is_participle(&g)
+                    && !could_agree_own(&toks[ku], &toks[*mods.last().unwrap()]) && !could_agree_own(&toks[ku], head)
+                {
+                    break; // a participle with its object: įrengtas | modernų baseiną (publikuotame genetinis tyrime: no)
+                }
+                if modifier(ku) {
+                    mods.push(ku);
+                } else if POSSESSIVES.contains(&toks[ku].lower.as_str()) && ku > 0 && adjacent[ku] && modifier(ku - 1) {
+                    // ta mano didelę kavinę
+                } else if ["ir", "bei"].contains(&toks[ku].lower.as_str()) && !mods.is_empty() && coord.is_none()
+                    && ku > 0 && adjacent[ku] && modifier(ku - 1)
+                {
+                    coord = Some(ku); // didelę ir gražią kavinę
+                } else {
+                    break;
+                }
+                k -= 1;
+            }
+            if mods.len() < 2 {
+                continue;
+            }
+            let mut idx = mods.clone();
+            idx.sort();
+            idx.push(h);
+            if idx.iter().any(|&j| issues.contains_key(&toks[j].start)) {
+                continue; // an earlier rule knows the case: mačiau didele graži kavinę
+            }
+            if head.can_be(&g, "gen") && h + 1 == toks.len() && chars[head.end..].iter().all(|c| c.is_whitespace()) {
+                continue; // it may be a modifier of a noun still to come: apgultos užbaigta taikos | sutartimi
+            }
+            let vien = |j: &usize| ["vienas", "viena", "vieni", "vienos"].contains(&toks[*j].lower.as_str());
+            if (head.can_be(&g, "gen") && h + 1 < toks.len() && adjacent[h + 1] && toks[h + 1].is_noun(&g))
+                || (idx.iter().any(vien) && idx.iter().any(|&j| toks[j].lower.starts_with("kit")))
+            {
+                continue; // tos gražios mergaitės batai; vienas kitam simbolis
+            }
+            let lastk = idx[idx.len() - 2];
+            let last = &toks[lastk];
+            if idx[..idx.len() - 1].iter().any(|&j| {
+                toks[j].is_participle(&g)
+                    && g.analyses(&toks[j].text).iter().any(|a| PREDICATIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)))
+            }) {
+                continue; // tapusią vienuole
+            }
+            if last.is_participle(&g)
+                && (head.can_be(&g, "acc") || head.can_be(&g, "loc"))
+                && !last.own.iter().any(|x| head.own.iter().any(|y| y.pos == Pos::Noun && agree(x, y)))
+                && !could_agree_own(&toks[idx[idx.len() - 3]], head)
+            {
+                continue; // viena baigusi mokyklą: the participle takes an object (didžiules keliaujančios parodas: no)
+            }
+            let prep = if idx[0] > 0 && adjacent[idx[0]] { prep_cases(&toks[idx[0] - 1].lower) } else { None };
+            let mut targets: Vec<Feats> = Vec::new();
+            for rs in std::iter::once(&head.own).chain(head.variants(&g).iter().map(|(_, rs)| rs)) {
+                for r in rs {
+                    let f: Feats = (r.case, r.number, r.gender);
+                    if r.pos == Pos::Noun && !targets.contains(&f) && prep.map_or(true, |p| p.contains(&r.case)) {
+                        targets.push(f);
+                    }
+                }
+            }
+            let mut scored: Vec<(u32, Feats, Vec<(usize, u32, Vec<String>)>)> = Vec::new();
+            for f in &targets {
+                let fixes: Vec<(usize, u32, Vec<String>)> = idx.iter().map(|&j| {
+                    let (c, x) = phrase_fix(&toks[j], f, j == h);
+                    (j, c, x)
+                }).collect();
+                let total = fixes.iter().map(|x| x.1).sum();
+                scored.push((total, *f, fixes.into_iter().filter(|x| x.1 > 0).collect()));
+            }
+            if scored.is_empty() {
+                continue;
+            }
+            let best = scored.iter().map(|s| s.0).min().unwrap();
+            if best == 0 {
+                for &j in &idx {
+                    settled[j] = true;
+                }
+                continue;
+            }
+            let top: Vec<&(u32, Feats, Vec<(usize, u32, Vec<String>)>)> = scored.iter().filter(|s| s.0 == best).collect();
+            let key = |s: &(u32, Feats, Vec<(usize, u32, Vec<String>)>)| -> Vec<(usize, Vec<String>)> {
+                s.2.iter().map(|(j, _, x)| (toks[*j].start, x.clone())).collect()
+            };
+            if best > 3 || top.iter().any(|s| key(s) != key(top[0])) {
+                continue; // nothing close, or two readings as good
+            }
+            let (_, f, outliers) = top[0];
+            let first = idx[0];
+            let mut j = idx[0] as isize - 1;
+            while j >= 0 && adjacent[j as usize + 1] && between(j as usize) {
+                j -= 1;
+            }
+            // the first word may end something before the phrase: a predicate (žinomos visame pasaulyje,
+            // buvo lengva visą dieną) or a partitive head (vienas didžiausių miestų): only a lost diacritic
+            if f.0 == "gen" && prep.is_none() && outliers.iter().any(|o| o.0 == first || toks[o.0].lower.starts_with("vien")) {
+                continue; // a partitive genitive: vienas didžiausių miestų, turinčių vieną storiausių kamienų
+            }
+            if last.is_participle(&g) && outliers.iter().any(|o| o.0 == h) && !could_agree_own(last, head) {
+                continue; // the participle may govern the noun: vieną pašovęs strėle
+            }
+            if outliers.iter().any(|o| {
+                o.0 == first
+                    && (o.1 > 1
+                        || toks[o.0].lower.ends_with("iausia") // pirmiausia, svarbiausia: adverbs
+                        || (j >= 0 && adjacent[j as usize + 1] && is_copula(&toks[j as usize]))
+                        || (f.0 == "acc" && g.analyses(&head.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()))))
+            }) {
+                continue;
+            }
+            if let Some(c) = coord {
+                if outliers.iter().any(|o| toks[o.0].start < toks[c].start || o.1 > 1) {
+                    continue; // only the word after "ir", by a lost diacritic: didelę ir gražia kavinę -> gražią
+                              // (rezervines ir pagrindinę komandas: two teams)
+                }
+            }
+            if outliers.iter().any(|o| toks[o.0].is_participle(&g) && o.0 != lastk) {
+                continue; // a predicate further left: Sienos atkurtos tomis pačiomis spalvomis
+            }
+            if outliers.iter().any(|o| {
+                let t = &toks[o.0];
+                o.0 != h
+                    && !t.own.is_empty()
+                    && (t.own.iter().all(|r| r.case == "gen")
+                        || (g.analyses(&t.text).iter().all(|a| g.tag(a).contains(".def."))
+                            && t.own.iter().any(|r| r.case == "gen" || r.case == "dat")))
+            }) {
+                continue; // an adjective as a noun: pirmoji kairiųjų pergalė, palankesnė baltiesiems baigmė,
+                          // nuolatinį pirmosios virsmą
+            }
+            // an outlier agrees with no neighbour that stays: du nauji | rusiška heraldika
+            let out: Vec<usize> = outliers.iter().map(|o| o.0).collect();
+            if idx.iter().enumerate().any(|(n, &t)| {
+                out.contains(&t)
+                    && [n.wrapping_sub(1), n + 1].iter().any(|&m| m < idx.len() && !out.contains(&idx[m]) && could_agree_own(&toks[t], &toks[idx[m]]))
+            }) {
+                continue;
+            }
+            for &j in &idx {
+                settled[j] = true;
+            }
+            let text_ = idx.iter().map(|&j| toks[j].text.as_str()).collect::<Vec<_>>().join(" ");
+            for (j, _, x) in outliers {
+                let t = &toks[*j];
+                add(&mut issues, Issue {
+                    start: t.start, end: t.end, word: t.text.clone(), rule: "phrase",
+                    message: format!("'{}': the words of a phrase agree in case, number and gender", text_),
+                    suggestions: x.clone(),
+                });
+            }
+        }
+
+        // an unknown word after a modifier, typed as one itself: its candidates agreeing with it first
+        // (visa sita -> šita, not the more frequent šitą). The keyboard autocorrects it before the noun is
+        // typed, and the phrase rule then trusts the diacritic chosen. Nouns are the pair rule's.
+        for i in 1..toks.len() {
+            let (a, w) = (&toks[i - 1], &toks[i]);
+            if !adjacent[i] || w.known || issues.contains_key(&w.start) || !modifier(i - 1) || w.variants(&g).is_empty() {
+                continue;
+            }
+            let modifier_form = |f: &str| {
+                let an = g.analyses(f);
+                !an.is_empty() && an.iter().all(|x| matches!(g.parts(x)[0].as_str(), "A" | "P"))
+            };
+            let order = g.ranked(&w.text, w.variants(&g).iter().map(|(f, _)| f.clone()).collect());
+            if !modifier_form(&order[0]) {
+                continue; // likely a pronoun or adjective: nebereikalingi isaugus is išaugus, not išaugūs
+            }
+            let ar: Vec<&Reading> = a.own.iter().filter(|r| r.pos == Pos::Adj).collect();
+            let fix: Vec<String> = w.variants(&g).iter()
+                .filter(|(f, rs)| modifier_form(f) && ar.iter().any(|x| rs.iter().any(|y| agree(x, y))))
+                .map(|(f, _)| w.cap(f)).collect();
+            if !fix.is_empty() && fix.len() < w.variants(&g).len() {
+                add(&mut issues, Issue {
+                    start: w.start, end: w.end, word: w.text.clone(), rule: "context",
+                    message: format!("'{} {}': the words of a phrase agree in case, number and gender", a.text, w.text),
+                    suggestions: g.ranked(&w.text, fix),
+                });
+            }
+        }
+
         // 2. adjective-noun agreement
         for i in 1..toks.len() {
             let a = &toks[i - 1];
             let mut n = &toks[i];
-            if !adjacent[i] || issues.contains_key(&a.start) {
+            if !adjacent[i] || issues.contains_key(&a.start) || (settled[i - 1] && settled[i]) {
                 continue;
             }
             if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) {
@@ -1802,6 +2102,7 @@ impl Grammar {
         }
         // adjectives, walking left: each must agree with the one after it
         let mut want: Vec<Reading> = Vec::new();
+        let mut mods: Vec<(String, Vec<Reading>)> = Vec::new();
         let mut cases = None;
         for (k, written) in words.iter().enumerate() {
             let w = lower(written);
@@ -1813,10 +2114,39 @@ impl Grammar {
             }
             // a capital is part of a name (Vytauto Didžiojo universitete)
             let Some(rs) = g.adjective(&w).filter(|_| first_lower(written)) else { break };
-            want = if k == 0 { rs } else { want.into_iter().filter(|a| rs.iter().any(|r| agree(a, r))).collect() };
-            if want.is_empty() {
-                return None; // they don't agree: not a phrase we understand
+            if k == 0 {
+                want = rs.clone();
+            } else if !want.is_empty() {
+                want.retain(|a| rs.iter().any(|r| agree(a, r)));
             }
+            mods.push((w, rs));
+        }
+        if want.is_empty() && mods.len() > 1 {
+            // they don't agree: the case, number and gender the phrase rule would choose (viena nukritusią
+            // -> sagutę, then viena -> vieną): the cheapest, unique, never re-inflecting the first word
+            let mut feats: Vec<Feats> = Vec::new();
+            for (_, rs) in &mods {
+                for r in rs {
+                    let f: Feats = (r.case, r.number, r.gender);
+                    if !feats.contains(&f) && cases.map_or(true, |cs: &[&str]| cs.contains(&r.case)) {
+                        feats.push(f);
+                    }
+                }
+            }
+            let cost = |f: &Feats| -> u32 {
+                mods.iter().enumerate().map(|(k, (w, _))| {
+                    let c = g.modifier_cost(w, f);
+                    if k == mods.len() - 1 && c > 1 { 99 } else { c }
+                }).sum()
+            };
+            let scored: Vec<(u32, Feats)> = feats.iter().map(|f| (cost(f), *f)).collect();
+            let best = scored.iter().map(|s| s.0).min()?;
+            let top: Vec<&(u32, Feats)> = scored.iter().filter(|s| s.0 == best).collect();
+            if best > 3 || top.len() > 1 {
+                return None; // not a phrase we understand
+            }
+            let f = top[0].1;
+            return Some(NextWord { cases: None, agree: vec![Reading { pos: Pos::Adj, case: f.0, number: f.1, gender: f.2, participle: false }] });
         }
         if let Some(cs) = cases {
             want.retain(|r| cs.contains(&r.case));
@@ -1917,6 +2247,30 @@ impl<'a> G<'a> {
     /// tokį): no verb, adverb or personal pronoun reading, no noun of its own lemma (a
     /// substantivised adjective counts: geras), not a relative or question word, not a definite
     /// form (those are often nouns: pėsčiųjų tiltas).
+    /// What making the modifier w (lowercase) agree with f costs, as in the phrase rule: 0 as it is,
+    /// 1 a lost diacritic, 2 re-inflected, 99 neither.
+    fn modifier_cost(&self, w: &str, f: &Feats) -> u32 {
+        let fits = |r: &Reading| {
+            r.pos == Pos::Adj && r.case == f.0 && (r.number.is_none() || f.1.is_none() || r.number == f.1)
+                && (r.gender.is_none() || f.2.is_none() || r.gender == f.2)
+        };
+        if self.readings_of(w).iter().any(fits) {
+            return 0;
+        }
+        if self.variants_of(w).iter().any(|v| adds_diacritics(w, &lower(v)) && self.readings_of(v).iter().any(fits)) {
+            return 1;
+        }
+        for a in self.analyses(w) {
+            let tg = self.tag(&a);
+            if matches!(self.parts(&a)[0].as_str(), "A" | "P" | "Num") || tg.starts_with("V.p") {
+                if self.inflect(&a, &retag_feats(tg, f.0, f.1, f.2)).iter().any(|x| self.readings_of(x).iter().any(fits)) {
+                    return 2;
+                }
+            }
+        }
+        99
+    }
+
     fn adjective(&self, w: &str) -> Option<Vec<Reading>> {
         if KURIS.contains(&w) || INTERROGATIVES.contains(&w) || POSSESSIVES.contains(&w) {
             return None;
@@ -1927,6 +2281,9 @@ impl<'a> G<'a> {
             && an.iter().all(|a| match self.parts(a)[0].as_str() {
                 "A" | "P" => a.lemma != "kas" && !self.tag(a).contains(".def"),
                 "N" => adj_lemma(&a.lemma),
+                // a participle, as in the phrase rule: viena nukritusią -> sagutę
+                "V" => self.parts(a).len() > 2 && self.parts(a)[1].starts_with('p') && self.parts(a)[1] != "pnec"
+                    && CASES.contains(&self.parts(a).last().unwrap().as_str()),
                 _ => false,
             });
         if !ok {

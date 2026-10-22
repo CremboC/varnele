@@ -115,6 +115,20 @@ FLAGGED = [
     ("Jis rado salyga.", "salyga", "unknown", "sąlygą"),                       # object of a transitive verb
     ("Ten veikė Parsukovo papuosalu dirbtuve.", "papuosalu", "unknown", "papuošalų"),  # genitive before a noun
     ("Iškilo tarpusavio sienu klausimas.", "sienu", "unknown", "sienų"),       # not šienų (hay)
+    # a phrase of two modifiers and a noun: the case most of it shares (lost diacritic 1, re-inflection 2)
+    ("Ant stalo guli viena nukritusią sagutė.", "nukritusią", "phrase", "nukritusi"),
+    ("Ant stalo guli didele graži sagutė.", "didele", "phrase", "didelė"),
+    ("Vakar uždarė ta mano didele kavinę.", "ta", "phrase", "tą"),           # across a possessive
+    ("Vakar uždarė ta mano didele kavinę.", "didele", "phrase", "didelę"),
+    ("Mačiau ta mano didele kavine.", "ta", "object", "tą"),                    # the verb gives the case
+    ("Mačiau ta mano didele kavine.", "kavine", "object", "kavinę"),
+    ("Mačiau dideli namą.", "dideli", "agreement", "didelį"),
+    ("Kada baigsis visa sita isterija?", "sita", "unknown", "šita"),           # agrees with visa, not šitą                    # number, not case: not didelius
+    ("Mačiau didelę ir gražia kavinę.", "gražia", "phrase", "gražią"),       # not kavine
+    ("Tie gražūs didelė namai.", "didelė", "phrase", "dideli"),              # gender and number
+    ("Specialiais ryškias ženklais.", "ryškias", "phrase", "ryškiais"),
+    ("Nors V. Topalovas turėjo šiokia tokią kompensaciją, jo pozicija atrodė gera.", "šiokia", "phrase", "šiokią"),
+    ("Šamanizmas – tam tikrų religinės praktikų, pabrėžiančių ryšius.", "religinės", "phrase", "religinių"),
 ]
 
 CORRECT = [
@@ -195,6 +209,16 @@ CORRECT = [
     "Tai buvo įsiveržimų į Kalavijuočių ordino žemes serija.",
     "Nukentėjo I pasaulinio karo metu. Tai įstojimo į NATO diena.",
     "Buvo nutarta išleidimo datą paankstinti. Kurioje buvo numatyta koplyčią paversti galerija.",
+    # phrase agreement: predicates, partitives, participles with objects, adverbs, coordination
+    "Jis vienas didžiausių miestų. Man buvo lengva visą dieną. Jos myli viena kitą.",
+    "Ji, viena baigusi mokyklą, dirbo. Megarą, vieną pašovęs strėle, užmušė.",
+    "Dumplūnių vaisiai patrauklūs tarptautinėje prekyboje. Korporacijos yra žinomos visame pasaulyje.",
+    "Tai buvo pirmoji kairiųjų pergalė. Būdingi plačialapių miškai. Susidarė palankesnė baltiesiems baigmė.",
+    "Treniravo rezervines ir pagrindinę komandas. Futbolininkas sužaidė dvidešimt devynerias rungtynes.",
+    "Augančių medžių rūšių, turinčių vieną storiausių kamienų. Tai lyg ištikimybės vienas kitam simbolis.",
+    "Filmai-operos turi pirmiausia didelę edukacinę vertę. Dažniausiai mišrioji sandauga užrašoma. Tam tikru būdu.",
+    "Sienos atkurtos tomis pačiomis spalvomis. Reikia atsižvelgti į nuolatinį pirmosios virsmą.",
+    "Jis žino visas jo užnugaris yra tie stipenos.",          # jo is no possessive inside a phrase
 ]
 
 

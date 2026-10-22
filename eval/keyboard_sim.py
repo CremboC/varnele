@@ -15,7 +15,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUST = [str(ROOT / "rust/target/release/varnele"), "--data", str(ROOT / "data/varnele.bin")]
 FOLD = str.maketrans("ąčęėįšųūž", "aceeisuuz")   # y is its own key, not a diacritic
-SAFE_RULES = {"case", "agreement", "quantity", "negation", "relative", "object", "subject"}
+SAFE_RULES = {"case", "agreement", "quantity", "negation", "relative", "object", "subject", "phrase"}
+LETTER_RULES = {"phrase"}      # earlier words: may change letters (viena nukritusią sagutė -> nukritusi)
 
 
 _server = None
@@ -48,7 +49,7 @@ def autocorrect(word, context):
     r = kb(word, context)
     if r["status"] != "unknown":
         fixes = r["contextFixes"]
-        if fixes and (fixes[0]["diacritic"] or r["contextRule"] in ("subject", "rare")):   # aš buvo -> buvau, kak -> kai
+        if fixes and (fixes[0]["diacritic"] or r["contextRule"] in ("subject", "rare", "phrase")):   # aš buvo -> buvau, kak -> kai
             return fixes[0]["w"]
         fixes = [c for c in fixes if c["diacritic"]]
         return fixes[0]["w"] if fixes else word
@@ -73,7 +74,8 @@ def fix_sentence(sentence):
                     s.insert(f["start"] - 1, ",")
             elif f["rule"] in SAFE_RULES and f["suggestions"]:
                 fix = f["suggestions"][0]
-                if fix != f["word"] and len(fix) == len(f["word"]) and fix.lower().translate(FOLD) == f["word"].lower().translate(FOLD):
+                if fix != f["word"] and (f["rule"] in LETTER_RULES or len(fix) == len(f["word"])
+                                         and fix.lower().translate(FOLD) == f["word"].lower().translate(FOLD)):
                     s[f["start"]:f["end"]] = fix
         sentence = "".join(s)
     return sentence

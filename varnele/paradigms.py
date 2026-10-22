@@ -199,6 +199,8 @@ def adj_forms(stem, kind, tag="A", definite=True):
 
 
 def adj_class(lemma):
+    if lemma.endswith("didelis"):
+        return lemma[:-2], "esnis"        # dideli, not *dideliai (mediniai, mažyčiai are right)
     for end, kind in (("ias", "ias"), ("as", "as"), ("us", "us"), ("is", "inis"), ("ys", "inis")):
         if lemma.endswith(end):
             stem = lemma[:-len(end)]
