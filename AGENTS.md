@@ -33,7 +33,8 @@ rust/core       Rust runtime: same behaviour, loads data/varnele.bin   (crate "v
 rust/android    JNI bridge (cdylib libvarnele_android.so, data embedded via include_bytes!)
 android/        Stand-alone app: system spell checker service + test screen
 eval/           evaluate.py (vs Hunspell), restore.py, parity.py, keyboard_sim.py, corpus fetch/freq,
-                extract_wiki.py + training.py (dump text), build_ngrams.py, swipe_sim.py, predict_sim.py
+                extract_wiki.py + training.py (dump text), build_ngrams.py, swipe_sim.py, predict_sim.py,
+                clean_conv.py + extract_conv.py (conversational text: cleaning, test sets, text to count)
 tests/          unittest: test_morphology.py, test_grammar.py
 vendor/ispell-lt  BSD word list (stems + class flags only; its affix rules are NOT used)
 data/           extra.txt (our lexicon additions), abbreviations.txt, freq.tsv, lemma_freq.tsv,
@@ -66,6 +67,9 @@ python3 eval/extract_wiki.py                       # corpus/wiki/ltwiki-latest-p
 python3 eval/build_freq.py                         # training text -> data/freq.tsv, lemma_freq.tsv (words seen 10+ times)
 python3 eval/build_ngrams.py                       # training text -> data/bigrams.tsv (pairs seen 10+ times; then export)
 python3 eval/predict_sim.py                        # next word among the top 3 predictions, same 300 sentences
+python3 eval/clean_conv.py                         # what cleaning repairs/drops in corpus/raw/{opensubtitles,tatoeba}, with examples
+python3 eval/extract_conv.py                       # cleaned -> corpus/conv/{subtitles,tatoeba} (tests), heldout.tsv, train/*.txt
+python3 eval/predict_sim.py --corpus corpus/conv/subtitles   # any of the four sims on dialogue; tatoeba: add --no-paragraph
 .venv/bin/python eval/evaluate.py                  # vs Hunspell lt_LT (needs spylls + make myspell)
 ```
 
@@ -354,7 +358,21 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   typing 16.2%, after its first letter 33.1% with the Wikipedia dump (31M words, 310k pairs seen 10+
   times). With the 600 articles (167k words, 13.6k pairs seen twice): 12.9 / 26.3% (no paragraph:
   12.4 / 22.7%; previous word only, with the paragraph's words as candidates: 12.5 / 21.5%). All test
-  sentences are Wikipedia: conversational text would score differently (see the corpus backlog item).
+  sentences are Wikipedia: conversational text scores lower, see below.
+- **Conversational test sets** (`eval/extract_conv.py`, cleaned, held out, never counted;
+  Wikipedia-dump data, 300 sentences each, Wikipedia figures from above in brackets):
+
+  | | OpenSubtitles (with dialogue before) | Tatoeba (`--no-paragraph`) | Wikipedia |
+  |---|---|---|---|
+  | prediction top 3, before typing / after 1 letter | 8.2 / 24.2% (2,668 words) | 6.2 / 26.1% | (16.2 / 33.1%) |
+  | swipe σ 0.3: keys top 1 / top 3 / final word | 75.0 / 89.2 / 68.6% | 78.4 / 91.1 / 72.9% | (82.5 / 90.3 / 73.9%) |
+  | restore.py: words only → context rules | 67.5 → 70.9%, 0 changed | 73.9 → 77.1%, 0 changed | (65.3 → 70.1%, 0) |
+  | keyboard_restore.py: restored, whole sentences | 73.9%, 45.0%, 4 changed | 81.3%, 58.0%, 10 changed | (74.0%, 36.0%, 2) |
+
+  Prediction before typing halves on dialogue: the pairs are encyclopedic. Restoration holds up
+  (chat sentences are short and simple). Before cleaning the checker "changed" 2 correct words per
+  set, all errors in the text itself (`į mokykla`); now 0. The keyboard's changes are its own false
+  alarms on dialogue (`Mes visi` → `visime`, `jis visai` → `visau`), see the corpus backlog item.
 
 ## Gotchas (learned the hard way)
 
@@ -425,17 +443,47 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 - **Corpus beyond Wikipedia** (owner, 2026-10-22): Wikipedia is encyclopedic, third person, full of
   dates/places/`m.`; a keyboard types chat and everyday prose (`aš`, `tu`, questions, spoken forms
-  `valgyt`, `buvom`). Candidate sources, licences and sizes still to check:
-  - OpenSubtitles (OPUS): conversational, 1st/2nd person, short sentences: best match for typing.
-  - Leipzig Corpora Collection: Lithuanian news and web sentence sets, several sizes.
-  - Web crawls (CC-100, OSCAR, HPLT, MaCoCu): big and broad (forums, blogs), noisy: filter
-    boilerplate and duplicates.
-  - News sites directly (LRT, 15min, Delfi): terms of service; prefer a packaged collection.
-  - Dabartinės lietuvių kalbos tekstynas (VDU): high quality, search-only as far as known.
-  Plan: keep Wikipedia for vocabulary breadth (names, rare forms); weight conversational text
-  more in the word-pair model (register matters more than size for prediction). Only counts ship
-  in varnele.bin, not text, but check each licence. Needs a held-out conversational test set:
-  restore/swipe/predict evaluations are all Wikipedia sentences and would understate the gain.
+  `valgyt`, `buvom`). Sources checked 2026-10-22 (1 MB sample of each where possible; "1/2 p." =
+  share of tokens that are `aš tu man tau mane tave mes jūs mums jums mano tavo esu esi`…;
+  Wikipedia test articles: 0.07%, 0.2% questions):
+
+  | Source | Lithuanian data, URL | Size | Licence / terms | Register, noise |
+  |---|---|---|---|---|
+  | OpenSubtitles v2024 (OPUS) | object.pouta.csc.fi/OPUS-OpenSubtitles/v2024/mono/lt.txt.gz | 26M tokens, 4.8M lines, 4,536 films, 49 MB gz | No licence; OPUS asks for a link to opensubtitles.org. Subtitles are fan translations of copyrighted films. Precedent: wordfreq ships counts from it under CC BY-SA 4.0 "with attribution to OpenSubtitles" | Dialogue: 1/2 p. 7.4%, 18% questions, 3.8 words/line. 28% repeated lines (`Taip.`, `Ne.`), ~5% unknown tokens (foreign names, words split by line breaks: `Prisi`, `Ke`), 8% of 6+ word lines without diacritics |
+  | Tatoeba (OPUS v2026-07-08) | object.pouta.csc.fi/OPUS-Tatoeba/v2026-07-08/mono/lt.txt.gz | ~0.9M tokens, 1.7 MB gz | CC BY 2.0 FR (clear) | Short everyday sentences translated from English: 1/2 p. 12.4%, 15% questions, clean (0.7% unknown), but `Tomas`/`Marija` everywhere |
+  | Leipzig Corpora Collection | downloads.wortschatz-leipzig.de/corpora/ `lit_news_2020_1M`, `lit_news_2019_300K`, `lit-lt_web_2016_1M`, `lit_newscrawl_2011_1M`, `lit_wikipedia_2021_300K` (.tar.gz) | 1M sentences each, ~200 MB tgz each | Downloads CC BY (online services CC BY-NC); cite Goldhahn et al. 2012 | News and web, sentence-level, deduplicated; the packages also hold word and neighbour co-occurrence counts. Not conversational (not sampled: the sentence file comes after the co-occurrence files in the archive) |
+  | HPLT v3 | sentence-level via OPUS object.pouta.csc.fi/OPUS-HPLT/v3/mono/lt.txt.gz; documents huggingface.co/datasets/HPLT/HPLT3.0 (lit_Latn) | OPUS: 407M tokens, 1.1 GB gz; full: 20.4M documents, 36 GB | Packaging CC0; text belongs to the sites ("we do not own any of the text"), takedown process | Web: 1/2 p. 1.4%, 3% questions; cleanest crawl (0.5% repeated lines, 1.7% without diacritics), 4.7% unknown (English, names) |
+  | CC-100 | data.statmt.org/cc-100/lt.txt.xz | 3.6 GB xz | No IP claim on the preparation; Common Crawl terms of use | Web: 1/2 p. 1.1%, 17% repeated lines (boilerplate), 4.6% unknown incl. `href`, `document` |
+  | OSCAR 23.01 | huggingface.co/datasets/oscar-corpus/OSCAR-2301 (gated) | 1.67B words, 5.2M documents, 14.5 GB | Packaging CC0, text Common Crawl; **access suspended** on HF ("will not grant any access") | Web; not sampled |
+  | MaCoCu | macocu.eu | **No Lithuanian** (under-resourced EU and candidate-country languages only) | | |
+  | VDU Dabartinės lietuvių kalbos tekstynas | tekstynas.vdu.lt (search only); word-form list hdl.handle.net/20.500.11821/8 (CLARIN-LT) | 141M words (62% periodicals); list 1.85M forms | Texts not downloadable; list under CLARIN-LT PUB EULA (open access) | Edited press and fiction; single word forms only, no pairs: adds nothing over the Wikipedia dump for a keyboard |
+
+  **Recommendation.** (1) Word pairs and form frequencies for the keyboard: **OpenSubtitles v2024**
+  plus Tatoeba, weighted above Wikipedia; it is the only large dialogue source and has 100× the
+  1st/2nd person rate. Licence is a grey zone like everyone's (wordfreq does the same): ship only
+  counts, drop pairs seen in fewer than ~3 films so no line can be read back, credit OpenSubtitles.org
+  and OPUS in the About screen. Deduplicate repeated lines per film before counting. (2) More
+  general breadth than Wikipedia, if wanted: HPLT v3 via OPUS (cleanest web text, sentence files,
+  1.1 GB), or Leipzig `lit_news_2020_1M` where a clear CC BY matters more than size. Skip CC-100
+  (boilerplate), OSCAR (access closed), MaCoCu (no lt), VDU (no text, no pairs). (3) Held-out test
+  sets, done (`eval/extract_conv.py`, baseline under "Latest numbers"): 40 stretches of 500 subtitle
+  lines spread over the file (3,455 usable sentences) and 2,000 Tatoeba sentences (533 usable), both
+  downloaded to corpus/raw/. **Count from `corpus/conv/train/*.txt` only** (17.9M + 0.7M words): it
+  is cleaned and already leaves out the held-out lines and every line equal to a held-out line of
+  4+ words (a film's other uploads repeat its lines); `heldout.tsv` lists both.
+  Cleaning (`eval/clean_conv.py`) before any use, repairs only where the original word is unknown
+  and the repair is known: Baltic text decoded as cp1252 (5.5k words: `Ðtai èia` → `Štai čia`,
+  `jüs` → `jūs`), OCR I/l (11k: `kodėI`, `lš` → `Iš`). Drops 2.2% of subtitle lines: typed without
+  diacritics (44k, plus 31k valid-looking lines among them), not Lithuanian (8k), other encodings
+  and Cyrillic (6k), credits (3k); 0.3% of Tatoeba (learners' `sedėti`, `tūrėti`). Varnelė's own
+  corrections are **not** applied: on dialogue the context rules have false alarms (subject rule
+  `Aš jus įvesiu` → `jusiu`, `Mes visi` → `visime`; case after `per`: `per toli` → `tolį`,
+  `per didelė rizika`; `ką gali` → `galį`; `Kiek tu` → `tų`), suggestions guess (`salsa` → `sala`),
+  and the test sets would grade Varnelė against itself. Those false alarms are worth fixing in
+  the rules: a keyboard sees this register all day.
+  Plan as before: keep Wikipedia for vocabulary breadth (names, rare forms); only counts ship in
+  varnele.bin, not text. The restore/swipe/predict evaluations so far are all Wikipedia sentences
+  and would understate the gain.
 
 ### Phone-testing list of 2026-10-19: done, and what was left on purpose
 
