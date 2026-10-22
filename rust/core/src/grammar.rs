@@ -680,6 +680,28 @@ impl Grammar {
                     for &x in &span {
                         require(&mut issues, &toks[x], cases, "case", &format!("'{prep}' takes the {want}"));
                     }
+                    // a genitive that can't be the object modifies a head after it: į teisės mokykla -> mokyklą
+                    // (a typed preposition, not the numeral in "I pasaulinio karo metu"; not "į NATO diena")
+                    let start = i + span.len();
+                    let mut k = start;
+                    while prep == w.lower
+                        && !cases.contains(&"gen")
+                        && k + 1 < toks.len()
+                        && adjacent[k + 1]
+                        && toks[k].known
+                        && toks[k].own.iter().any(|r| r.case == "gen")
+                        && !toks[k].own.iter().any(|r| cases.contains(&r.case))
+                        && !is_upper(&toks[k].text)
+                        && toks[k + 1].is_noun(&g)
+                    {
+                        k += 1;
+                    }
+                    let span = if k > start { phrase(k - 1, false) } else { Vec::new() };
+                    if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) {
+                        for &x in &span {
+                            require(&mut issues, &toks[x], cases, "case", &format!("'{prep}' takes the {want}"));
+                        }
+                    }
                 }
             }
             // 2b. numbers: 10 metu -> metų (a noun right after the number: not units "20 m atstumu",
@@ -1451,6 +1473,39 @@ impl Grammar {
                 while j + 1 < toks.len() && adjacent[j + 1] && toks[j].known && toks[j].can_be(&g, "gen") && toks[j + 1].is_noun(&g) {
                     j += 1;
                 }
+                // agreeing with neither the genitive nor the noun after it, but a diacritic twin agrees with
+                // the genitive: dalyvaujančiu šalių viršūnių susitikimą -> dalyvaujančių (the keyboard fixed
+                // the genitive first); not su dideliu žmonių būriu. Wait for a word after the genitives
+                // (su dideliu žmonių ...) that is not a preposition or connective (svarbiausiu musulmonų
+                // kovos | prieš ... centru); not a predicate after tapo, laikomas (laikomas lemiamu serbų
+                // kovoje); all known (įvairialypes Vokietijos alumnų kompetencijas: alumnų is not)
+                let ar: Vec<&Reading> = a.own.iter().filter(|r| r.pos == Pos::Adj).collect();
+                let hd = &toks[j];
+                let hr: Vec<&Reading> = hd.own.iter().filter(|r| r.pos == Pos::Noun).collect();
+                let more = hr.iter().any(|r| r.case != "gen")
+                    || (j + 1 < toks.len() && adjacent[j + 1] && prep_cases(&toks[j + 1].lower).is_none()
+                        && !phrase_stop(&toks[j + 1].lower));
+                if j > i && a.known && n.known && hd.known && !ar.is_empty() && more
+                    && !(i >= 2 && adjacent[i - 1] && g.analyses(&toks[i - 2].text).iter().any(|x| {
+                        g.tag(x).starts_with("V.") && PREDICATIVE_VERBS.iter().any(|v| x.lemma.ends_with(v))
+                    }))
+                {
+                    let gr: Vec<&Reading> = n.own.iter().filter(|r| r.pos == Pos::Noun && r.case == "gen").collect();
+                    let heads: Vec<&Reading> = hr.iter().copied().chain(n.own.iter().filter(|r| r.pos == Pos::Noun)).collect();
+                    if !ar.iter().any(|x| heads.iter().any(|y| agree(x, y))) {
+                        let fix: Vec<String> = a.variants(&g).iter()
+                            .filter(|(_, rs)| rs.iter().any(|x| x.pos == Pos::Adj && gr.iter().any(|y| agree(x, y))))
+                            .map(|(f, _)| a.cap(f)).collect();
+                        if !fix.is_empty() {
+                            add(&mut issues, Issue {
+                                start: a.start, end: a.end, word: a.text.clone(), rule: "agreement",
+                                message: format!("'{} {}': adjective and noun must agree in case and number", a.text, n.text),
+                                suggestions: fix,
+                            });
+                            continue;
+                        }
+                    }
+                }
                 if j > i && !toks[j].can_be(&g, "gen") && toks[j].known {
                     n = &toks[j];
                 } else if j > i || !n.own.iter().any(|r| r.pos == Pos::Noun && r.case != "gen") {
@@ -1459,8 +1514,12 @@ impl Grammar {
                     no_gen = true; // no head follows: not a modifier (šita žmogų -> šitą)
                 }
             }
-            // participle as attribute (nukritusią sagutę), not with an object, place or predicate
+            // participle as attribute (nukritusią sagutę), not with an object, place or predicate;
+            // a -tinas one takes no accusative: pažintini taką -> pažintinį
+            let necessity = g.analyses(&a.text).iter().all(|x| g.tag(x).starts_with("V.pnec."))
+                && n.can_be(&g, "acc") && !n.can_be(&g, "ins") && !n.can_be(&g, "loc");
             if a.is_participle(&g)
+                && !necessity
                 && (n.can_be(&g, "acc")
                     || n.can_be(&g, "loc")
                     || g.analyses(&a.text).iter().any(|x| PREDICATIVE_VERBS.iter().any(|v| x.lemma.ends_with(v))))
@@ -1576,8 +1635,16 @@ impl Grammar {
             let mut head_cases: Vec<&str> = head.pos_readings(&g).iter().map(|r| r.case).collect();
             let own_cases: Vec<&str> = own.iter().map(|r| r.case).collect();
             if w.known {
-                if head_cases.is_empty() || head_cases.iter().any(|c| own_cases.contains(c)) || head_cases.iter().all(|c| *c == "gen") {
-                    continue; // one phrase: pilotu bandytoju, naktiniu gyvenimu; tarpininku liaudies švietime
+                // one phrase only in the same case and number (gender may differ: kalba žodžiu rinkliava):
+                // pilotu bandytoju, naktiniu gyvenimu; not teises mokyklą (acc pl + acc sg), Medžiokles
+                // plotas (plotas is also a participle, not a noun)
+                let hn: Vec<Reading> = head.pos_readings(&g).into_iter().filter(|r| r.pos == Pos::Noun).collect();
+                if head_cases.is_empty() || head_cases.iter().all(|c| *c == "gen")
+                    || own.iter().any(|x| hn.iter().any(|y| {
+                        x.case == y.case && (x.number.is_none() || y.number.is_none() || x.number == y.number)
+                    }))
+                {
+                    continue; // tarpininku liaudies švietime
                 }
             } else {
                 // the head may have lost its diacritics too (zaidimu bendrove -> bendrovė): skip only
@@ -1621,23 +1688,29 @@ impl Grammar {
             if !ok {
                 continue;
             }
+            let mut prep_head = false; // the head is the object of the preposition before: į teises mokykla
             if k >= 0 && adjacent[k as usize + 1] {
                 let p = &toks[k as usize];
                 let an_p = g.analyses(&p.text);
-                if prep_cases(&p.lower).is_some_and(|cs| own.iter().any(|r| cs.contains(&r.case))) {
-                    continue; // su metaliniu lankeliu dugne
-                }
-                if an_p.iter().any(|a| g.tag(a).starts_with("V.")) && g.mostly_verb(&an_p) {
-                    continue; // pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
-                }
                 let pr = p.pos_readings(&g); // an unknown word (typed without diacritics): its candidates
-                if POSSESSIVES.contains(&p.lower.as_str()) || (!an_p.is_empty() && an_p.iter().all(|a| g.tag(a) == "W")) {
+                if let Some(pc) = prep_cases(&p.lower) {
+                    // su metaliniu lankeliu dugne; but when the head can take the preposition's case (also
+                    // by a diacritic), it is the object and the word its genitive: į teises mokykla(ą)
+                    if !head.pos_readings(&g).iter().chain(head.variants(&g).iter().flat_map(|(_, rs)| rs.iter()))
+                        .any(|r| r.pos == Pos::Noun && pc.contains(&r.case))
+                    {
+                        continue;
+                    }
+                    prep_head = true;
+                } else if an_p.iter().any(|a| g.tag(a).starts_with("V.")) && g.mostly_verb(&an_p) {
+                    continue; // pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
+                } else if POSSESSIVES.contains(&p.lower.as_str()) || (!an_p.is_empty() && an_p.iter().all(|a| g.tag(a) == "W")) {
                     continue; // jos pasirodymu danguje, šiuo metu
                 }
                 // after a genitive (or a name) an instrumental is often its head: karo metu,
                 // Vyriausybės potvarkiu, Aifelio dialektu; only a genitive the corpus knows well
                 // wins there (vidaus reikalų, Čikagos lietuvių)
-                if w.known && own.iter().any(|r| r.case == "ins")
+                else if w.known && own.iter().any(|r| r.case == "ins")
                     && (pr.iter().any(|r| r.pos == Pos::Noun && r.case == "gen") || pr.is_empty())
                     && fix_f < 5
                 {
@@ -1648,7 +1721,7 @@ impl Grammar {
             // tapo antruoju pagal dydį miestu
             let mut j = k;
             let mut governed = false;
-            while j >= 0 && j >= k - 3 && adjacent[j as usize + 1] && !governed {
+            while j >= 0 && j >= k - 3 && adjacent[j as usize + 1] && !governed && !prep_head {
                 let t = &toks[j as usize];
                 governed = if let Some(cs) = prep_cases(&t.lower) {
                     own.iter().any(|r| cs.contains(&r.case))

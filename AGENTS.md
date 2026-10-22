@@ -117,12 +117,12 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 
 | Rule | Example | Main exceptions (each from a real false alarm) |
 |---|---|---|
-| case (prepositions) | `prieš pora` → `porą`, `į didele kavine`, `link namu` → `namų` | genitive modifiers (`su lietuvių kultūra`), `apie` + quantity (`apie pusė`), numerals (`per šešiolika`), phrase must end in a noun, phrase stops at a word that can't agree (`už didžiausią | tuo metu`), participles end the phrase |
+| case (prepositions) | `prieš pora` → `porą`, `į didele kavine`, `link namu` → `namų`; after an acc/ins preposition a genitive that can't be its object is a modifier, so the noun after it is checked (`į teisės mokykla` → `mokyklą`) | genitive modifiers (`su lietuvių kultūra`), that head rule only for a typed preposition (not the numeral `I pasaulinio karo metu`) and not across all-caps words (`į NATO diena`), `apie` + quantity (`apie pusė`), numerals (`per šešiolika`), phrase must end in a noun, phrase stops at a word that can't agree (`už didžiausią | tuo metu`), participles end the phrase |
 | quantity | `daug vaiku` → `vaikų`; a number ending in 0 or 11–19 + noun (`10 metu` → `metų`, `15 euru`) | comparatives (`kiek silpnesnes`), only `kind == num` for -lika/-dešimt (not `Respublika`); numbers: only a known lowercase noun right after the number (not units `20 m atstumu`, manner `12 etniniu pagrindu`, labels `KNM-ER 1813 atveju`), not decimals or ordinals |
 | case (verbs, indefinites) | GENITIVE_VERBS laukti, ieškoti, bijoti, siekti, reikėti, vengti: `lauksiu tavo zinutes` → `žinutės`, `ieškau raktu`; `koki nors` → `kokį nors`, `ka nors` → `ką nors` | verbs as in negation (durations, quantities), possessives skipped (`tavo`); prefixed verbs only with a real prefix (`plaukė` is not `p+laukė`) |
-| agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų` | `viena kitą` (only before a kitas form: `vienos eilutes` → `eilutės`); adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`). Which word changes: a preposition before decides (`pro nedideles gyvenvietės` → `gyvenvietes`), else the one typed without diacritics (`nedidele mergaitė` → `nedidelė`, `visa energiją` → `visą`) |
+| agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų` | `viena kitą` (only before a kitas form: `vienos eilutes` → `eilutės`); adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`), but a -tinas participle takes no accusative (`pažintini taką` → `pažintinį`; other passives do: `nutarta datą paankstinti`). Keyboard order: an adjective agreeing with neither the genitive after it nor the noun after the genitives takes its twin agreeing with the genitive (`dalyvaujančiu šalių viršūnių susitikimą` → `dalyvaujančių`), only once a word follows the genitives (`su dideliu žmonių …` waits; `su dideliu žmonių būriu` agrees), not when that word is a preposition or connective (`svarbiausiu musulmonų kovos prieš … centru`), not after a predicative verb (`laikomas lemiamu serbų kovoje`), all words known. Which word changes: a preposition before decides (`pro nedideles gyvenvietės` → `gyvenvietes`), else the one typed without diacritics (`nedidele mergaitė` → `nedidelė`, `visa energiją` → `visą`) |
 | predicate adjective | `ji nedidele` → `nedidelė`, `mergaitė buvo (labai) nedidele` | subject = jis/ji/jie/jos or a noun whose most frequent lemma is nominative; nouns and `jos` need a nominative copula (būti, atrodyti, likti, jaustis; not `tapo parapine`); the adjective ends the clause; participles skipped |
-| genitive before a head noun | `miesto gyventoju skaičius` → `gyventojų`, `vietoves gyventojai` → `vietovės`, `branduoliniu ginklu sutartis` (modifiers too) | each from Wikipedia: not when both share a case (`pilotu bandytoju`, `naktiniu gyvenimu`), head genitive-only, head a verb or adverb (`su broliu namo`); not lemma metas (`vienu metu`); not when the form is ≥⅓ as frequent as its genitive (`Sovietmečiu`, `laikotarpiu`); not after a verb, possessive, `šiuo`, or a governing preposition up to 3 words left (`į Kalavijuočių ordino žemes`); an instrumental after a genitive or name only if its genitive is seen 5+ times (`vidaus reikalų` yes, `karo metu`, `Vyriausybės potvarkiu` no) |
+| genitive before a head noun | `miesto gyventoju skaičius` → `gyventojų`, `vietoves gyventojai` → `vietovės`, `branduoliniu ginklu sutartis` (modifiers too) | each from Wikipedia: not when both share a case and number as nouns (`pilotu bandytoju`, `naktiniu gyvenimu`, `kalba žodžiu rinkliava`; but `teises mokyklą`, and `Medžiokles plotas`, plotas also being a participle), head genitive-only, head a verb or adverb (`su broliu namo`); not lemma metas (`vienu metu`); not when the form is ≥⅓ as frequent as its genitive (`Sovietmečiu`, `laikotarpiu`); not after a verb, possessive, `šiuo`, or a governing preposition up to 3 words left (`į Kalavijuočių ordino žemes`), unless the preposition is right before and the head can take its case, also by a diacritic (`į teises mokykla` → `teisės`); an instrumental after a genitive or name only if its genitive is seen 5+ times (`vidaus reikalų` yes, `karo metu`, `Vyriausybės potvarkiu` no) |
 | context ranking of unknown words (reorders suggestions only) | both adjective and noun unknown: each keeps the candidates agreeing with the other's (`dalyvaujanciu saliu` → `dalyvaujančių`); after a TRANSITIVE_VERBS verb (itself possibly unknown, by its candidates) accusative candidates first (`rado salyga` → `sąlygą`); genitive-before-noun for unknown words, all genitive candidates (`sienu klausimas` → `sienų`) | allowed candidates keep the suggester's order (`sienų`, not `šienų`); not when the adjective's candidates include a finite verb (`% sudare baltaodziai` → `sudarė`); no infinitive/verb in the object phrase (`turi buti`); compared with the rule for known words: an unknown head counts by its candidates, the head's diacritic twins count for the shared-case check (`zaidimu bendrove`), genitive chains allowed, no corpus-evidence guard for an instrumental after a genitive; any verb instead of TRANSITIVE_VERBS was worse (`sudaro dirbama zeme`) |
 | preposition that became a verb | `kabo virs stalo` → `virš` | the phrase after it takes the preposition's case and the clause already has a verb before it (`Mama virs sriubos` = will boil) |
 | negation | `neturiu laiką` → `laiko`; a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas, a one-word phrase with an adverb reading (`neatėjo laiku` = on time) |
@@ -240,9 +240,10 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 ## Latest numbers
 
-- Wikipedia (150 articles, 65k words): 19 context flags, **all real errors**
-  (16 commas incl. `nariu, pasiekusiu tokį aukštą postą`, `kylanti grėsme`, `prastos kokybes`, `daugybę metu`).
-  The 600 freq articles: 83 flags (`kuri kuria`, `kurie kuria` no longer get a comma).
+- Wikipedia (150 articles, 65k words): 20 context flags, **all real errors**
+  (16 commas incl. `nariu, pasiekusiu tokį aukštą postą`, `kylanti grėsme`, `prastos kokybes`, `daugybę metu`,
+  `FIA Šiaurines Europos zonos`). The 600 freq articles: 84 flags (`kuri kuria`, `kurie kuria` no longer get a
+  comma; `pasteliniu spalvų deriniai`).
 - Commas removed from the articles (`eval/commas.py`), new rules, right/wrong on test+freq:
   participial phrase 91/10 (8 of the 10 are commas missing in the articles), lists 27/0,
   parenthetical 31/0, address 2/0, negu 2/0, repeated connective 1/0. Old rules 2440/62
@@ -251,12 +252,19 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   better diacritic fixes (#1 correct 56.7% vs 40.0%), worse on keyboard typos
   (detect 89.3 vs 95.3%, #1 70.0 vs 76.0%).
 - Restoration typed word by word through the keyboard model (`eval/keyboard_restore.py`, same 300
-  sentences): 71.8% restored, 32.7% whole sentences right, 3 correct words changed; the rare-twin
+  sentences): 72.5% restored, 34.3% whole sentences right, 3 correct words changed (71.8%, 32.7% before
+  the keyboard-order fixes `dalyvaujančių`, `teisės`, `Medžioklės`, `pažintinį`); the rare-twin
   rule makes the keyboard beat the checker (`metu` → `metų`, `siu` → `šių`, `padare` → `padarė`). The
-  checker still gets 10 words the keyboard misses, all keyboard order (a word committed before its
-  head noun is typed: `dalyvaujančiu šalių`, `teises mokyklą`, `papuošalu`, `žanru`).
-- Restoration (all diacritics stripped, 300 sentences): 63.1% → 68.3% with
-  context rules (67.7% before context ranking of unknown words, 66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
+  checker still gets 8 words the keyboard misses. Left on purpose: `žanru`, `papuošalu` after a genitive
+  (their genitives are not in the frequency corpus; dropping that guard flagged `rotroskopavimo metodu`,
+  `tradicijų puoselėjimu`, `menų kovotoju` on Wikipedia); `šlapynes dalis` (dalis is also acc pl);
+  `Daugybes mokslininkų … dėka` (acc pl + genitive is fine: `tūkstančius žmonių`; only `dėka` decides);
+  `Didžiausia įtaka turi` (object before the verb); `neįvykusi veiksmą`, `įgyta turtą` (participles with
+  objects). The keyboard changes `kultūrinė ekspansija` to `kultūrinę ekspansiją`: autocorrect picks
+  `kultūrinę` for `kulturine` on a frequency tie (0.008 vs 0.017) and the sentence fixer then makes
+  the noun agree; it cannot tell autocorrected diacritics from typed ones.
+- Restoration (all diacritics stripped, 300 sentences): 63.1% → 68.8% with
+  context rules, 0 correct words changed (68.3% and 1 before the keyboard-order fixes; 67.7% before context ranking of unknown words, 66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
   checker; a most-frequent-spelling baseline gets 71.9%.
 - Rust: load 22 ms, correct word 0.001 ms, misspelling + suggestions ~0.8 ms,
   sentence ~1.6 ms (Mac). Phone (Fold7): 0.05–0.8 ms valid words, 6–17 ms
@@ -409,3 +417,6 @@ Left deliberately:
     adjectives, agreement fix direction, `virs` → `virš`
 15. context ranking of unknown words: on 1500 stripped sentences the top suggestion for
     unknown words is wrong 246 times instead of 272 (26 better, 0 worse)
+16. keyboard order: adjective before genitives (`dalyvaujančių`), genitive between a preposition
+    and its object (`į teises mokykla` → `teisės mokyklą`), case+number for the one-phrase check,
+    -tinas participles take no accusative

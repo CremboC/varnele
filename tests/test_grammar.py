@@ -103,6 +103,13 @@ FLAGGED = [
     ("Ji nedidele.", "nedidele", "agreement", "nedidelė"),
     ("Mergaitė buvo labai nedidele.", "nedidele", "agreement", "nedidelė"),
     ("Lempa kabo virs stalo.", "virs", "case", "virš"),               # virs = will become, unless a verb came before
+    # keyboard order: the words before were committed (and fixed) before the head was typed
+    ("Surengė dalyvaujančiu šalių viršūnių susitikimą.", "dalyvaujančiu", "agreement", "dalyvaujančių"),
+    ("Laikė priėmimo į teises mokyklą testus.", "teises", "case", "teisės"),        # acc pl + acc sg: not one phrase
+    ("Laikė priėmimo į teises mokykla testus.", "teises", "case", "teisės"),        # the head is į's object
+    ("Laikė priėmimo į teisės mokykla testus.", "mokykla", "case", "mokyklą"),      # across the genitive
+    ("Medžiokles plotas priklausė girininkijai.", "Medžiokles", "case", "Medžioklės"),  # plotas: not a participle here
+    ("Nutiesus pažintini taką lankytojai nukreipiami.", "pažintini", "agreement", "pažintinį"),  # -tinas takes no object
     # unknown words typed without diacritics: the context picks among their candidates
     ("Memorandume dalyvaujanciu saliu atstovai.", "dalyvaujanciu", "unknown", "dalyvaujančių"),  # agrees with šalių
     ("Jis rado salyga.", "salyga", "unknown", "sąlygą"),                       # object of a transitive verb
@@ -181,6 +188,13 @@ CORRECT = [
     "Jie sutiko baigti partiją. Intervencija turėtų būti suprantama plačiau. Vaikai gavo dovanų.",
     "Cerkvė tapo parapine. Ji buvo mokytoja. Jos buvo gražios. Jis buvo geru draugu. Ji grįžo laiminga.",
     "Mama virs sriubos. Vanduo greitai virs.",
+    # keyboard-order rules: heads after genitives, prepositions, passive participles
+    "Susitiko su dideliu žmonių būriu. Kalbėjo su dideliu žmonių",
+    "Adalis tapo svarbiausiu musulmonų kovos prieš krikščionis centru. Mūšis laikomas lemiamu serbų kovoje.",
+    "Kitose kalbose, kaip rusų kalba žodžiu rinkliava apibūdinamas ir muitas.",
+    "Tai buvo įsiveržimų į Kalavijuočių ordino žemes serija.",
+    "Nukentėjo I pasaulinio karo metu. Tai įstojimo į NATO diena.",
+    "Buvo nutarta išleidimo datą paankstinti. Kurioje buvo numatyta koplyčią paversti galerija.",
 ]
 
 

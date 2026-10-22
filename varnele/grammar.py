@@ -480,6 +480,18 @@ class Grammar:
                     want = " or ".join(CASE_NAMES[c] for c in sorted(cases))
                     for x in span:
                         require(x, cases, "case", f"'{prep}' takes the {want}")
+                    # a genitive that can't be the object modifies a head after it: į teisės mokykla -> mokyklą
+                    # (a typed preposition, not the numeral in "I pasaulinio karo metu"; not "į NATO diena")
+                    k = i + len(span)
+                    while (prep == w.lower and "gen" not in cases and k + 1 < len(toks) and adjacent[k + 1]
+                           and toks[k].known and any(r.case == "gen" for r in toks[k].own)
+                           and not any(r.case in cases for r in toks[k].own)
+                           and not toks[k].text.isupper() and toks[k + 1].is_noun):
+                        k += 1
+                    span = phrase(k - 1) if k > i + len(span) else []
+                    if span and span[-1].is_noun:
+                        for x in span:
+                            require(x, cases, "case", f"'{prep}' takes the {want}")
             # 2b. numbers: 10 metu -> metų
             # (a noun right after the number: not units "20 m atstumu", manner "12 etniniu pagrindu",
             # labels "KNM-ER 1813 atveju")
@@ -975,6 +987,27 @@ class Grammar:
                 while (j + 1 < len(toks) and adjacent[j + 1] and toks[j].known
                        and toks[j].can_be("gen") and toks[j + 1].is_noun):
                     j += 1
+                # agreeing with neither the genitive nor the noun after it, but a diacritic twin agrees with
+                # the genitive: dalyvaujančiu šalių viršūnių susitikimą -> dalyvaujančių (the keyboard fixed
+                # the genitive first); not su dideliu žmonių būriu. Wait for a word after the genitives
+                # (su dideliu žmonių ...) that is not a preposition or connective (svarbiausiu musulmonų
+                # kovos | prieš ... centru); not a predicate after tapo, laikomas (laikomas lemiamu serbų
+                # kovoje); all known (įvairialypes Vokietijos alumnų kompetencijas: alumnų is not)
+                ar = [r for r in a.own if r.pos == "adj"]
+                hd = toks[j]
+                hr = [r for r in hd.own if r.pos == "noun"]
+                more = any(r.case != "gen" for r in hr) or (j + 1 < len(toks) and adjacent[j + 1] and toks[j + 1].lower
+                                                            not in PREPOSITIONS and toks[j + 1].lower not in PHRASE_STOP)
+                if (j > i and a.known and n.known and hd.known and ar and more
+                        and not (i >= 2 and adjacent[i - 1] and any(
+                            x.tag.startswith("V.") and x.lemma.endswith(PREDICATIVE_VERBS) for x in self.analyses(toks[i - 2].text)))):
+                    gr = [r for r in n.own if r.pos == "noun" and r.case == "gen"]
+                    if not any(_agree(x, y) for x in ar for y in hr + n.own if y.pos == "noun"):
+                        fix = [a.cap(f) for f, rs in a.variants if any(_agree(x, y) for x in rs if x.pos == "adj" for y in gr)]
+                        if fix:
+                            add(Issue(a.start, a.end, a.text, "agreement",
+                                      f"'{a.text} {n.text}': adjective and noun must agree in case and number", fix))
+                            continue
                 if j > i and not toks[j].can_be("gen") and toks[j].known:
                     n = toks[j]
                 elif j > i or not any(r.pos == "noun" and r.case != "gen" for r in n.own):
@@ -983,8 +1016,10 @@ class Grammar:
                     no_gen = True       # no head follows: not a modifier (šita žmogų -> šitą)
             # A participle before a noun is usually an attribute (nukritusią sagutę), but it
             # can also take an object (praėjusi advokatūrą), a place (einanti sakinio gale)
-            # or a predicate (tapusią vienuole).
-            if a.is_participle and (n.can_be("acc") or n.can_be("loc") or any(
+            # or a predicate (tapusią vienuole). A -tinas one takes no accusative: pažintini taką -> pažintinį.
+            necessity = (all(x.tag.startswith("V.pnec.") for x in self.analyses(a.text))
+                         and n.can_be("acc") and not n.can_be("ins") and not n.can_be("loc"))
+            if a.is_participle and not necessity and (n.can_be("acc") or n.can_be("loc") or any(
                     an.lemma.endswith(PREDICATIVE_VERBS) for an in self.analyses(a.text))):
                 continue
             if n.start in issues:
@@ -1064,8 +1099,13 @@ class Grammar:
             head_cases = {r.case for r in head.pos_readings()}
             own_cases = {r.case for r in own}
             if w.known:
-                if not head_cases or own_cases & head_cases or head_cases == {"gen"}:
-                    continue      # one phrase: pilotu bandytoju, naktiniu gyvenimu; tarpininku liaudies švietime
+                # one phrase only in the same case and number (gender may differ: kalba žodžiu rinkliava):
+                # pilotu bandytoju, naktiniu gyvenimu; not teises mokyklą (acc pl + acc sg), Medžiokles
+                # plotas (plotas is also a participle, not a noun)
+                hn = [r for r in head.pos_readings() if r.pos == "noun"]
+                if not head_cases or head_cases == {"gen"} or any(
+                        x.case == y.case and (not x.number or not y.number or x.number == y.number) for x in own for y in hn):
+                    continue      # tarpininku liaudies švietime
             else:
                 # the head may have lost its diacritics too (zaidimu bendrove -> bendrovė): skip only
                 # when every spelling of it could share the word's case
@@ -1094,27 +1134,34 @@ class Grammar:
                 k -= 1
             if not ok:
                 continue
+            prep_head = False     # the head is the object of the preposition before: į teises mokykla
             if k >= 0 and adjacent[k + 1]:
                 p = toks[k]
                 an_p = self.analyses(p.text)
-                if p.lower in PREPOSITIONS and any(r.case in PREPOSITIONS[p.lower] for r in own):
-                    continue      # su metaliniu lankeliu dugne
-                if any(a.tag.startswith("V.") for a in an_p) and self.mostly_verb(an_p):
-                    continue      # pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
                 pr = p.pos_readings()      # an unknown word (typed without diacritics): its candidates
-                if p.lower in POSSESSIVES or an_p and all(a.tag == "W" for a in an_p):
+                if p.lower in PREPOSITIONS:
+                    # su metaliniu lankeliu dugne; but when the head can take the preposition's case (also
+                    # by a diacritic), it is the object and the word its genitive: į teises mokykla(ą)
+                    pc = PREPOSITIONS[p.lower]
+                    if not any(r.pos == "noun" and r.case in pc
+                               for r in head.pos_readings() + [r for _, rs in head.variants for r in rs]):
+                        continue
+                    prep_head = True
+                elif any(a.tag.startswith("V.") for a in an_p) and self.mostly_verb(an_p):
+                    continue      # pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
+                elif p.lower in POSSESSIVES or an_p and all(a.tag == "W" for a in an_p):
                     continue      # jos pasirodymu danguje, šiuo metu
                 # after a genitive (or a name) an instrumental is often its head: karo metu,
                 # Vyriausybės potvarkiu, Aifelio dialektu; only a genitive the corpus knows well
                 # wins there (vidaus reikalų, Čikagos lietuvių)
-                if (w.known and any(r.case == "ins" for r in own)
+                elif (w.known and any(r.case == "ins" for r in own)
                         and (any(r.pos == "noun" and r.case == "gen" for r in pr) or not pr)
                         and max(self.freq.get(f.lower(), 0) for f in fix) < 5):
                     continue
             # a governor further left, across genitives: į Kalavijuočių ordino žemes,
             # tapo antruoju pagal dydį miestu
             j, governed = k, False
-            while j >= 0 and j >= k - 3 and adjacent[j + 1] and not governed:
+            while j >= 0 and j >= k - 3 and adjacent[j + 1] and not governed and not prep_head:
                 t = toks[j]
                 if t.lower in PREPOSITIONS:
                     governed = any(r.case in PREPOSITIONS[t.lower] for r in own)
