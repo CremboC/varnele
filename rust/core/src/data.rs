@@ -66,6 +66,7 @@ struct Walk<'a, S> {
     end: &'a dyn Fn(S) -> bool,
     entry_ok: &'a dyn Fn(u32) -> bool,
     last_ok: &'a dyn Fn(char) -> bool,
+    prefixes: &'a FxSet<String>,
 }
 
 pub struct Data {
@@ -91,6 +92,7 @@ pub struct Data {
     folded: OnceLock<Folded>,
     entry_stems: OnceLock<Vec<Vec<(u32, u16)>>>,
     stem_prefixes: OnceLock<FxSet<String>>,
+    verb_stem_prefixes: OnceLock<FxSet<String>>,
     pub(crate) top_words: OnceLock<Vec<String>>,
 }
 
@@ -222,6 +224,7 @@ impl Data {
             folded: OnceLock::new(),
             entry_stems: OnceLock::new(),
             stem_prefixes: OnceLock::new(),
+            verb_stem_prefixes: OnceLock::new(),
             top_words: OnceLock::new(),
         })
     }
@@ -297,16 +300,28 @@ impl Data {
 
     /// Every beginning of every folded stem: prunes the key-shift search.
     fn stem_prefixes(&self) -> &FxSet<String> {
-        self.stem_prefixes.get_or_init(|| {
-            let mut set = FxSet::default();
-            for st in self.folded().stems.keys() {
-                for (i, _) in st.char_indices().skip(1) {
-                    set.insert(st[..i].to_string());
-                }
-                set.insert(st.clone());
-            }
-            set
+        self.stem_prefixes.get_or_init(|| self.prefixes_of(|_| true))
+    }
+
+    /// The same for the stems of verbs only: a verbal prefix (pa-, nu-…) goes only on verbs.
+    fn verb_stem_prefixes(&self) -> &FxSet<String> {
+        self.verb_stem_prefixes.get_or_init(|| {
+            self.prefixes_of(|si| self.stems[&self.stem_list[si as usize]].iter().any(|&(_, e)| self.entries[e as usize].kind.is_verb()))
         })
+    }
+
+    fn prefixes_of(&self, keep: impl Fn(u32) -> bool) -> FxSet<String> {
+        let mut set = FxSet::default();
+        for (st, idxs) in &self.folded().stems {
+            if !idxs.iter().any(|&si| keep(si)) {
+                continue;
+            }
+            for (i, _) in st.char_indices().skip(1) {
+                set.insert(st[..i].to_string());
+            }
+            set.insert(st.clone());
+        }
+        set
     }
 
     /// Unprefixed forms where every letter is the typed letter or one of `options(typed letter)`
@@ -357,14 +372,15 @@ impl Data {
     /// Unprefixed forms whose folded spelling can be walked letter by letter: `step(state, letter)`
     /// is the state after one more letter (None: no word goes on this way), `end(state)` whether a
     /// word may stop there. Only entries `entry_ok` accepts, only words whose last folded letter
-    /// `last_ok` accepts. Drives the gesture search; `budget` bounds the stem prefixes visited
-    /// and suffixes tried.
+    /// `last_ok` accepts; `verbs_only`: walk only the stems of verbs (faster for a verbal prefix).
+    /// Drives the gesture search; `budget` bounds the stem prefixes visited and suffixes tried.
     #[allow(clippy::too_many_arguments)]
     pub fn walk_forms<S: Copy>(&self, start: S, step: &dyn Fn(S, char) -> Option<S>, end: &dyn Fn(S) -> bool,
-                               entry_ok: &dyn Fn(u32) -> bool, last_ok: &dyn Fn(char) -> bool,
+                               entry_ok: &dyn Fn(u32) -> bool, last_ok: &dyn Fn(char) -> bool, verbs_only: bool,
                                out: &mut Vec<String>, budget: &mut usize) {
         let mut cur = String::new();
-        let w = Walk { step, end, entry_ok, last_ok };
+        let prefixes = if verbs_only { self.verb_stem_prefixes() } else { self.stem_prefixes() };
+        let w = Walk { step, end, entry_ok, last_ok, prefixes };
         self.walk_dfs(start, &mut cur, &w, out, budget);
     }
 
@@ -403,10 +419,9 @@ impl Data {
                 }
             }
         }
-        let prefixes = self.stem_prefixes();
         for c in FOLDED_ALPHABET {
             cur.push(c);
-            if prefixes.contains(cur.as_str()) {
+            if w.prefixes.contains(cur.as_str()) {
                 if let Some(s) = (w.step)(state, c) {
                     self.walk_dfs(s, cur, w, out, budget);
                 }

@@ -121,7 +121,7 @@ fn prefix_splits(word: &str) -> Vec<Split<'_>> {
     out
 }
 
-fn allowed(kind: Kind, flags: &str, tag: &str, neg: &str, vi: i32, si: &str) -> bool {
+pub(crate) fn allowed(kind: Kind, flags: &str, tag: &str, neg: &str, vi: i32, si: &str) -> bool {
     let refl = tag.ends_with(".refl");
     if !kind.is_verb() {
         if vi >= 0 || !si.is_empty() {

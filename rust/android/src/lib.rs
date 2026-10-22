@@ -1,10 +1,10 @@
-//! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check}
+//! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative}
 //! The compiled data file is embedded in the library, so the app ships one .so.
 
 use std::sync::{Mutex, OnceLock};
 
-use jni::objects::{JClass, JString};
-use jni::sys::{jboolean, jstring};
+use jni::objects::{JClass, JFloatArray, JString};
+use jni::sys::{jboolean, jint, jstring};
 use jni::JNIEnv;
 use varnele::Checker;
 
@@ -21,6 +21,9 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_warmUp(_env: JNIEnv, _cl
     let ck = checker().lock().unwrap();
     let _ = ck.check_text("Labas rytas, sviesa.", false, true); // also builds lazy indexes
     let _ = ck.an.key_shift("ksbsd", 1); // and the key-shift prefix table
+    let layout = varnele::gesture::Layout::qwerty();
+    let path: Vec<(f32, f32)> = "labas".chars().filter_map(|c| layout.centre(c)).collect();
+    let _ = ck.an.gesture(&path, &layout, false, "", 1); // and the gesture search's tables
 }
 
 /// Same as warmUp, for the HeliBoard bridge (which wraps it in a Kotlin warmUp()).
@@ -72,6 +75,44 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
     let json = {
         let ck = checker().lock().unwrap();
         varnele::json::keyboard_word(&ck.keyboard_word(&word, &context, key_shift != 0))
+    };
+    env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+fn floats(env: &mut JNIEnv, a: &JFloatArray) -> Vec<f32> {
+    let n = env.get_array_length(a).unwrap_or(0) as usize;
+    let mut v = vec![0f32; n];
+    if env.get_float_array_region(a, 0, &mut v).is_err() {
+        v.clear();
+    }
+    v
+}
+
+/// A swipe: the finger path and the letter keys' centres, all divided by the key width;
+/// `keys` holds the letters in the order of `key_x`/`key_y`. Returns a JSON array of
+/// candidates {w (the keys swiped, no diacritics), best (most likely real form), cost, shape}.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_gestureNative<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    xs: JFloatArray<'l>,
+    ys: JFloatArray<'l>,
+    keys: JString<'l>,
+    key_x: JFloatArray<'l>,
+    key_y: JFloatArray<'l>,
+    context: JString<'l>,
+    n: jint,
+) -> jstring {
+    let (xs, ys) = (floats(&mut env, &xs), floats(&mut env, &ys));
+    let (kx, ky) = (floats(&mut env, &key_x), floats(&mut env, &key_y));
+    let keys: String = env.get_string(&keys).map(Into::into).unwrap_or_default();
+    let context: String = env.get_string(&context).map(Into::into).unwrap_or_default();
+    let path: Vec<(f32, f32)> = xs.into_iter().zip(ys).collect();
+    let layout = varnele::gesture::Layout::new(keys.chars().zip(kx.into_iter().zip(ky)).map(|(c, (x, y))| (c, x, y)).collect());
+    let json = {
+        let ck = checker().lock().unwrap();
+        varnele::json::gesture(&ck.an.gesture(&path, &layout, false, &context, n.max(1) as usize))
     };
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }

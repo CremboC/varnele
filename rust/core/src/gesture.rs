@@ -15,6 +15,7 @@ use crate::text::*;
 
 /// Distances are in key widths.
 const STEP: f32 = 0.2; // path resampling for the "passes near" test
+const MIN_RATIO: f32 = 0.6; // ideal path so far >= this × finger path so far − 1 (0.75: 2× faster, −0.3 points)
 const NEAR: f32 = 1.0; // a key the path passes within this is a letter it may spell
 const ENDS: f32 = 1.2; // first and last letter: this near the path's start and end
 const POINTS: usize = 32; // path and template resampled to this many points for scoring
@@ -24,6 +25,7 @@ const UNSEEN_PREFIXED: f64 = 0.3; // a prefixed form only the prefix rules allow
 const CONTEXT_WEIGHT: f64 = 0.3; // cost per log10 of how much likelier the language model finds the word here
 const WARP: usize = 300; // best point-by-point shapes compared again with time warping
 const KEEP: usize = 40; // best shapes whose frequency and analysis are looked up
+const THREADS: usize = 4; // prefix chains searched at once
 
 /// Key centres of the letter keys.
 pub struct Layout {
@@ -147,18 +149,19 @@ impl Analyzer {
     /// `cap`: the gesture was made with shift on; `context`: the text before the word.
     pub fn gesture(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, context: &str, n: usize) -> Vec<GestureCandidate> {
         let ctx = self.lm_context(context);
-        let out = self.gesture_within(path, layout, cap, &ctx, n, 1.0, 1_000_000);
+        let out = self.gesture_within(path, layout, cap, &ctx, n, 1.0, 600_000);
         if out.is_empty() {
             // a key missed by more than usual (off the keyboard's edge): look wider, briefly
-            return self.gesture_within(path, layout, cap, &ctx, n, 1.5, 200_000);
+            return self.gesture_within(path, layout, cap, &ctx, n, 1.5, 120_000);
         }
         out
     }
 
-    /// `widen`: key radii times this; `budget`: search steps (stem prefixes and suffixes tried).
+    /// `widen`: key radii times this; `budget`: search steps (stem prefixes and suffixes tried)
+    /// without a prefix, a quarter of it for each prefix chain.
     #[allow(clippy::too_many_arguments)]
     fn gesture_within(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, ctx: &crate::lm::LmContext, n: usize, widen: f32,
-                      mut budget: usize) -> Vec<GestureCandidate> {
+                      budget: usize) -> Vec<GestureCandidate> {
         let (near_r, ends_r) = (NEAR * widen, ENDS * widen);
         let path_len = length(path);
         if path.len() < 2 || path_len < 0.5 {
@@ -206,7 +209,7 @@ impl Analyzer {
                     (near[k][s.j + 1], s.tlen + dist(centre(s.key), centre(k)))
                 };
                 // a letter skipped makes the ideal path too short for the finger's so far
-                if j == NONE || tlen > max_len || tlen < j as f32 * h * 0.6 - 1.0 {
+                if j == NONE || tlen > max_len || tlen < j as f32 * h * MIN_RATIO - 1.0 {
                     continue;
                 }
                 if best.is_none_or(|b| j < b.j) {
@@ -215,43 +218,75 @@ impl Analyzer {
             }
             best
         };
-        let end = |s: St| -> bool { s.key != NONE && s.tlen >= path_len * 0.6 - 1.0 };
+        let end = |s: St| -> bool { s.key != NONE && s.tlen >= path_len * MIN_RATIO - 1.0 };
 
         // prefix chains as in the analyzer: (ne-|nebe-|be-|te-|tebe-)? (verbal prefix)? (si)?
-        let mut chains: Vec<(String, &str, bool)> = Vec::new(); // chain, negation, verbs only
+        let mut chains: Vec<(String, &str, i32, &str)> = Vec::new(); // chain, negation, verbal prefix index, si
         for neg in NEGS {
-            let mut verbal: Vec<String> = vec![String::new()];
-            for p in PREFIXES {
-                verbal.push(p.to_string());
-                if p == "ap" || p == "at" {
-                    verbal.push(format!("{p}i"));
+            let mut verbal: Vec<(i32, String)> = vec![(-1, String::new())];
+            for (i, p) in PREFIXES.iter().enumerate() {
+                verbal.push((i as i32, p.to_string()));
+                if *p == "ap" || *p == "at" {
+                    verbal.push((i as i32, format!("{p}i")));
                 }
             }
-            for vp in verbal {
+            for (vi, vp) in verbal {
                 for si in ["", "si"] {
                     if !si.is_empty() && neg.is_empty() && vp.is_empty() {
                         continue;
                     }
-                    chains.push((format!("{neg}{vp}{si}"), neg, !vp.is_empty() || !si.is_empty()));
+                    chains.push((format!("{neg}{vp}{si}"), neg, vi, si));
                 }
             }
         }
         let start = St { j: 0, key: NONE, tlen: 0.0 };
-        let mut forms: Vec<String> = Vec::new();
-        let mut prefixed: std::collections::HashSet<String> = Default::default();
-        for (chain, neg, verbs_only) in &chains {
+        let walk = |(chain, neg, vi, si): &(String, &str, i32, &str)| -> Vec<String> {
             let mut s = Some(start);
             for c in fold(chain).chars() {
                 s = s.and_then(|s| step(s, c));
             }
-            let Some(s) = s else { continue };
-            // which entries can take the chain (the analysis checks the rest: prefix flags, tags)
+            let Some(s) = s else { return Vec::new() };
+            // only entries that can take the chain, by the analyzer's prefix rules (prefix flags);
+            // the analysis of the whole word checks the rest (reflexive forms)
             let entry_ok = |eid: u32| {
                 let e = &self.data.entries[eid as usize];
-                e.kind.is_verb() || (!verbs_only && (neg.is_empty() || (*neg == "ne" && e.flags.contains('N'))))
+                chain.is_empty() || crate::analyzer::allowed(e.kind, &e.flags, "", neg, *vi, si)
             };
+            let mut budget = if chain.is_empty() { budget } else { budget / 4 };
             let mut found = Vec::new();
-            self.data.walk_forms(s, &step, &end, &entry_ok, &last_ok, &mut found, &mut budget);
+            self.data.walk_forms(s, &step, &end, &entry_ok, &last_ok, *vi >= 0 || !si.is_empty(), &mut found, &mut budget);
+            found
+        };
+        // the chains are independent searches, so a few threads share them; each chain has its
+        // own budget, so the result does not depend on the threads' timing
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(THREADS);
+        let mut results: Vec<Vec<String>> = vec![Vec::new(); chains.len()];
+        std::thread::scope(|sc| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    sc.spawn(|| {
+                        let mut mine = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if i >= chains.len() {
+                                break;
+                            }
+                            mine.push((i, walk(&chains[i])));
+                        }
+                        mine
+                    })
+                })
+                .collect();
+            for h in handles {
+                for (i, found) in h.join().unwrap() {
+                    results[i] = found;
+                }
+            }
+        });
+        let mut forms: Vec<String> = Vec::new();
+        let mut prefixed: std::collections::HashSet<String> = Default::default();
+        for ((chain, ..), found) in chains.iter().zip(results) {
             for f in found {
                 if chain.is_empty() {
                     forms.push(f);

@@ -198,8 +198,19 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   - `Suggest.kt` (fork change): a whitelisted Varnelė suggestion always autocorrects.
     Upstream lets the user-history predictions veto a fix when the typed word is valid,
     and testing teaches it the uncorrected words (`nauja sakini` stayed).
-  - gesture typing (batch mode) is still left to binary dictionaries (Google's closed library);
-    the Rust gesture decoder below is not wired to the keyboard yet
+  - gesture typing (batch mode): Varnelė's own decoder (below), wired on branch
+    `paulius/varnele-swipe` of the fork: gestures are on for Lithuanian without Google's library
+    (`VarneleDictionary.gesturesFor`, also gating the settings screens); `MainKeyboardView.setKeyboard`
+    hands the letter keys' centres and the view offset to `VarneleDictionary.setGestureKeyboard`
+    (points are view coordinates, keys keyboard coordinates); in batch mode `getSuggestions` calls
+    `Native.gesture` (JNI `gestureNative`) with the path in key widths, then checks each candidate's
+    keys like a word typed without diacritics (`Native.check`: diacritic-only context fix or
+    suggestion), top 5 in Varnelė's order, the first is committed. Without the library
+    `BinaryDictionary.getSuggestions` declines gestures (the native gesture policy is null and would
+    crash), so user history and contacts don't take part in swipes. The sentence fixer also runs in
+    `InputLogic.onStartBatchInput` after the previous gesture's word is committed (no separator is
+    typed between gestures). The debug build logs the key centres (`gesture keys (view px)`) for
+    replaying swipes with `adb shell input motionevent DOWN/MOVE/UP`.
 - **Gesture decoder prototype** (`rust/core/src/gesture.rs`, Rust only like key-shift; no Python
   twin, so not in parity). Input: finger path in key widths over `Layout` (QWERTY default: keys 1
   wide, rows 1.4 high, `z` after a 1.5 wide shift). Candidates: `Data::walk_forms` walks the
@@ -213,6 +224,11 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   +0.3 for a never-seen prefixed form (`įįvykdyte`). Output: the keys swiped (no diacritics), which
   the keyboard then treats as a word typed without diacritics (autocorrect + sentence fixer pick
   `prieš`, `dienų`). Nothing found → one retry with radii ×1.5 and a smaller budget.
+  Speed: prefix chains walk only entries the analyzer's prefix rules allow (`analyzer::allowed` with
+  no tag), verbal-prefix chains only verb stems (`Data::verb_stem_prefixes`), and the chains run on 4
+  threads, each with its own step budget (600k without a prefix, 150k per chain) so results don't
+  depend on timing. Requiring the ideal path ≥ 0.75 × the finger path − 1 (now 0.6) would halve the
+  time again for −0.3 points.
   The lexical cost also subtracts 0.3 × log10 of the language model's P(word | context) / P(word).
   Tried and dropped: a per-letter anchor distance (favours short words, 34% top-1), a "don't cut
   past a sharp corner" prune (real corners are often > 1 key from the letter: recall 92 → 74%).
@@ -327,8 +343,12 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   σ 0.2: 87.1 / 96.4 / 77.2%; σ 0.3: 74.9 / 87.3 / 66.8%; σ 0.4: 52.3 / 63.9 / 46.8% (frequency
   only). With the language model and the article text before each sentence as the paragraph,
   σ 0.3: 77.0 / 88.1 / 68.5% (previous word alone 75.7 / 87.5 / 67.4%); with the Wikipedia-dump
-  frequencies and pairs: 82.5 / 90.3 / 73.9%. When the keys are right the diacritics are right 89%.
-  Decode on the Mac: median 2.8 ms, 95% 32 ms, max 186 ms (σ 0.3).
+  frequencies and pairs: 82.6 / 90.3 / 74.0%. When the keys are right the diacritics are right 89%.
+  Decode on the Mac: median 2.4 ms, 95% 12 ms, max 113 ms (σ 0.3; 32 / 186 ms before the threads).
+  On the Fold7 (cover screen, synthetic swipes replayed over adb, σ 30 px ≈ 0.28 keys): 2–17 ms for
+  most words, `ne-` words 50–100 ms. Wrong words there are the simulation's near-identical paths:
+  `maciau` → `mažiau` (c/z neighbours), `grazu nama` → `graži namas`, `jis` → `jos`; the sentence
+  fixer adds `, kurių` between swipes.
   The noise model is a guess: no real swipe traces yet.
 - Next-word prediction (`eval/predict_sim.py`, 3,997 words): the word is among the top 3 before
   typing 16.2%, after its first letter 33.1% with the Wikipedia dump (31M words, 310k pairs seen 10+
@@ -377,8 +397,23 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   current prefix + predicted next word, new UI in the fork), swipe ranking and tap autocorrect
   all use; it also breaks frequency ties (`žmones`/`žmonės`). Predictions keep diacritics through
   the analyzer. Needs a bigger, more conversational corpus than the 600 Wikipedia articles.
+- **Formal mode toggle** (cheap, do first). The keyboard is already informal: `valgyt` is
+  `colloquial`, not unknown, so it is never autocorrected. Add a setting (default off) passed
+  through `Native.check` into `keyboard_word`; when on, spoken forms become corrections
+  (`valgyt` → `valgyti`, as `--formal`), and ranking can prefer the standard table below.
+- **Corpus for the right register**, best first: (1) the user's own final text, learned on the
+  phone (the overlay above); (2) OpenSubtitles Lithuanian (spoken dialogue; check the licence
+  before shipping derived counts); (3) web crawls CC-100 / OSCAR / Leipzig `lit_web` (huge, mixed
+  register; even a filtered slice is ~1000× the current 173k words); (4) forums and comments
+  (supermama.lt, r/lithuania), very informal but often typed without diacritics: restore with
+  Varnelė first or count folded forms only. Rebuild with `eval/build_freq.py`, measure with the
+  restoration and keyboard evals.
+- **Frequency tables split by register**: spoken forms counted under their own spelling and
+  linked to the standard lemma; formal mode ranks with the standard table, informal with the
+  mixed one, the user overlay on top of both. The n-gram model above uses the same split.
 
-- **Swipe, next steps**: (1) wire it into the fork: enable gesture input for `lt` without
+- **Swipe, next steps** ((1) is done, phone-tested with replayed swipes; still to try with real
+  fingers): (1) wire it into the fork: enable gesture input for `lt` without
   `JniUtils.sHaveGestureLib`, pass `ComposedData.mInputPointers` + key centres (divided by the key
   width) from `VarneleDictionary.getSuggestions` in batch mode to a new `Native.gesture`, run the
   top keys through `Native.check` for the diacritics; check the sentence fixer runs after a
@@ -476,7 +511,12 @@ Left deliberately:
 - `ziuri` on its own now suggests `žiūri` first (with the dump: `žiūri` 185 times, the jury `žiuri`
   421, the ranking's lemma frequency decides); with the 600 articles it was `žiuri`.
 - `adb install` waits forever when wireless adb has dropped: reconnect first
-  (`adb mdns services`, then `adb connect HOST:PORT`).
+  (`adb mdns services`, then `adb connect HOST:PORT`). The same happens when the phone
+  auto-locks on screen timeout. Run `eval/phone_ready.sh` before every phone step (and between
+  a long build and its install): it reconnects through mDNS, checks the screen is awake and
+  unlocked, limits every adb call to 8 s and fails fast with the reason, so ask the owner to
+  unlock instead of waiting. Wrap other adb calls with `perl -e 'alarm 8; exec @ARGV' adb …`
+  (macOS has no `timeout`).
 - HeliBoard capitalises sentences only if the text field asks for it
   (TYPE_TEXT_FLAG_CAP_SENTENCES); the test app's field now does.
 - The keyboard fixer's fold keeps `y` (it is a key): i/y changes are never auto-applied.
@@ -488,7 +528,7 @@ Left deliberately:
 - Typo detection/ranking still behind Hunspell; keyboard-adjacency weights could
   be tuned on real typing data.
 - Spoken-form normalisation option in the keyboard (`valgyt` → `valgyti`) is
-  available (`--formal`) but not wired to a setting.
+  available (`--formal`) but not wired to a setting (see "Formal mode toggle" above).
 - iOS later: the Rust core is portable; keyboard extensions have tight memory limits.
 
 ## History (commits on varnele/main)
