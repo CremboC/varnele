@@ -213,8 +213,12 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     form's (`Neturetu` → `Neturėtų`); a suggestion differing from the input only by being a
     capitalised name costs +0.5.
   - **Varnelė settings screen** (fork, `settings/screens/VarneleScreen.kt`, main settings entry
-    "Varnelė" shown when the library loads): the fork's own settings go here; more are to move
-    here later (key-shift still sits on Text correction). First one: **formal Lithuanian**
+    "Varnelė" shown when the library loads): all the fork's own settings. Corrections: key-shift
+    (shown only with autocorrect on), **fix earlier words** (`varnele_fix_earlier`: the sentence
+    fixer's grammar fixes before the word just finished; that word is always fixed), **add missing
+    commas** (`varnele_commas`), **underline unknown words** (`varnele_underline`), formal;
+    Predictions: **suggest the next word too** (`varnele_ghost_next`: off, the ghost is cut to its
+    completion), learn, forget. All on by default except formal. **Formal Lithuanian**
     (`varnele_formal`, default off). `SettingsValues` copies it into `Native.formal`, which every
     `Native.check`/`Native.gesture` call passes to Rust: `keyboard_word(…, formal)` gives a
     colloquial word its standard form as a context fix with rule `formal` (whitelisted, like
@@ -223,7 +227,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     (`einam` → `einame`), so no colloquial form is ever suggested. Unknown words never got
     spoken suggestions (the suggester only proposes dictionary forms). CLI: `--formal` on
     `kb`, `swipe` and `serve`.
-  - **key-shift** (setting `varnele_key_shift`, default on, Text correction screen):
+  - **key-shift** (setting `varnele_key_shift`, default on, Varnelė screen):
     if the word is unknown and no correction is within one typo, search words where
     every letter is the typed key or a neighbour (`fofrkua` → `didelis`, `ksbsd` →
     `labas`); DFS over a folded stem-prefix set with a 200k-step budget, ranked by
