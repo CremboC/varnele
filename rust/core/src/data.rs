@@ -94,6 +94,9 @@ pub struct Data {
     /// word triples, the same for two previous words: "A B WORD" -> count, "A B " -> total << 32 |
     /// distinct; empty in a data file without them
     pub triples: Counts,
+    /// the most frequent words after the pairs' and triples' heads that have many
+    /// ([`Counts::ranked_lists`]); empty in a data file without them
+    pub ranked: Counts,
     folded: OnceLock<Folded>,
     entry_stems: OnceLock<Vec<Vec<(u32, u16)>>>,
     stem_prefixes: OnceLock<FxSet<String>>,
@@ -209,6 +212,7 @@ impl Data {
         let words = r.counts()?;
         let pairs = r.counts()?;
         let triples = if r.p < r.b.len() { r.counts()? } else { Counts::empty() };
+        let ranked = if r.p < r.b.len() { r.counts()? } else { Counts::empty() };
 
         Ok(Data {
             tags,
@@ -228,6 +232,7 @@ impl Data {
             words,
             pairs,
             triples,
+            ranked,
             folded: OnceLock::new(),
             entry_stems: OnceLock::new(),
             stem_prefixes: OnceLock::new(),

@@ -51,6 +51,25 @@ fn main() {
         std::io::stdout().write_all(&varnele::counts::build(pairs)).unwrap();
         return;
     }
+    if args.first().map(String::as_str) == Some("fst-ranked") {
+        // the ranked lists of count tables (u32 length + FST bytes each, on stdin) as one table,
+        // for `python3 -m varnele export`: fst-ranked KIND... per table, words or followers
+        use std::io::Write;
+        let mut input = Vec::new();
+        std::io::stdin().read_to_end(&mut input).unwrap();
+        let mut lists = Vec::new();
+        let mut p = 0;
+        for kind in &args[1..] {
+            let n = u32::from_le_bytes(input[p..p + 4].try_into().unwrap()) as usize;
+            let table = varnele::counts::Counts::from_bytes(input[p + 4..p + 4 + n].to_vec()).unwrap();
+            let keep = if kind == "words" { varnele::counts::RANKED_WORDS } else { varnele::counts::RANKED_FOLLOWERS };
+            lists.extend(table.ranked_lists(keep));
+            p += 4 + n;
+        }
+        eprintln!("{} ranked words", lists.len());
+        std::io::stdout().write_all(&varnele::counts::build(lists)).unwrap();
+        return;
+    }
     let mut data_path = "data/varnele.bin".to_string();
     if let Some(i) = args.iter().position(|a| a == "--data") {
         data_path = args[i + 1].clone();

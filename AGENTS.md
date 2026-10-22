@@ -373,6 +373,12 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   (v2 with words 2+ was 20.2 MB). Words 2+ instead of 10+ changed no result; pairs 5+ adds 3.5 MB for
   +0.2 points swipe, +0.8 / +2.0 prediction. Triples 10+ (191k, after 75k word pairs) add 3.5 MB:
   varnele.bin 13.0 → 16.5 MB; triples 20+ (78k) add 1.5 MB and keep ~¾ of the gain, 40+ (32k) 0.6 MB, ~½.
+  **Ranked lists** (last table, optional the same way; `Counts::ranked_lists`, built by `varnele fst-ranked`
+  from the three LM tables at export): for every pairs/triples head (`"<s> "`, `"ir "`, `"<s> aš "`) and
+  every folded beginning of 0–3 letters that 500+ of its followers have, the 50 most frequent (the words
+  table: the 100 most frequent words per beginning), keyed `HEAD + beginning + TAB + rank + word`. 321
+  lists, +0.27 MB (16.5 → 16.8 MB). `Data::followers` reads a list when there is one and enough of it
+  passes the caller's filter, else lists the table (`Counts::top_folded`: a bounded top n, no string per key).
 
 ## Release builds and Google Play (keyboard)
 
@@ -433,7 +439,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   checker; a most-frequent-spelling baseline gets 71.9%.
 - Rust: load 31 ms, correct word 0.001 ms, misspelling + suggestions ~0.9 ms,
   sentence ~2.5 ms (Mac, data v3). Phone (Fold7, measured with the old 5.3 MB data): 0.05–0.8 ms valid
-  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 16.5 MB (v3, with the conversational counts and triples).
+  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 16.8 MB (v3, with the conversational counts, triples and ranked lists).
 - Keyboard simulation: `kodel nepataiso visu zodzou kuriu as rasau?` →
   `kodėl nepataiso visų žodžių, kurių aš rašau?`; `dabar meginu nauja sakini` →
   `dabar mėginu naują sakinį`; Rust key-shift search 0.4 ms, sentence 1.5 ms (Mac).
@@ -506,9 +512,21 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   On the emulator (2026-10-22): `Labas, kaip ` → `sekasi, laikaisi, tu` (the triple; `Kaip ` alone gives
   `ir, tu, tai`), the ghost after `Gal e` is `eime` (was the name `Eime`), after `Tai buvo pirma k` `kartą`.
   The same after the grammar re-ranking, which works with the triples: `Eiti į ` → `mokyklą, darbą, priekį`.
-  **Slow at a sentence start:** `predict` lists every follower of the previous word before ranking, and
-  `<s>` has the most: 8 ms on the Mac (0.5 ms after `Gal`, 3 ms after `ir`), 1.3–2.9 s on the emulator,
-  every time now that the fork no longer caches predictions. The same on main before the triples.
+  **Fast at a sentence start (2026-10-22):** predictions after `<s>` took 8 ms on the Mac (1.3–2.9 s on
+  the emulator), after `ir` 3 ms. Profiled: all of it was `Data::predict` listing every follower of the
+  previous word (41,330 after `<s>`, 14,198 after `ir`) from the pairs FST, a String each, sorting them
+  all to take 20; the grammar re-ranking, `check()` on candidates, the user model and the triples took
+  < 0.2 ms together. A bounded top-20 scan without the strings only got to 3 ms: the fst stream itself
+  costs ~0.08 µs a key. Fix: ranked lists made at export (see Data format v3), also for the frequent-word
+  fallback (`kas` after `Gal ka`: every ka- word listed and sorted, 0.9 ms). Through serve on the Mac,
+  median of 30 warm calls, before → after (predict N=5): `<s>` 8.2 → 0.05 ms, `Labas. ` 8.1 → 0.06,
+  `Ir ` 3.0 → 0.10, `Gal ` 0.18 → 0.13, `<s>` + `k` 0.62 → 0.04; ghost `Gal ka` 1.2 → 0.20 ms. 100
+  sentences with their paragraph, median / 95%: subtitles predict 0.93 / 9.0 → 0.62 / 2.1 ms, ghost
+  1.46 / 3.0 → 1.07 / 2.4 ms; Wikipedia predict 0.81 / 3.2 → 0.50 / 2.1 ms, ghost 1.31 / 2.9 → 0.95 /
+  2.3 ms. Every prediction identical (11,176 predict/ghost requests compared, `--raw-lm` too; predict_sim
+  `--ghost` on the three sets and swipe_sim on subtitles unchanged). What is left with a long paragraph
+  (1,500 characters): `lm_context` analysing its last 150 words, 0.3 ms, and `p_predict` for each of
+  its ~190 words as candidates, 0.6 ms (`analyze_exact` per word), done again for the ghost's next word.
   The emulator's red underlines come from its system spell checker (Gboard, English), not Varnelė.
 - **Conversational counts** (W=1: subtitles and Tatoeba count like Wikipedia; `eval/training.py`
   `conversational()`, lines of 4+ words once, cutoffs on raw counts so a pair seen once in a subtitle
@@ -808,3 +826,5 @@ Left deliberately:
     eval/predict_grammar.py)
 24. word triples in the language model (data/trigrams.tsv, 16.5 MB), the ghost's next word at P ≥ 0.6 (serve
     `ghostnext`), `eime`, `bičas`
+25. ranked follower lists made at export (`fst-ranked`, 16.8 MB): predictions at a sentence start 8 → 0.05 ms
+    on the Mac, after `ir` 3 → 0.1 ms, the same predictions

@@ -77,15 +77,23 @@ impl Data {
         if prev2.is_empty() {
             return vec![];
         }
-        let head = format!("{prev2} {prev} ");
-        let mut next: Vec<(String, u64)> = self
-            .triples
-            .with_folded_prefix(&format!("{head}{prefix}"))
-            .into_iter()
-            .filter_map(|(k, c)| k.strip_prefix(&head).filter(|w| !w.is_empty()).map(|w| (w.to_string(), c)))
-            .collect();
-        next.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        next.into_iter().take(n).map(|(w, _)| w).collect()
+        self.followers(&self.triples, &format!("{prev2} {prev} "), prefix, n, |_| true).into_iter().map(|(w, _)| w).collect()
+    }
+
+    /// The `n` words after `head` ("PREV " in the pairs, "A B " in the triples, "" in the words)
+    /// that start with `prefix` (compared without diacritics) and pass `keep`, most frequent
+    /// first, ties in alphabetical order: from the ranked lists made at export when they have them
+    /// (the words seen after a sentence start, `ir`, `buvo`…), else by listing the table.
+    fn followers(&self, table: &crate::counts::Counts, head: &str, prefix: &str, n: usize, keep: impl Fn(&str) -> bool + Copy) -> Vec<(String, u64)> {
+        let fp = fold(&lower(prefix));
+        if let Some(list) = self.ranked.ranked(head, &fp) {
+            // the list holds the most frequent ones: enough unless `keep` drops too many
+            let out: Vec<(String, u64)> = list.into_iter().filter(|(w, _)| keep(w)).take(n).collect();
+            if out.len() == n {
+                return out;
+            }
+        }
+        table.top_folded(head, prefix, n, keep)
     }
 
     /// The most frequent words, most frequent first.
@@ -107,15 +115,8 @@ impl Data {
     /// without diacritics, so a prefix typed without them matches), with their probability.
     pub fn predict(&self, prev: &str, prefix: &str, n: usize) -> Vec<(String, f64)> {
         let longer = |w: &str| clen(w) > clen(prefix) || prefix.is_empty();
-        let head = format!("{prev} ");
         // the words seen after `prev`, most frequent first
-        let mut next: Vec<(String, u64)> = self
-            .pairs
-            .with_folded_prefix(&format!("{prev} {prefix}"))
-            .into_iter()
-            .filter_map(|(k, c)| k.strip_prefix(&head).filter(|w| !w.is_empty() && longer(w)).map(|w| (w.to_string(), c)))
-            .collect();
-        next.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let next = self.followers(&self.pairs, &format!("{prev} "), prefix, n, longer);
         let mut out: Vec<(String, f64)> = next.into_iter().take(n).map(|(w, _)| { let p = self.p_next(prev, &w); (w, p) }).collect();
         if out.len() == n {
             return out;
@@ -127,16 +128,8 @@ impl Data {
         } else {
             // an unlisted pair backs off to the word's frequency, so the most frequent words are
             // the ones that can win: scoring all of them took 30+ ms on the phone after one letter
-            let want = 4 * n;
-            let fp = fold(prefix);
-            let top: Vec<String> = self.top_words().iter().filter(|w| fold(w).starts_with(&fp)).take(want).cloned().collect();
-            if top.len() == want {
-                top // the same words as below: top_words is in frequency order (listing every k- word: 3 ms)
-            } else {
-                let mut all = self.words.with_folded_prefix(prefix);
-                all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-                all.into_iter().take(want).map(|(w, _)| w).collect()
-            }
+            // (listing every ka- word and sorting them took 1 ms on the Mac: ranked lists now)
+            self.followers(&self.words, "", prefix, 4 * n, |_| true).into_iter().map(|(w, _)| w).collect()
         };
         let mut rest: Vec<(String, f64)> = cands
             .into_iter()

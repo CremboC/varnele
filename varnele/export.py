@@ -21,6 +21,10 @@ Format (little-endian). str = u16 byte length + UTF-8 bytes. Sections in order:
                 (both from data/bigrams.tsv, eval/build_ngrams.py; "<s>" = sentence start)
   triples       table     "A B WORD" -> count; "A B " -> total << 32 | distinct (data/trigrams.tsv;
                 optional: the runtime reads it only when bytes are left)
+  ranked        table     "HEAD" + folded beginning + tab + rank + word -> count: the 50 most
+                frequent words after a pairs or triples head ("PREV ", "A B "; the 100 most
+                frequent words: head "") that start with the beginning ("", or 1-3 letters
+                without diacritics), where 500+ words do (Rust `fst-ranked`; optional like triples)
 table = u32 byte length + a finite-state transducer (Rust `fst` crate), built by the Rust
 binary's `fst` subcommand: build it first (cargo build --release --manifest-path rust/Cargo.toml).
 """
@@ -58,6 +62,16 @@ class Writer:
             raise SystemExit(f"{RUST} not found: cargo build --release --manifest-path rust/Cargo.toml")
         data = "".join(f"{k}\t{v}\n" for k, v in items).encode()
         out = subprocess.run([str(RUST), "fst"], input=data, capture_output=True, check=True).stdout
+        self.u32(len(out))
+        self.buf += out
+        return out
+
+    def ranked(self, tables):
+        """The ranked lists of FST tables of words or followers (word pairs, triples): (kind, table)
+        with kind "words" or "followers", as one table."""
+        data = b"".join(struct.pack("<I", len(t)) + t for _, t in tables)
+        kinds = [k for k, _ in tables]
+        out = subprocess.run([str(RUST), "fst-ranked", *kinds], input=data, capture_output=True, check=True).stdout
         self.u32(len(out))
         self.buf += out
 
@@ -128,15 +142,15 @@ def export(path=OUT):
                 pairs[f"{v} "] = int(a) << 32 | int(b[0])
             else:
                 pairs[f"{v} {word}"] = int(a)
-    w.table(words.items())
-    w.table(pairs.items())
+    word_fst = w.table(words.items())
+    pair_fst = w.table(pairs.items())
+    triples = {}
     path_tg = ROOT / "data" / "trigrams.tsv"
     if path_tg.exists():
-        triples = {}
         for line in path_tg.read_text("utf-8").splitlines():
             v, word, a, *b = line.split("\t")
             triples[f"{v} {word}"] = int(a) << 32 | int(b[0]) if not word else int(a)
-        w.table(triples.items())
+    w.ranked([("words", word_fst), ("followers", pair_fst), ("followers", w.table(triples.items()))])
 
     path.write_bytes(bytes(w.buf))
     return path, len(w.buf)
