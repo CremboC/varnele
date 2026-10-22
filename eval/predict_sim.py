@@ -9,7 +9,10 @@ digits are skipped.
 
 --ghost also measures the strip's ghost: after each letter typed (without diacritics), is a ghost
 shown, is its first word the word being typed, and how many letters would tapping the first right
-ghost have saved (a tap counts as one key)?
+ghost have saved (a tap counts as one key)? And the next word the ghost appends after the
+completion: when the first right ghost is tapped, how often would a next word appended at
+P >= each of NEXT_P be the word that follows (with only a space or a comma between: the sentence
+fixer adds the comma of `maniau, kad`)?
 
 Predictions are the keyboard's (names capitalised, unknown tokens left out); --raw-lm asks
 the bare language model instead.
@@ -41,9 +44,13 @@ def predict(context, prefix, n=3):
     return [p["w"].lower() for p in json.loads(_ask(f"predict\t{context}\t{prefix}\t{n}").readline())]
 
 
+NEXT_P = (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2)
+
+
 def ghost(context, typed):
+    """The ghost's completion, and its likeliest next word with P (shown at P >= 0.5)."""
     context = context.replace("\t", " ").replace("\n", " ")[-1500:]
-    return json.loads(_ask(f"ghost\t{context}\t{typed}").readline())
+    return json.loads(_ask(f"ghostnext\t{context}\t{typed}").readline())
 
 
 def main():
@@ -67,7 +74,8 @@ def main():
     for s in sample:
         if learner:
             learner.before(s)
-        for m in re.finditer(r"[^\W\d_]+", s):
+        ms = list(re.finditer(r"[^\W\d_]+", s))
+        for i, m in enumerate(ms):
             w = m.group().lower()
             context = (before.get(s, "") + " " + s[:m.start()]).strip()
             st["words"] += 1
@@ -80,13 +88,18 @@ def main():
                 st["ghost letters"] += len(w)
                 for k in range(1, len(w)):
                     g = ghost(context, w[:k].translate(STRIP))
-                    if not g:
+                    if not g["w"]:
                         continue
                     st["ghost shown"] += 1
-                    if g.split()[0].lower() == w:
+                    if g["w"].lower() == w:
                         st["ghost right"] += 1
                         st["ghost words done"] += 1
                         st["ghost saved"] += len(w) - k - 1
+                        follows = i + 1 < len(ms) and s[m.end():ms[i + 1].start()].strip() in ("", ",")
+                        for t in NEXT_P:
+                            if g["next"] and g["p"] >= t:
+                                st[f"next {t}"] += 1
+                                st[f"next {t} right"] += follows and g["next"].lower() == ms[i + 1].group().lower()
                         break
         if learner:
             learner.after(s)
@@ -99,6 +112,9 @@ def main():
         print(f"ghost: {st['ghost shown']} shown up to the right one, right {pct(st['ghost right'], st['ghost shown'])}; "
               f"{pct(st['ghost words done'], st['ghost words'])} of the {st['ghost words']} words of 3+ letters "
               f"completed by it, {pct(st['ghost saved'], st['ghost letters'])} of their letters saved")
+        print("next word appended at P >= " + ", ".join(
+            f"{t}: {st[f'next {t}']} ({pct(st[f'next {t}'], st['ghost words done'])} of the taps), "
+            f"{pct(st[f'next {t} right'], st[f'next {t}'])} right" for t in NEXT_P))
 
 
 if __name__ == "__main__":

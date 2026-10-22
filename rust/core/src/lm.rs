@@ -1,5 +1,6 @@
-//! The keyboard's language model: P(word | previous word) from corpus word pairs, interpolated
-//! with the word's frequency (absolute discounting). Words are lowercase, as typed with their
+//! The keyboard's language model: P(word | two previous words) from corpus word triples,
+//! interpolated with P(word | previous word) from the pairs and that with the word's frequency
+//! (absolute discounting). Words are lowercase, as typed with their
 //! diacritics; "<s>" is the start of a sentence. Keyboard only, like key-shift: the checker
 //! does not use it.
 
@@ -31,6 +32,18 @@ pub fn previous_word(context: &str) -> String {
     if word.is_empty() { START.into() } else { lower(&word) }
 }
 
+/// The two previous words of a context: the word before [`previous_word`] ("<s>" when that one
+/// starts the sentence), "" when the previous word is itself the sentence start.
+pub fn previous_words(context: &str) -> (String, String) {
+    let prev = previous_word(context);
+    if prev == START {
+        return (String::new(), prev);
+    }
+    // commas don't part the words: the counts run across them (sakė, kad)
+    let rest = context.trim_end_matches(|c: char| !c.is_alphabetic()).trim_end_matches(|c: char| c.is_alphabetic());
+    (previous_word(rest), prev)
+}
+
 impl Data {
     /// How often the word occurs, smoothed: an unseen word counts as half an occurrence.
     pub fn p_word(&self, w: &str) -> f64 {
@@ -43,6 +56,36 @@ impl Data {
         let (total, distinct) = ((packed >> 32) as f64, (packed & 0xFFFF_FFFF) as f64);
         let c = self.pairs.get(&format!("{prev} {w}")) as f64;
         (c - D).max(0.0) / total + D * distinct / total * self.p_word(w)
+    }
+
+    /// P(w | prev2 prev): the triples' counts, backing off to [`Self::p_next`]; just that when
+    /// `prev2` is "" or the triples don't have the two words.
+    pub fn p_next3(&self, prev2: &str, prev: &str, w: &str) -> f64 {
+        let lower_order = self.p_next(prev, w);
+        if prev2.is_empty() {
+            return lower_order;
+        }
+        let Some(packed) = self.triples.value(&format!("{prev2} {prev} ")) else { return lower_order };
+        let (total, distinct) = ((packed >> 32) as f64, (packed & 0xFFFF_FFFF) as f64);
+        let c = self.triples.get(&format!("{prev2} {prev} {w}")) as f64;
+        (c - D).max(0.0) / total + D * distinct / total * lower_order
+    }
+
+    /// The words seen after "prev2 prev" (the listed triples) that start with `prefix`, compared
+    /// without diacritics, most frequent first.
+    pub fn followers3(&self, prev2: &str, prev: &str, prefix: &str, n: usize) -> Vec<String> {
+        if prev2.is_empty() {
+            return vec![];
+        }
+        let head = format!("{prev2} {prev} ");
+        let mut next: Vec<(String, u64)> = self
+            .triples
+            .with_folded_prefix(&format!("{head}{prefix}"))
+            .into_iter()
+            .filter_map(|(k, c)| k.strip_prefix(&head).filter(|w| !w.is_empty()).map(|w| (w.to_string(), c)))
+            .collect();
+        next.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        next.into_iter().take(n).map(|(w, _)| w).collect()
     }
 
     /// The most frequent words, most frequent first.
@@ -126,6 +169,8 @@ const CANDIDATES: usize = 20;
 /// earlier (a topic cache: `Vilnius` in the paragraph makes `Vilniaus` likely).
 pub struct LmContext {
     pub prev: String,
+    /// the word before `prev` ("" if none, see [`previous_words`])
+    pub prev2: String,
     lemmas: crate::fx::FxMap<String, u32>,
     words: u32,
 }
@@ -143,7 +188,8 @@ impl crate::analyzer::Analyzer {
                 *lemmas.entry(l).or_insert(0) += 1;
             }
         }
-        LmContext { prev: previous_word(context), lemmas, words: recent.len() as u32 }
+        let (prev2, prev) = previous_words(context);
+        LmContext { prev, prev2, lemmas, words: recent.len() as u32 }
     }
 
     /// log10 of how much likelier the word (lowercase) is here than anywhere: the previous
@@ -152,10 +198,10 @@ impl crate::analyzer::Analyzer {
         (self.p_context(ctx, w, cache_share) / self.data.p_word(w)).log10()
     }
 
-    /// P(w | previous word, paragraph), w lowercase; `cache_share` of it from the paragraph.
+    /// P(w | two previous words, paragraph), w lowercase; `cache_share` of it from the paragraph.
     pub fn p_context(&self, ctx: &LmContext, w: &str, cache_share: f64) -> f64 {
         let d = &self.data;
-        let mut p = d.p_next(&ctx.prev, w);
+        let mut p = d.p_next3(&ctx.prev2, &ctx.prev, w);
         if ctx.words > 0 {
             // the lemma's share of the paragraph, times this form's share of the lemma
             let mut pc: f64 = 0.0;
@@ -183,8 +229,9 @@ impl crate::analyzer::Analyzer {
     }
 
     /// The most likely next words that start with `prefix` (compared without diacritics, so a
-    /// prefix typed without them matches): candidates are the words seen after the previous
-    /// one, the paragraph's own words and the frequent ones, ranked by [`Self::p_context`].
+    /// prefix typed without them matches): candidates are the words seen after the two previous
+    /// ones and after the previous one, the paragraph's own words and the frequent ones, ranked
+    /// by [`Self::p_context`].
     pub fn predict_words(&self, ctx: &LmContext, context: &str, prefix: &str, n: usize) -> Vec<(String, f64)> {
         let mut cands: crate::fx::FxSet<String> = Default::default();
         for (w, _) in self.data.predict(&ctx.prev, prefix, CANDIDATES) {
@@ -194,6 +241,11 @@ impl crate::analyzer::Analyzer {
             cands.insert(w);
         }
         let fp = fold(&lower(prefix));
+        for w in self.data.followers3(&ctx.prev2, &ctx.prev, &fp, CANDIDATES) {
+            if clen(&w) > clen(prefix) {
+                cands.insert(w);
+            }
+        }
         for w in context.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty()) {
             let lw = lower(w);
             if fold(&lw).starts_with(&fp) && clen(&lw) > clen(prefix) {

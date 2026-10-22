@@ -19,6 +19,8 @@ Format (little-endian). str = u16 byte length + UTF-8 bytes. Sections in order:
   words         table     word -> count, for the language model
   pairs         table     "PREV WORD" -> count; "PREV " -> total << 32 | distinct followers
                 (both from data/bigrams.tsv, eval/build_ngrams.py; "<s>" = sentence start)
+  triples       table     "A B WORD" -> count; "A B " -> total << 32 | distinct (data/trigrams.tsv;
+                optional: the runtime reads it only when bytes are left)
 table = u32 byte length + a finite-state transducer (Rust `fst` crate), built by the Rust
 binary's `fst` subcommand: build it first (cargo build --release --manifest-path rust/Cargo.toml).
 """
@@ -128,6 +130,13 @@ def export(path=OUT):
                 pairs[f"{v} {word}"] = int(a)
     w.table(words.items())
     w.table(pairs.items())
+    path_tg = ROOT / "data" / "trigrams.tsv"
+    if path_tg.exists():
+        triples = {}
+        for line in path_tg.read_text("utf-8").splitlines():
+            v, word, a, *b = line.split("\t")
+            triples[f"{v} {word}"] = int(a) << 32 | int(b[0]) if not word else int(a)
+        w.table(triples.items())
 
     path.write_bytes(bytes(w.buf))
     return path, len(w.buf)

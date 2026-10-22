@@ -47,6 +47,11 @@ pub const COLLOQUIAL: [(&str, &str, TagTest); 17] = [
     ("im", "imis", TagTest::EndsWith(".pl.ins")),
 ];
 
+/// Spoken words that are no shortening of an ending: (word, its standard form)
+pub const SPOKEN_WORDS: [(&str, &str); 1] = [
+    ("eime", "eikime"), // let's go: imperative of eiti without -ki-
+];
+
 #[derive(Clone, Debug)]
 pub struct Analysis {
     pub lemma: String,
@@ -261,6 +266,10 @@ impl Analyzer {
     /// Formal forms this word could be a spoken shortening of.
     pub fn colloquial(&self, word: &str) -> Vec<String> {
         let mut found: Vec<String> = Vec::new();
+        let lw = lower(word);
+        if let Some((_, full)) = SPOKEN_WORDS.iter().find(|(w, _)| *w == lw) {
+            found.push(if first_lower(word) { full.to_string() } else { capitalize(full) });
+        }
         for (short, full, test) in COLLOQUIAL {
             if word.ends_with(short) && clen(word) > clen(short) + 1 {
                 let cand = format!("{}{}", &word[..word.len() - short.len()], full);

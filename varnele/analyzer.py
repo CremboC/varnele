@@ -36,6 +36,10 @@ COLLOQUIAL = [
     ("im", "ims", lambda t: t.endswith(".pl.dat")),
     ("im", "imis", lambda t: t.endswith(".pl.ins")),
 ]
+# Spoken words that are no shortening of an ending: word -> its standard form
+SPOKEN_WORDS = {
+    "eime": "eikime",     # let's go: imperative of eiti without -ki-
+}
 
 
 @dataclass
@@ -185,6 +189,9 @@ class Analyzer:
     def colloquial(self, word):
         """Formal forms this word could be a spoken shortening of."""
         found = []
+        full = SPOKEN_WORDS.get(word.lower())
+        if full:
+            found.append(full if word[:1].islower() else full.capitalize())
         for short, full, test in COLLOQUIAL:
             if word.endswith(short) and len(word) > len(short) + 1:
                 cand = word[: len(word) - len(short)] + full

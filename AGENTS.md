@@ -65,7 +65,7 @@ rust/target/release/varnele swipe WORD...         # decode each word's ideal swi
 python3 eval/swipe_sim.py [--noise 0.3] [--cut 0.4] # restore.py's 300 sentences swiped through the gesture decoder + keyboard model
 python3 eval/extract_wiki.py                       # corpus/wiki/ltwiki-latest-pages-articles.xml.bz2 -> corpus/wiki/text
 python3 eval/build_freq.py [--conv-weight W]       # Wikipedia + conversational text -> data/freq.tsv, lemma_freq.tsv (words seen 10+ times)
-python3 eval/build_ngrams.py [--conv-weight W]     # the same -> data/bigrams.tsv (pairs seen 10+ times; then export)
+python3 eval/build_ngrams.py [--conv-weight W]     # the same -> data/bigrams.tsv, trigrams.tsv (seen 10+ times; then export)
 python3 eval/predict_sim.py                        # next word among the top 3 predictions, same 300 sentences
                                                    # --learn: the user model learns the test set in order first
 python3 eval/predict_grammar.py [--corpus DIR]     # top 3 after prepositions/adjectives: how many break the case or agreement
@@ -295,14 +295,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - Gradle task `cargoBuildVarnele` builds the Rust lib for 4 ABIs from
   `../varnele` (or `-Pvarnele.dir=`) into `app/src/main/jniLibs` (git-ignored).
 
-- **Language model** (`rust/core/src/lm.rs`, keyboard only): P(word | previous word) from the
-  word pairs of the Wikipedia dump and the conversational text (`eval/build_ngrams.py` → `data/bigrams.tsv` → varnele.bin: word counts
-  tokenised like the keyboard, and per previous word its total and distinct followers over all pairs,
-  then the pairs seen 10+ times), absolute discounting (D 0.75) backing off to word frequency; `<s>` =
-  sentence start. Plus a paragraph cache: lemmas of the last 150 words, the form's share of its
+- **Language model** (`rust/core/src/lm.rs`, keyboard only): P(word | two previous words) from the
+  word triples and pairs of the Wikipedia dump and the conversational text (`eval/build_ngrams.py` → `data/bigrams.tsv`,
+  `data/trigrams.tsv` → varnele.bin: word counts tokenised like the keyboard, and per previous word (pair)
+  its total and distinct followers over all pairs (triples), then the pairs and triples seen 10+ times,
+  raw counts), absolute discounting (D 0.75): triples back off to pairs, pairs to word frequency; `<s>` =
+  sentence start, commas don't part the words (the counts run across them). Plus a paragraph cache: lemmas of the last 150 words, the form's share of its
   lemma (`Vilnius` earlier → `Vilniaus`), 10% of the probability for swipe, 30% for predictions
   scaled by words / (words + 300): a few words are no topic (`Aš vakar buvau` predicted `aš`, `vakar`).
-  `Analyzer::predict_words` ranks followers of the previous word (20 candidates), the paragraph's
+  `Analyzer::predict_words` ranks followers of the two previous words and of the previous word (20 candidates each), the paragraph's
   words and frequent words by it. `Checker::keyboard_predict` (JNI `predictNative`, serve `predict`)
   is what the keyboard shows: a name capitalised (`lietuvos` → `Lietuvos`), single letters other than
   `į`/`o` and abbreviations (`m`, `pr`, `kun`: the counts drop numbers and full stops) left out, and a
@@ -314,7 +315,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   (`KIND_PREDICTION`, Varnelė's order). Typing: `Suggest.addVarneleGhost` adds the **ghost**
   (`Checker::keyboard_ghost`, JNI `ghostNative`, serve `ghost`): the word completed (`kod` → `kodėl`),
   none when the word as typed is likelier than the completion (`tau`, not `tautos`), plus the next word
-  when P ≥ 0.5 (top word right 64–75% there on the dialogue sets), added after the autocorrect decision, so it never autocorrects: it goes in the strip's
+  when P ≥ 0.6 (`GHOST_NEXT_P`; right 71–73% of the times the ghost is tapped, see Latest numbers), added after the autocorrect decision, so it never autocorrects: it goes in the strip's
   centre, or next to it when the centre shows what space commits (an autocorrection, the typed word
   with "center suggestion is text to enter"). `SuggestionStripLayoutHelper` greys the part after the
   typed letters (`kod|ėl tu`); a tap commits it. Owner's choice (2026-10-22): strip first, inline ghost
@@ -362,14 +363,16 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   that takes another case 30% (it may modify the object: `į Lietuvos sostinę`, `į šiaurės rytus`), and
   its noun/adjective forms that fit join with their own probability (`eiti į` → `pietus, šiaurę,
   rytus`, was `šiaurės` first). Predictions and the ghost both go through it. +0.1 ms per call.
-- **Data format v3**: freq, lemma_freq, the language model's word counts and its pairs (`"PREV WORD"` →
-  count, `"PREV "` → total << 32 | distinct) are finite-state transducers (`rust/core/src/counts.rs`,
+- **Data format v3**: freq, lemma_freq, the language model's word counts, its pairs (`"PREV WORD"` →
+  count, `"PREV "` → total << 32 | distinct) and triples (`"A B WORD"`, `"A B "`, the same; an optional last
+  table, read only when bytes are left, so older files still load) are finite-state transducers (`rust/core/src/counts.rs`,
   `fst` crate), read in place: no hash map of 150k+ strings on the phone's heap. `export.py` pipes each
   table through `varnele fst`, so the Rust binary must be built before exporting. Lossless: every
   evaluation is identical to the v2 hash-map format. Sizes at words 10+ / pairs 10+: freq 1.1 MB,
   lemma_freq 0.2 MB, LM words 1.1 MB, pairs 3.5 MB (310k), the lexicon ~4.9 MB; varnele.bin 10.9 MB
   (v2 with words 2+ was 20.2 MB). Words 2+ instead of 10+ changed no result; pairs 5+ adds 3.5 MB for
-  +0.2 points swipe, +0.8 / +2.0 prediction.
+  +0.2 points swipe, +0.8 / +2.0 prediction. Triples 10+ (191k, after 75k word pairs) add 3.5 MB:
+  varnele.bin 13.0 → 16.5 MB; triples 20+ (78k) add 1.5 MB and keep ~¾ of the gain, 40+ (32k) 0.6 MB, ~½.
 
 ## Release builds and Google Play (keyboard)
 
@@ -430,7 +433,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   checker; a most-frequent-spelling baseline gets 71.9%.
 - Rust: load 31 ms, correct word 0.001 ms, misspelling + suggestions ~0.9 ms,
   sentence ~2.5 ms (Mac, data v3). Phone (Fold7, measured with the old 5.3 MB data): 0.05–0.8 ms valid
-  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 13.0 MB (v3, with the conversational counts).
+  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 16.5 MB (v3, with the conversational counts and triples).
 - Keyboard simulation: `kodel nepataiso visu zodzou kuriu as rasau?` →
   `kodėl nepataiso visų žodžių, kurių aš rašau?`; `dabar meginu nauja sakini` →
   `dabar mėginu naują sakinį`; Rust key-shift search 0.4 ms, sentence 1.5 ms (Mac).
@@ -484,6 +487,25 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
   Shares 0.3–0.7 and ramps 10–100 all landed within ±0.3 points of these; a share for the user's word
   frequency regardless of the previous word added nothing. No measurable cost in time.
+  **Word triples** (2026-10-22), before → after, subtitles / Tatoeba / Wikipedia: top 3 before typing
+  13.0 / 19.2 / 15.7 → **15.1 / 22.8 / 17.2%**, after one letter 32.9 / 47.1 / 30.4 → **34.1 / 48.7 / 31.6%**;
+  ghost completes 59.7 / 75.3 / 62.8 → 60.0 / 75.6 / 63.4% of the words, saves 14.7 / 21.7 / 19.9 →
+  15.2 / 22.7 / 20.9% of their letters; swipe σ 0.3 unchanged (keys top 1 82.7 / 85.4 / 82.1 →
+  82.6 / 85.5 / 82.1%, final word 75.0 / 79.2 / 73.4% both); same speed (predict median 1.6 ms, ghost
+  1.3 ms on the Mac, through serve). Triples 20+: 14.6 / 22.1 / 16.9% and 33.6 / 48.2 / 31.1%.
+  **The ghost's next word** (`predict_sim.py --ghost`, at the tap of the first right ghost; right = the
+  word that follows, also after a comma the sentence fixer adds, `maniau, kad`), with triples, share of
+  taps that get one / right, subtitles / Tatoeba / Wikipedia: P ≥ 0.8 0.4 / 2.2 / 2.6%, 83 / 90 / 85%;
+  0.7 1.4 / 3.1 / 4.4%, 75 / 85 / 74%; **0.6 2.5 / 4.8 / 6.4%, 71 / 72 / 73%**; 0.5 4.0 / 6.3 / 8.0%,
+  57 / 66 / 67%; 0.3 7.7 / 12.2 / 13.6%, 44 / 50 / 50%; 0.2 33 / 41 / 42% right. The wrong ones are mostly
+  the end of a sentence (`susipažinau su.`) or another word than the frequent one (`taip pat` vs `taip
+  atrodys`). Counted without the comma, `kad` after a verb looked wrong: 29 / 37 / 62% at 0.5.
+  On the emulator (2026-10-22): `Labas, kaip ` → `sekasi, laikaisi, tu` (the triple; `Kaip ` alone gives
+  `ir, tu, tai`), the ghost after `Gal e` is `eime` (was the name `Eime`), after `Tai buvo pirma k` `kartą`.
+  **Slow at a sentence start:** `predict` lists every follower of the previous word before ranking, and
+  `<s>` has the most: 8 ms on the Mac (0.5 ms after `Gal`, 3 ms after `ir`), 1.3–2.9 s on the emulator,
+  every time now that the fork no longer caches predictions. The same on main before the triples.
+  The emulator's red underlines come from its system spell checker (Gboard, English), not Varnelė.
 - **Conversational counts** (W=1: subtitles and Tatoeba count like Wikipedia; `eval/training.py`
   `conversational()`, lines of 4+ words once, cutoffs on raw counts so a pair seen once in a subtitle
   never ships; data file 10.9 → 13.0 MB), on the three test sets, before → after:
@@ -555,8 +577,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   prototype). Started: `lm.rs` (bigrams + paragraph lemma cache, see the keyboard design section),
   used by swipe ranking and `predict_words`; the owner wants context from the whole sentence and
   paragraph. Done: the full Wikipedia dump, conversational text, predictions and the ghost in the
-  strip, the grammar steering them (keyboard design section). Next: phone-test the strip, inline ghost
-  text, trigrams, more grammar in predictions (verb government: `laukiu` + genitive, objects after
+  strip, the grammar steering them (keyboard design section), trigrams. Next: phone-test the strip, inline ghost
+  text, more grammar in predictions (verb government: `laukiu` + genitive, objects after
   TRANSITIVE_VERBS, numbers + genitive plural), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
   corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
   plus a per-user overlay learned on the phone from the *final* text (done 2026-10-22: "User
@@ -723,9 +745,15 @@ Left deliberately:
 - HeliBoard capitalises sentences only if the text field asks for it
   (TYPE_TEXT_FLAG_CAP_SENTENCES); the test app's field now does.
 - The keyboard fixer's fold keeps `y` (it is a key): i/y changes are never auto-applied.
-- Lexicon gaps: loanwords and names (`klipas`, `singlas`); spoken `eime` ("let's go") is unknown, so
-  predictions give its name reading `Eime` (the ghost after `Gal e`, phone test 2026-10-22); induce stems from a
-  corpus by finding multiple forms of a guessed paradigm.
+- Lexicon gaps: loanwords and names (`klipas`, `singlas`); induce stems from a corpus by finding multiple
+  forms of a guessed paradigm. Done: spoken `eime` ("let's go", no ending shortening: `SPOKEN_WORDS` in
+  analyzer.py/analyzer.rs, colloquial for `eikime`; predictions gave its name reading `Eime`), slang
+  `bičas`/`biče` (data/extra.txt). The name rule capitalises little else in the subtitle test set: of 2,953
+  capitalised predictions shown, 29 are words the subtitles write lowercase, English (`Oh`, `You`, `Of`,
+  `Ho`, as written in the context) and `Bičas`. Frequent lowercase subtitle words still unknown:
+  `nesijaudink` (822), `nesijaudinu`: ispell-lt has `jaudinti/TRNX`, no `S`, so ne+si is refused (R + N
+  without S may be a general gap); `didžiuojuosi` (560, didžiuotis listed only as `didžiuojasi/R`);
+  spoken vocatives `drauguži`, `brolau`, `berniuk`, `mergyt`, `vyruti`, `brangute`; `bliamba`, `vistiek`, `nėr`.
 - Keyboard: completions for half-typed words (now we show corrections);
   speed up unknown-word suggestions (6–17 ms on phone); interplay of the
   sentence fixer with HeliBoard's backspace-reverts-autocorrect is untested.
@@ -774,3 +802,5 @@ Left deliberately:
     `learn`/`forget`, `--learn` in predict_sim.py and swipe_sim.py)
 23. grammar in predictions: case after prepositions, agreement after adjectives (`grammar_rerank`,
     eval/predict_grammar.py)
+24. word triples in the language model (data/trigrams.tsv, 16.5 MB), the ghost's next word at P ≥ 0.6 (serve
+    `ghostnext`), `eime`, `bičas`

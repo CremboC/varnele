@@ -116,6 +116,8 @@ fn main() {
             //   predict<TAB>CONTEXT<TAB>PREFIX<TAB>N  -> JSON list of N next words
             //   ghost<TAB>CONTEXT<TAB>TYPED  -> JSON string, the keyboard's ghost ("" for none)
             //   learn<TAB>TEXT  -> "ok": the user wrote TEXT (turns the user model on); forget -> "ok": empty it
+            //   ghostnext<TAB>CONTEXT<TAB>TYPED  -> {"w", "next", "p"}: the ghost's word and its likeliest next
+            //                                     word, whatever P (predict_sim.py --ghost weighs thresholds)
             let layout = Layout::qwerty();
             use std::io::{BufRead, Write};
             let mut out = std::io::stdout().lock();
@@ -163,6 +165,12 @@ fn main() {
                     "forget" => {
                         ck.an.user.write().unwrap().clear();
                         writeln!(out, "\"ok\"").unwrap();
+                    }
+                    "ghostnext" => {
+                        let (w, next) = ck.ghost_parts(parts.get(1).copied().unwrap_or(""), parts.get(2).copied().unwrap_or(""), formal)
+                            .unwrap_or_default();
+                        let (n, p) = next.unwrap_or_default();
+                        writeln!(out, "{{\"w\":{},\"next\":{},\"p\":{p:.6}}}", varnele::json::string(&w), varnele::json::string(&n)).unwrap();
                     }
                     _ => writeln!(out, "{{\"error\":\"unknown request\"}}").unwrap(),
                 }

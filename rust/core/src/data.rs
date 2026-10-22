@@ -91,6 +91,9 @@ pub struct Data {
     /// word pairs: "PREV WORD" -> count; "PREV " -> all pairs starting with PREV << 32 | how many
     /// different second words (before pruning). PREV "<s>" is the sentence start.
     pub pairs: Counts,
+    /// word triples, the same for two previous words: "A B WORD" -> count, "A B " -> total << 32 |
+    /// distinct; empty in a data file without them
+    pub triples: Counts,
     folded: OnceLock<Folded>,
     entry_stems: OnceLock<Vec<Vec<(u32, u16)>>>,
     stem_prefixes: OnceLock<FxSet<String>>,
@@ -205,6 +208,7 @@ impl Data {
         let head_rests = r.strs()?.into_iter().collect();
         let words = r.counts()?;
         let pairs = r.counts()?;
+        let triples = if r.p < r.b.len() { r.counts()? } else { Counts::empty() };
 
         Ok(Data {
             tags,
@@ -223,6 +227,7 @@ impl Data {
             words_total: words.total(),
             words,
             pairs,
+            triples,
             folded: OnceLock::new(),
             entry_stems: OnceLock::new(),
             stem_prefixes: OnceLock::new(),

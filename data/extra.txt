@@ -31,3 +31,6 @@ domėjo/POSXrw
 # ispell-lt lists a truncated "bereikal"; the adverb is bereikalo
 -bereikal
 bereikalo
+
+# spoken words frequent in the subtitles that the lexicon lacks
+bičas/D   # "dude": 637 times in the subtitles, vocative biče 1,629

@@ -35,9 +35,12 @@ pub struct Checker {
     grammar: Grammar,
 }
 
-/// The ghost adds the next word from this probability: its top word is right 64–75% of the time
-/// there on the dialogue test sets (2% of words).
-const GHOST_NEXT_P: f64 = 0.5;
+/// The ghost adds the next word from this probability. When the ghost is tapped, the next word is
+/// the one that follows (or follows a comma the sentence fixer adds: `maniau, kad`) 71 / 72 / 73% of
+/// the time on subtitles / Tatoeba / Wikipedia, appended on 2.5 / 4.8 / 6.4% of the taps; at 0.5
+/// 57 / 66 / 67%, lower is worse still (eval/predict_sim.py --ghost). A wrong word costs a
+/// backspace-word and a right one saves a few letters (kad, į, su), so precision first.
+const GHOST_NEXT_P: f64 = 0.6;
 /// A prediction the grammar rules out (a genitive after `į`) keeps this share of its probability.
 const MISFIT: f64 = 0.01;
 /// A genitive after a preposition that takes another case keeps this share: it may modify the
@@ -430,18 +433,25 @@ impl Checker {
     /// completes it or the word as typed is likelier than the completion (tau, not tautos).
     /// `formal` as for [`Self::keyboard_predict`].
     pub fn keyboard_ghost(&self, context: &str, typed: &str, formal: bool) -> Option<String> {
+        let (word, next) = self.ghost_parts(context, typed, formal)?;
+        Some(match next {
+            Some((n, pn)) if pn >= GHOST_NEXT_P => format!("{word} {n}"),
+            _ => word,
+        })
+    }
+
+    /// The ghost's completion and the likeliest next word after it with its probability, whatever
+    /// that is (eval/predict_sim.py --ghost weighs thresholds with it).
+    pub fn ghost_parts(&self, context: &str, typed: &str, formal: bool) -> Option<(String, Option<(String, f64)>)> {
         let mut ctx = self.an.lm_context(context);
         let (word, p) = self.predict_in(&ctx, context, typed, 1, formal).into_iter().next()?;
         // a dictionary lookup: check() would also guess derivations and compounds, 35 ms for `se`
         if !self.an.analyze(typed).is_empty() && self.an.p_predict(&ctx, &lower(typed)) >= p {
             return None;
         }
-        ctx.prev = lower(&word); // the paragraph's lemmas stay: one word more changes little
+        ctx.prev2 = std::mem::replace(&mut ctx.prev, lower(&word)); // the paragraph's lemmas stay: one word more changes little
         let next = self.predict_in(&ctx, &format!("{context} {word}"), "", 1, formal).into_iter().next();
-        Some(match next {
-            Some((n, pn)) if pn >= GHOST_NEXT_P => format!("{word} {n}"),
-            _ => word,
-        })
+        Some((word, next))
     }
 
     /// All findings in a text, in order: misspellings, spoken forms, grammar.

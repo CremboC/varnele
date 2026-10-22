@@ -26,7 +26,7 @@ VALID = {
 INVALID = "medžyje jaučie nedžiaugiasi nusipraustis apbūdina gerasias dirbantisis".split()
 
 SPOKEN = {"valgyt": "valgyti", "buvom": "buvome", "jaučias": "jaučiasi", "mokykloj": "mokykloje",
-          "namuos": "namuose", "dirbkit": "dirbkite"}
+          "namuos": "namuose", "dirbkit": "dirbkite", "eime": "eikime"}
 
 FIXES = {"sviesa": "šviesa", "ivikis": "įvykis", "isvaziavo": "išvažiavo",
          "nesidziaugia": "nesidžiaugia", "vilniaus": "Vilniaus", "rasyt": "rašyti",
