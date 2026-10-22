@@ -59,6 +59,15 @@ struct Folded {
     sigs: Vec<FxMap<String, Vec<usize>>>,   // folded suffix -> suffix indices
 }
 
+/// Words seen after one word in the corpus, for the language model.
+pub struct Followers {
+    /// pairs with this word first, and how many different second words (all, before pruning)
+    pub total: u32,
+    pub distinct: u32,
+    /// the second words seen 2+ times, most frequent first
+    pub next: Vec<(String, u32)>,
+}
+
 /// The callbacks of [`Data::walk_forms`].
 struct Walk<'a, S> {
     step: &'a dyn Fn(S, char) -> Option<S>,
@@ -81,6 +90,11 @@ pub struct Data {
     pub deriv_stems: FxSet<String>,
     pub suffix_rests: FxMap<String, String>,
     pub head_rests: FxSet<String>,
+    /// word counts for the language model (tokenised like the keyboard, unlike `freq`)
+    pub words: FxMap<String, u32>,
+    pub words_total: u64,
+    /// previous word ("<s>": sentence start) -> the words seen after it
+    pub bigrams: FxMap<String, Followers>,
     folded: OnceLock<Folded>,
     entry_stems: OnceLock<Vec<Vec<(u32, u16)>>>,
     stem_prefixes: OnceLock<FxSet<String>>,
@@ -132,7 +146,7 @@ impl Data {
             return Err("not a varnele data file".into());
         }
         let version = r.u32()?;
-        if version != 1 {
+        if version != 2 {
             return Err(format!("unsupported data version {version}"));
         }
         let tags: Vec<Tag> = r
@@ -195,6 +209,20 @@ impl Data {
             suffix_rests.insert(k, r.str()?);
         }
         let head_rests = r.strs()?.into_iter().collect();
+        let words = r.counts()?;
+        let n = r.u32()?;
+        let mut bigrams = FxMap::default();
+        for _ in 0..n {
+            let prev = r.str()?;
+            let (total, distinct) = (r.u32()?, r.u32()?);
+            let m = r.u32()?;
+            let mut next = Vec::with_capacity(m as usize);
+            for _ in 0..m {
+                let w = r.str()?;
+                next.push((w, r.u32()?));
+            }
+            bigrams.insert(prev, Followers { total, distinct, next });
+        }
 
         Ok(Data {
             tags,
@@ -210,6 +238,9 @@ impl Data {
             deriv_stems,
             suffix_rests,
             head_rests,
+            words_total: words.values().map(|&n| n as u64).sum(),
+            words,
+            bigrams,
             folded: OnceLock::new(),
             entry_stems: OnceLock::new(),
             stem_prefixes: OnceLock::new(),

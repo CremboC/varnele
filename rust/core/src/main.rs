@@ -90,7 +90,7 @@ fn main() {
             let layout = Layout::qwerty();
             for w in &args[1..] {
                 let t = Instant::now();
-                let cands = ck.an.gesture(&ideal_path(w, &layout), &layout, false, 5);
+                let cands = ck.an.gesture(&ideal_path(w, &layout), &layout, false, "", 5);
                 let list: Vec<String> = cands.iter().map(|c| format!("{} ({}, {:.2}, {:.3})", c.word, c.best, c.cost, c.shape)).collect();
                 println!("{w}: {}   {:?}", list.join(", "), t.elapsed());
             }
@@ -99,7 +99,8 @@ fn main() {
             // one request per stdin line, for evaluations that make thousands of calls:
             //   kb<TAB>WORD<TAB>CONTEXT  -> one JSON line
             //   json<TAB>TEXT            -> one finding per line, then an empty line
-            //   gesture<TAB>X,Y X,Y ...<TAB>CAP(0/1)[<TAB>N]  -> JSON list of N (5) candidates (QWERTY, key widths)
+            //   gesture<TAB>X,Y X,Y ...<TAB>CAP(0/1)<TAB>N<TAB>CONTEXT  -> JSON list of N candidates (QWERTY, key widths)
+            //   predict<TAB>CONTEXT<TAB>PREFIX<TAB>N  -> JSON list of N next words
             let layout = Layout::qwerty();
             use std::io::{BufRead, Write};
             let mut out = std::io::stdout().lock();
@@ -119,7 +120,16 @@ fn main() {
                         let path = parse_path(parts.get(1).copied().unwrap_or(""));
                         let cap = parts.get(2) == Some(&"1");
                         let n = parts.get(3).and_then(|n| n.parse().ok()).unwrap_or(5);
-                        writeln!(out, "{}", varnele::json::gesture(&ck.an.gesture(&path, &layout, cap, n))).unwrap();
+                        let context = parts.get(4).copied().unwrap_or("");
+                        writeln!(out, "{}", varnele::json::gesture(&ck.an.gesture(&path, &layout, cap, context, n))).unwrap();
+                    }
+                    "predict" => {
+                        let context = parts.get(1).copied().unwrap_or("");
+                        let n = parts.get(3).and_then(|n| n.parse().ok()).unwrap_or(3);
+                        let ctx = ck.an.lm_context(context);
+                        let words = ck.an.predict_words(&ctx, context, parts.get(2).copied().unwrap_or(""), n);
+                        let items: Vec<String> = words.iter().map(|(w, p)| format!("{{\"w\":{},\"p\":{p:.6}}}", varnele::json::string(w))).collect();
+                        writeln!(out, "[{}]", items.join(",")).unwrap();
                     }
                     _ => writeln!(out, "{{\"error\":\"unknown request\"}}").unwrap(),
                 }
@@ -150,12 +160,12 @@ fn main() {
             let layout = Layout::qwerty();
             let paths: Vec<Vec<(f32, f32)>> = ["labas", "nežinau", "mačiau", "kodėl", "dienų", "pasakojimas"]
                 .iter().map(|w| ideal_path(w, &layout)).collect();
-            let _ = ck.an.gesture(&paths[0], &layout, false, 5);
+            let _ = ck.an.gesture(&paths[0], &layout, false, "", 5);
             let mut ts: Vec<f64> = Vec::new();
             for _ in 0..3 {
                 for p in &paths {
                     let t = Instant::now();
-                    ck.an.gesture(p, &layout, false, 5);
+                    ck.an.gesture(p, &layout, false, "", 5);
                     ts.push(t.elapsed().as_secs_f64() * 1000.0);
                 }
             }

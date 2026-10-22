@@ -71,9 +71,10 @@ def swipe_path(word, rng, noise, cut):
     return [(min(max(x + rng.gauss(0, 0.03), 0), 10), min(max(y + rng.gauss(0, 0.03), 0), 4.2)) for x, y in catmull_rom(tgt)]
 
 
-def gesture(path, cap, n=5):
+def gesture(path, cap, n=5, context=""):
     pts = " ".join(f"{x:.3f},{y:.3f}" for x, y in path)
-    return json.loads(_ask(f"gesture\t{pts}\t{int(cap)}\t{n}").readline())
+    context = context.replace("\t", " ").replace("\n", " ")[-1500:]
+    return json.loads(_ask(f"gesture\t{pts}\t{int(cap)}\t{n}\t{context}").readline())
 
 
 def swipeable(word):
@@ -81,8 +82,9 @@ def swipeable(word):
             and len(keys(word)) > 1)
 
 
-def swipe_text(text, rng, noise, cut, log):
-    """Enter the sentence word by word; log gets (original, top keys, top 3, committed, ms) per swiped word."""
+def swipe_text(text, rng, noise, cut, log, before=""):
+    """Enter the sentence word by word; log gets (original, top keys, top 3, committed, ms) per swiped word.
+    `before`: the text before the sentence (for the language model's paragraph cache)."""
     out = ""
     pieces = re.split(r"([^\W\d_]+)", text)
     for i, piece in enumerate(pieces):
@@ -92,7 +94,7 @@ def swipe_text(text, rng, noise, cut, log):
         context = " ".join(re.findall(r"[^\W\d_]+", out)[-3:])
         if swipeable(piece):
             t = time.perf_counter()
-            cands = gesture(swipe_path(piece, rng, noise, cut), piece[0].isupper(), 40)
+            cands = gesture(swipe_path(piece, rng, noise, cut), piece[0].isupper(), 40, (before + " " + out).strip())
             ms = (time.perf_counter() - t) * 1000
             top = cands[0]["w"] if cands else ""
             word = autocorrect(top, context) if top else piece.translate(STRIP)
@@ -107,6 +109,23 @@ def swipe_text(text, rng, noise, cut, log):
     return out.strip()
 
 
+def preceding(corpus, sample):
+    """The article text before each sentence (as typed correctly), at most 1500 characters,
+    starting at a sentence boundary so it doesn't end the previous sentence oddly."""
+    texts = []
+    for p in sorted(pathlib.Path(corpus).glob("*.txt")):
+        texts.append(" ".join(l for l in p.read_text("utf-8").splitlines()[2:]
+                              if l.strip() and "\\displaystyle" not in l and "{\\" not in l))
+    out = {}
+    for s in sample:
+        for t in texts:
+            i = t.find(s)
+            if i >= 0:
+                out[s] = t[max(0, i - 1500):i].strip()
+                break
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sentences", type=int, default=300)
@@ -116,6 +135,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--corpus", default=str(ROOT / "corpus" / "test"))
     ap.add_argument("--words", nargs="*")
+    ap.add_argument("--no-paragraph", action="store_true", help="don't give the article text before each sentence")
     a = ap.parse_args()
     rng = random.Random(a.seed)
 
@@ -128,13 +148,14 @@ def main():
 
     pool = list(sentences(a.corpus))
     sample = random.Random(3).sample(pool, min(a.sentences, len(pool)))   # the same as restore.py
+    before = {} if a.no_paragraph else preceding(a.corpus, sample)
     st = collections.Counter()
     misses = collections.Counter()
     restore_misses = collections.Counter()
     times = []
     for s in sample:
         log = []
-        final = swipe_text(s, rng, a.noise, a.cut, log)
+        final = swipe_text(s, rng, a.noise, a.cut, log, before.get(s, ""))
         words, got = WORD.findall(s), WORD.findall(final)
         exact_sentence = len(words) == len(got) and all(x == y for x, y in zip(words, got))
         st["sentences"] += 1

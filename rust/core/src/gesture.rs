@@ -21,6 +21,7 @@ const POINTS: usize = 32; // path and template resampled to this many points for
 const WARPED: f32 = 0.8; // share of the time-warped distance in the shape distance
 const SHAPE_WEIGHT: f64 = 4.0; // cost per squared key width of shape distance
 const UNSEEN_PREFIXED: f64 = 0.3; // a prefixed form only the prefix rules allow, never seen
+const CONTEXT_WEIGHT: f64 = 0.3; // cost per log10 of how much likelier the language model finds the word here
 const WARP: usize = 300; // best point-by-point shapes compared again with time warping
 const KEEP: usize = 40; // best shapes whose frequency and analysis are looked up
 
@@ -143,19 +144,20 @@ const NONE: usize = usize::MAX;
 
 impl Analyzer {
     /// Words the path (finger positions, in key widths, in order) may spell, best first.
-    /// `cap`: the gesture was made with shift on.
-    pub fn gesture(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, n: usize) -> Vec<GestureCandidate> {
-        let out = self.gesture_within(path, layout, cap, n, 1.0, 1_000_000);
+    /// `cap`: the gesture was made with shift on; `context`: the text before the word.
+    pub fn gesture(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, context: &str, n: usize) -> Vec<GestureCandidate> {
+        let ctx = self.lm_context(context);
+        let out = self.gesture_within(path, layout, cap, &ctx, n, 1.0, 1_000_000);
         if out.is_empty() {
             // a key missed by more than usual (off the keyboard's edge): look wider, briefly
-            return self.gesture_within(path, layout, cap, n, 1.5, 200_000);
+            return self.gesture_within(path, layout, cap, &ctx, n, 1.5, 200_000);
         }
         out
     }
 
     /// `widen`: key radii times this; `budget`: search steps (stem prefixes and suffixes tried).
     #[allow(clippy::too_many_arguments)]
-    fn gesture_within(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, n: usize, widen: f32,
+    fn gesture_within(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, ctx: &crate::lm::LmContext, n: usize, widen: f32,
                       mut budget: usize) -> Vec<GestureCandidate> {
         let (near_r, ends_r) = (NEAR * widen, ENDS * widen);
         let path_len = length(path);
@@ -305,7 +307,8 @@ impl Analyzer {
         shapes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then_with(|| a.1.cmp(&b.1)));
 
         // then, for the best KEEP shapes spelt by a real word (a prefix chain + form may not be),
-        // the lexical cost of its best real form (frequency, a capitalised name for lowercase)
+        // the lexical cost of its best real form (frequency, the previous word and the paragraph,
+        // a capitalised name for lowercase)
         let mut out: Vec<GestureCandidate> = Vec::new();
         for (d, kw, mut fs) in shapes {
             if out.len() == KEEP {
@@ -318,7 +321,7 @@ impl Analyzer {
                 if self.analyze_exact(&f).is_empty() {
                     continue;
                 }
-                let mut c = self.score(&kw, &lower(&f));
+                let mut c = self.score(&kw, &lower(&f)) - CONTEXT_WEIGHT * self.context_score(ctx, &lower(&f), crate::lm::CACHE_SWIPE);
                 if prefixed.contains(&f) && !self.data.freq.contains_key(&lower(&f)) {
                     c += UNSEEN_PREFIXED; // only the prefix rules say so: įįvykdyte
                 }

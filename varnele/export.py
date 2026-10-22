@@ -16,6 +16,9 @@ Format (little-endian). str = u16 byte length + UTF-8 bytes. Sections in order:
   deriv_stems   u32 n, str*n
   suffix_rests  u32 n, (str rest, str label)*n
   head_rests    u32 n, str*n
+  words         u32 n, (str, u32)*n                    word counts for the language model
+  bigrams       u32 n, (str prev, u32 total, u32 distinct, u32 m, (str word, u32 count)*m)*n
+                (both from data/bigrams.tsv, eval/build_ngrams.py; "<s>" = sentence start)
 """
 
 import struct
@@ -25,7 +28,7 @@ from .index import Index
 from .lexicon import ROOT
 from .suggest import _load_freq
 
-VERSION = 1
+VERSION = 2
 KINDS = ["noun", "adj", "pron", "num", "inf", "prs", "pst", "word"]
 OUT = ROOT / "data" / "varnele.bin"
 
@@ -102,6 +105,31 @@ def export(path=OUT):
         w.str(rest)
         w.str(sorted(labels)[0])
     w.strs(sorted(deriv.head_rests))
+
+    words, bigrams = {}, {}   # word -> count; prev -> (total, distinct, [(word, count)])
+    path_bg = ROOT / "data" / "bigrams.tsv"
+    if path_bg.exists():
+        for line in path_bg.read_text("utf-8").splitlines():
+            v, word, a, *b = line.split("\t")
+            if not v:
+                words[word] = int(a)
+            elif not word:
+                bigrams[v] = (int(a), int(b[0]), [])
+            else:
+                bigrams[v][2].append((word, int(a)))
+    w.u32(len(words))
+    for word, n in words.items():
+        w.str(word)
+        w.u32(n)
+    w.u32(len(bigrams))
+    for v, (total, distinct, words) in bigrams.items():
+        w.str(v)
+        w.u32(total)
+        w.u32(distinct)
+        w.u32(len(words))
+        for word, n in words:
+            w.str(word)
+            w.u32(n)
 
     path.write_bytes(bytes(w.buf))
     return path, len(w.buf)

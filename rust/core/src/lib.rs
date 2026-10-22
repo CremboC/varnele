@@ -19,6 +19,7 @@ pub mod fx;
 pub mod gesture;
 pub mod grammar;
 pub mod json;
+pub mod lm;
 pub mod suggest;
 pub mod text;
 

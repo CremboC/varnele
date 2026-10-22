@@ -54,9 +54,12 @@ python3 eval/restore.py --sentences 300            # strip all diacritics, measu
 python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precision of each comma rule
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
 python3 eval/keyboard_restore.py                   # restore.py's 300 sentences typed through the keyboard model
-rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" / "gesture\tX,Y X,Y…\tCAP\tN" (used by the sims)
+rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" /
+                                                   # "gesture\tX,Y X,Y…\tCAP\tN\tCONTEXT" / "predict\tCONTEXT\tPREFIX\tN" (used by the sims)
 rust/target/release/varnele swipe WORD...         # decode each word's ideal swipe path
 python3 eval/swipe_sim.py [--noise 0.3] [--cut 0.4] # restore.py's 300 sentences swiped through the gesture decoder + keyboard model
+python3 eval/build_ngrams.py                       # corpus/freq word pairs -> data/bigrams.tsv (then export)
+python3 eval/predict_sim.py                        # next word among the top 3 predictions, same 300 sentences
 .venv/bin/python eval/evaluate.py                  # vs Hunspell lt_LT (needs spylls + make myspell)
 ```
 
@@ -204,6 +207,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   +0.3 for a never-seen prefixed form (`įįvykdyte`). Output: the keys swiped (no diacritics), which
   the keyboard then treats as a word typed without diacritics (autocorrect + sentence fixer pick
   `prieš`, `dienų`). Nothing found → one retry with radii ×1.5 and a smaller budget.
+  The lexical cost also subtracts 0.3 × log10 of the language model's P(word | context) / P(word).
   Tried and dropped: a per-letter anchor distance (favours short words, 34% top-1), a "don't cut
   past a sharp corner" prune (real corners are often > 1 key from the letter: recall 92 → 74%).
 - `inputlogic/VarneleSentenceFixer.kt`, hooked at the end of
@@ -229,6 +233,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   ProGuard keep rule added. Library missing → keyboard works without Varnelė.
 - Gradle task `cargoBuildVarnele` builds the Rust lib for 4 ABIs from
   `../varnele` (or `-Pvarnele.dir=`) into `app/src/main/jniLibs` (git-ignored).
+
+- **Language model** (`rust/core/src/lm.rs`, keyboard only): P(word | previous word) from
+  corpus/freq word pairs (`eval/build_ngrams.py` → `data/bigrams.tsv` → varnele.bin, data version 2:
+  word counts tokenised like the keyboard, and per previous word its total, distinct followers and
+  the pairs seen 2+ times), absolute discounting (D 0.75) backing off to word frequency; `<s>` =
+  sentence start. Plus a paragraph cache: lemmas of the last 150 words, the form's share of its
+  lemma (`Vilnius` earlier → `Vilniaus`), 10% of the probability for swipe, 30% for predictions.
+  `Analyzer::predict_words` ranks followers of the previous word, the paragraph's words and
+  frequent words by it. Not wired to the keyboard yet (no next-word strip or ghost text).
 
 ## Release builds and Google Play (keyboard)
 
@@ -294,9 +307,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - Swipe simulation (`eval/swipe_sim.py`, 3,493 swiped known words of the 300 sentences; each key
   missed by N(0, σ) in x, 1.2σ in y, corners cut by up to `cut` keys, Catmull-Rom curve, finger kept
   on the keyboard): keys right top-1 / top-3 / final word with diacritics right:
-  σ 0.2: 87.1 / 96.4 / 77.2%; σ 0.3: 74.9 / 87.3 / 66.8%; σ 0.4: 52.3 / 63.9 / 46.8%. When the
-  keys are right the diacritics are right 89%. Decode on the Mac: median 2.1 ms, 95% 27 ms, max
-  161 ms (σ 0.3). The noise model is a guess: no real swipe traces yet.
+  σ 0.2: 87.1 / 96.4 / 77.2%; σ 0.3: 74.9 / 87.3 / 66.8%; σ 0.4: 52.3 / 63.9 / 46.8% (frequency
+  only). With the language model and the article text before each sentence as the paragraph,
+  σ 0.3: 77.0 / 88.1 / 68.5% (previous word alone 75.7 / 87.5 / 67.4%). When the keys are right
+  the diacritics are right 89%. Decode on the Mac: median 2.5 ms, 95% 29 ms, max 169 ms (σ 0.3).
+  The noise model is a guess: no real swipe traces yet.
+- Next-word prediction (`eval/predict_sim.py`, 3,997 words): the word is among the top 3 before
+  typing 12.9%, after its first letter 26.3% (no paragraph: 12.4 / 22.7%; previous word only, with
+  the paragraph's words as candidates: 12.5 / 21.5%). The corpus (167k words of Wikipedia, 13.6k
+  pairs seen twice) is what limits it.
 
 ## Gotchas (learned the hard way)
 
@@ -328,7 +347,10 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 ## Ideas and open problems (backlog)
 
 - **Next: next-word prediction with ghost text** (owner's pick, 2026-10-22, after the swipe
-  prototype). Build a language-model layer in the Rust core, not a separate system:
+  prototype). Started: `lm.rs` (bigrams + paragraph lemma cache, see the keyboard design section),
+  used by swipe ranking and `predict_words`; the owner wants context from the whole sentence and
+  paragraph. Next: a much bigger corpus (it limits everything below), then trigrams, the grammar
+  rules steering predictions (case after a preposition, agreement), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
   corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
   plus a per-user overlay learned on the phone from the *final* text (after autocorrect and the
   sentence fixer, unlike HeliBoard's user history, which learns words as typed). Expose one
@@ -401,6 +423,10 @@ Left deliberately:
 - ispell-lt has no plain reflexive-only verbs (džiaugtis, juoktis, elgtis, domėtis;
   only apsidžiaugti etc. in lietuviu.ivpk). Added to data/extra.txt; others may be
   missing too: check 1sg `-uosi` forms of common ones.
+- data/freq.tsv counts a word before a full stop separately (`metais.` vs `metais`, 1,542 entries):
+  build_freq.py uses the checker's tokenizer, which keeps the dot for abbreviations. The language
+  model has its own word counts (build_ngrams.py); fixing freq.tsv would change every ranking, so
+  it needs a full re-evaluation.
 - data/extra.txt drops `bereikal` (`-bereikal`) and adds `bereikalo`.
 - Idea: `net ne vienos/vieno/vienas` + noun almost always means `nė vienos` (not a single);
   plain `ne vienas` ("more than one") is valid, so only `net ne` + a vienas form is a signal.
@@ -466,3 +492,5 @@ Left deliberately:
     and its object (`į teises mokykla` → `teisės mokyklą`), case+number for the one-phrase check,
     -tinas participles take no accusative
 17. gesture (swipe) decoder prototype in Rust (`gesture.rs`, `varnele swipe`, serve `gesture`), eval/swipe_sim.py
+18. language model: corpus bigrams + paragraph lemma cache (`lm.rs`, data version 2), in swipe ranking
+    and `predict_words`; eval/build_ngrams.py, eval/predict_sim.py
