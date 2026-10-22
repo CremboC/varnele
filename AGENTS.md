@@ -493,6 +493,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   15.2 / 22.7 / 20.9% of their letters; swipe σ 0.3 unchanged (keys top 1 82.7 / 85.4 / 82.1 →
   82.6 / 85.5 / 82.1%, final word 75.0 / 79.2 / 73.4% both); same speed (predict median 1.6 ms, ghost
   1.3 ms on the Mac, through serve). Triples 20+: 14.6 / 22.1 / 16.9% and 33.6 / 48.2 / 31.1%.
+  Again on top of the grammar re-ranking (main 873cca8), without → with triples: before typing
+  13.0 / 19.2 / 15.7 → 15.1 / 22.8 / 17.1%, after one letter 33.0 / 47.1 / 30.4 → 34.1 / 48.7 / 31.6%, ghost
+  letters saved 14.9 / 21.8 / 20.1 → 15.4 / 22.9 / 21.1%.
   **The ghost's next word** (`predict_sim.py --ghost`, at the tap of the first right ghost; right = the
   word that follows, also after a comma the sentence fixer adds, `maniau, kad`), with triples, share of
   taps that get one / right, subtitles / Tatoeba / Wikipedia: P ≥ 0.8 0.4 / 2.2 / 2.6%, 83 / 90 / 85%;
@@ -502,6 +505,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   atrodys`). Counted without the comma, `kad` after a verb looked wrong: 29 / 37 / 62% at 0.5.
   On the emulator (2026-10-22): `Labas, kaip ` → `sekasi, laikaisi, tu` (the triple; `Kaip ` alone gives
   `ir, tu, tai`), the ghost after `Gal e` is `eime` (was the name `Eime`), after `Tai buvo pirma k` `kartą`.
+  The same after the grammar re-ranking, which works with the triples: `Eiti į ` → `mokyklą, darbą, priekį`.
   **Slow at a sentence start:** `predict` lists every follower of the previous word before ranking, and
   `<s>` has the most: 8 ms on the Mac (0.5 ms after `Gal`, 3 ms after `ir`), 1.3–2.9 s on the emulator,
   every time now that the fork no longer caches predictions. The same on main before the triples.
