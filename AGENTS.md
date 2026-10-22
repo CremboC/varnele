@@ -96,6 +96,23 @@ SDK `~/Library/Android/sdk`, adb `~/Library/Android/sdk/platform-tools/adb`.
 then `adb install -r app/build/outputs/apk/debug/VarneleKlaviatura_1.0-debug.apk`.
 Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 
+**Device tests run on the emulator by default** (owner, 2026-10-22), not the Fold7: it never locks,
+drops off wireless adb or needs the owner. Use the phone only when the owner asks for it or the test
+needs real hardware (real swipe traces, the Fold's two screens, split keyboard, speed on the phone).
+Worktrees build the keyboard with `-Pvarnele.dir=<the varnele worktree>`.
+
+```bash
+eval/emulator_ready.sh app/build/outputs/apk/debug/VarneleKlaviatura_1.0-debug.apk   # boot, install, select the keyboard
+adb -s emulator-5554 shell am start -n dev.imbrasas.varnele/.MainActivity            # this repo's test app: a text field
+python3 eval/emulator_type.py "mano drakonas valgo morkas. "                          # type by tapping the keys
+adb -s emulator-5554 logcat -s Varnele:V                                              # what Varnelė did, per word
+```
+
+Always pass `-s emulator-5554`, so a connected phone is never touched. The test app's field starts
+with a sample text: tap it (540, 530), `input keyevent 123` moves to the end. Read the field with
+`uiautomator dump` (its EditText `text=`), the strip from `predict …` / `ghost …` lines in the log or a
+screenshot (`adb -s emulator-5554 exec-out screencap -p > s.png`).
+
 ## Architecture and key decisions
 
 1. **Lexicon = ispell-lt stems + flags**, our own paradigms generate every form
@@ -492,15 +509,14 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   `androidComponents.sdkComponents.sdkDirectory` + `android.ndkVersion`.
 - `android:supportedAttributes` in spellchecker.xml is not recognised by SDK 35.
 - targetSdk 35+ is edge-to-edge: apply window insets (status bar, cutout, ime).
-- **Android emulator** (installed 2026-10-22: `~/Library/Android/sdk/cmdline-tools/latest`, `emulator`,
-  AVD `varnele_test` = Pixel 7, API 35 google_apis arm64): `~/Library/Android/sdk/emulator/emulator
-  -avd varnele_test -no-snapshot -no-audio -no-boot-anim &`, then `adb -s emulator-5554 …`. After
-  `adb install -r` of the keyboard the system falls back to Gboard: `adb shell ime set
-  dev.imbrasas.varnele.keyboard.debug/helium314.keyboard.latin.LatinIME` again and check
-  `dumpsys input_method | grep mInputShown` before tapping keys. With the number row on, a 1080×2400
-  screen has the letter rows at y 1767 / 1905 / 2043 (`q` x 54, step 108; `a` x 108; `z` x 216), space
-  (648, 2181). `run-as dev.imbrasas.varnele.keyboard.debug cat files/varnele_user.txt` reads the
-  learned counts.
+- **Android emulator** (the default test device, see Commands; installed 2026-10-22 with
+  `cmdline-tools/latest/bin/sdkmanager --install emulator "system-images;android-35;google_apis;arm64-v8a"`
+  and `avdmanager create avd -n varnele_test -k … -d pixel_7`). Cold boot + install ~25 s. After
+  `adb install -r` of the keyboard the system falls back to Gboard: `emulator_ready.sh` selects ours
+  again; if taps type nothing, the keyboard is hidden (`dumpsys input_method | grep mInputShown`: tap
+  the field). `input keycombination 113 29` (ctrl+A) to clear a field works only sometimes; force-stop
+  the test app instead (`am force-stop dev.imbrasas.varnele`, it restarts with its sample text).
+  `run-as dev.imbrasas.varnele.keyboard.debug cat files/varnele_user.txt` reads the learned counts.
 - Galaxy Z Fold7 has two displays: `screencap` needs a display id; use
   `uiautomator dump` to read the screen as text instead.
 - Wireless adb drops regularly; re-check `adb devices` before installing.
@@ -678,7 +694,7 @@ Left deliberately:
   421, the ranking's lemma frequency decides); with the 600 articles it was `žiuri`.
 - `adb install` waits forever when wireless adb has dropped: reconnect first
   (`adb mdns services`, then `adb connect HOST:PORT`). The same happens when the phone
-  auto-locks on screen timeout. Run `eval/phone_ready.sh` before every phone step (and between
+  auto-locks on screen timeout. (Prefer the emulator, see Commands.) Run `eval/phone_ready.sh` before every phone step (and between
   a long build and its install): it reconnects through mDNS, checks the screen is awake and
   unlocked, limits every adb call to 8 s and fails fast with the reason, so ask the owner to
   unlock instead of waiting. Wrap other adb calls with `perl -e 'alarm 8; exec @ARGV' adb …`
