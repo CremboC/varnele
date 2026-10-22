@@ -68,6 +68,7 @@ python3 eval/build_freq.py [--conv-weight W]       # Wikipedia + conversational 
 python3 eval/build_ngrams.py [--conv-weight W]     # the same -> data/bigrams.tsv (pairs seen 10+ times; then export)
 python3 eval/predict_sim.py                        # next word among the top 3 predictions, same 300 sentences
                                                    # --learn: the user model learns the test set in order first
+python3 eval/predict_grammar.py [--corpus DIR]     # top 3 after prepositions/adjectives: how many break the case or agreement
 python3 eval/clean_conv.py                         # what cleaning repairs/drops in corpus/raw/{opensubtitles,tatoeba}, with examples
 python3 eval/extract_conv.py                       # cleaned -> corpus/conv/{subtitles,tatoeba} (tests), heldout.tsv, train/*.txt
 python3 eval/predict_sim.py --corpus corpus/conv/subtitles   # any of the four sims on dialogue; tatoeba: add --no-paragraph
@@ -349,6 +350,18 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   2nd after `drakonas`, after four times 1st; in a fresh text without it: `mano` first at a sentence
   start, `drakonas` after `Mano`, `valgo` after it; kept across a keyboard restart; Forget deletes the
   file and the strip is the corpus's again; switched off, the counts stay in the file but are not used.
+- **Grammar in predictions** (`Grammar::next_word` / `fits_next` / `refit_next` in `grammar.rs`, Rust
+  only, not in `check`, so not in parity; `Checker::grammar_rerank`): the last words before the cursor
+  can require a case. After a preposition (`prep_cases`, also typed without diacritics when unknown:
+  `i`) one of its cases; after an adjective (every reading A or P, a noun reading only of the same
+  lemma: `geras`; not definite forms, often nouns: `pėsčiųjų tiltas`; not capitalised: `Vytauto
+  Didžiojo universitete`; not kuris/question words/possessives) a word agreeing with it or a genitive
+  (`geras Lietuvos krepšininkas`); after preposition + adjectives the readings in its cases. Then the
+  language model's 30 best candidates: a word with a caseless reading is not judged (`per daug`, `apie
+  tai`, `su savo`); one that can't fit keeps 1% of its probability, a genitive after a preposition
+  that takes another case 30% (it may modify the object: `į Lietuvos sostinę`, `į šiaurės rytus`), and
+  its noun/adjective forms that fit join with their own probability (`eiti į` → `pietus, šiaurę,
+  rytus`, was `šiaurės` first). Predictions and the ghost both go through it. +0.1 ms per call.
 - **Data format v3**: freq, lemma_freq, the language model's word counts and its pairs (`"PREV WORD"` →
   count, `"PREV "` → total << 32 | distinct) are finite-state transducers (`rust/core/src/counts.rs`,
   `fst` crate), read in place: no hash map of 150k+ strings on the phone's heap. `export.py` pipes each
@@ -443,11 +456,18 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   The keyboard's predictions (`keyboard_predict`, cache ramp, conversational counts), before typing /
   after one letter: Tatoeba 13.0 / 44.9 → **19.2 / 47.1%**, subtitles 12.0 / 31.5 → **13.0 / 32.9%**,
   Wikipedia 16.5 / 32.0 → 15.7 / 30.4% (the filter drops `m` and names Varnelė doesn't know: `Reicho`,
-  `Freiburg`). 0.5 ms per call on the Mac after warm-up.
+  `Freiburg`). 0.5 ms per call on the Mac after warm-up (0.6 with the grammar).
+  Grammar in predictions (`eval/predict_grammar.py`, judged by the Python analyzer): top-3 predictions
+  breaking the case after a preposition Wikipedia 43 → 3 of 627, subtitles 34 → 2 of 492, Tatoeba
+  18 → 0 of 396; after an adjective 17 → 9 of 819, 4 → 0, 4 → 1 (the check also judges definite
+  adjectives, which predictions leave alone); the word typed in the top 3 after a preposition 10.0 → 10.5%, 7.9 → 8.5%, 16.7%, after
+  an adjective 30.4%, 11.3%, 39.1 → 41.3%. Overall before typing / after one letter: subtitles 13.0 /
+  32.9 → 13.0 / 33.0%, Tatoeba and Wikipedia unchanged (prepositions and adjectives are ~10% of words).
   Ghost (`predict_sim.py --ghost`, letters typed without diacritics): a shown ghost is the word being
-  typed 23.1% (Tatoeba), 16.3% (subtitles), 14.7% (Wikipedia) of the time; tapping the first right one
-  completes 75.2 / 59.5 / 62.8% of the words of 3+ letters and saves 21.7 / 14.7 / 19.9% of their
-  letters. On the Fold7: predictions 1–8 ms, the ghost 1–10 ms (34 ms after one letter before the
+  typed 23.4% (Tatoeba), 16.5% (subtitles), 14.8% (Wikipedia) of the time; tapping the first right one
+  completes 75.8 / 60.1 / 63.4% of the words of 3+ letters and saves 21.8 / 14.9 / 20.1% of their
+  letters (23.2 / 16.3 / 14.7%, 75.3 / 59.7 / 62.8%, 21.7 / 14.7 / 19.9% before the grammar).
+  On the Fold7: predictions 1–8 ms, the ghost 1–10 ms (34 ms after one letter before the
   frequent candidates came from the 2,000 most frequent words instead of every word with that letter;
   the typed-word test is a dictionary lookup, `check` guessed compounds for `se`); the strip shows
   `kod | kad | kod·ėl` (typed, autocorrection, ghost) and tapping the ghost commits `kodėl`.
@@ -535,8 +555,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   prototype). Started: `lm.rs` (bigrams + paragraph lemma cache, see the keyboard design section),
   used by swipe ranking and `predict_words`; the owner wants context from the whole sentence and
   paragraph. Done: the full Wikipedia dump, conversational text, predictions and the ghost in the
-  strip (keyboard design section). Next: phone-test the strip, inline ghost text, trigrams, the grammar
-  rules steering predictions (case after a preposition: `eiti į` predicts the genitive `šiaurės` first; agreement), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
+  strip, the grammar steering them (keyboard design section). Next: phone-test the strip, inline ghost
+  text, trigrams, more grammar in predictions (verb government: `laukiu` + genitive, objects after
+  TRANSITIVE_VERBS, numbers + genitive plural), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
   corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
   plus a per-user overlay learned on the phone from the *final* text (done 2026-10-22: "User
   language model" in the keyboard design; next: per-user trigrams if trigrams land, learning which
@@ -751,3 +772,5 @@ Left deliberately:
     `predictNative`/`ghostNative`, serve `ghost`, `predict_sim.py --ghost`); paragraph cache faded in by length
 22. user language model learned on the phone from the final text (`user.rs`, JNI `user*Native`, serve
     `learn`/`forget`, `--learn` in predict_sim.py and swipe_sim.py)
+23. grammar in predictions: case after prepositions, agreement after adjectives (`grammar_rerank`,
+    eval/predict_grammar.py)

@@ -1757,3 +1757,182 @@ impl Grammar {
         issues.into_values().collect()
     }
 }
+
+/// What the words before the cursor require of the next word, for the keyboard's predictions
+/// (Rust only, like the language model: no Python twin, not part of `check`). After a
+/// preposition, one of its cases (`į` → `šiaurę`, not `šiaurės`); after an adjective, a word
+/// agreeing with it or a genitive modifier (`gražią` → `dieną`; `geras Lietuvos krepšininkas`);
+/// after a preposition and adjectives, both (`į gražią` → `dieną`).
+pub struct NextWord {
+    cases: Option<&'static [&'static str]>,
+    agree: Vec<Reading>,
+}
+
+impl Grammar {
+    /// The requirement the end of `context` puts on the next word, if any.
+    pub fn next_word(an: &Analyzer, context: &str) -> Option<NextWord> {
+        let c = Grammar::default();
+        let g = G { an, c: &c };
+        // the last words, as long as only spaces separate them (and the cursor)
+        let mut words: Vec<String> = Vec::new();
+        let mut rest = context;
+        loop {
+            let t = rest.trim_end();
+            let word_start = t.char_indices().rev().take_while(|(_, c)| c.is_alphabetic()).last().map(|(i, _)| i);
+            let Some(s) = word_start else { break };
+            words.push(t[s..].to_string());
+            rest = &t[..s];
+            if words.len() == 4 || !rest.ends_with(|c: char| c.is_whitespace()) {
+                break;
+            }
+        }
+        let prep_of = |w: &str| -> Option<&'static str> {
+            if prep_cases(w).is_some() {
+                PREP_LIST.iter().find(|p| **p == w).copied()
+            } else if an.analyze(w).is_empty() {
+                let f = fold(w);
+                PREP_LIST.iter().find(|p| fold(p) == f).copied()
+            } else {
+                None
+            }
+        };
+        let first = lower(words.first()?);
+        if let Some(p) = prep_of(&first) {
+            return Some(NextWord { cases: prep_cases(p), agree: Vec::new() });
+        }
+        // adjectives, walking left: each must agree with the one after it
+        let mut want: Vec<Reading> = Vec::new();
+        let mut cases = None;
+        for (k, written) in words.iter().enumerate() {
+            let w = lower(written);
+            if k > 0 {
+                if let Some(p) = prep_of(&w) {
+                    cases = prep_cases(p);
+                    break;
+                }
+            }
+            // a capital is part of a name (Vytauto Didžiojo universitete)
+            let Some(rs) = g.adjective(&w).filter(|_| first_lower(written)) else { break };
+            want = if k == 0 { rs } else { want.into_iter().filter(|a| rs.iter().any(|r| agree(a, r))).collect() };
+            if want.is_empty() {
+                return None; // they don't agree: not a phrase we understand
+            }
+        }
+        if let Some(cs) = cases {
+            want.retain(|r| cs.contains(&r.case));
+        }
+        if want.is_empty() { None } else { Some(NextWord { cases: None, agree: want }) }
+    }
+
+    /// Whether `w` (lowercase) can come next: None when one of its readings has no case (verbs,
+    /// adverbs, particles, personal pronouns: `per daug`, `apie tai`, `su savo`), which the
+    /// requirement doesn't judge.
+    pub fn fits_next(an: &Analyzer, nw: &NextWord, w: &str) -> Option<Fit> {
+        let c = Grammar::default();
+        let g = G { an, c: &c };
+        let an = g.case_analyses(w);
+        let rs: Vec<Reading> = an.iter().flat_map(|a| g.readings(std::slice::from_ref(a))).collect();
+        if rs.is_empty() || an.iter().any(|a| g.readings(std::slice::from_ref(a)).is_empty()) {
+            return None;
+        }
+        Some(if rs.iter().any(|r| nw.allows(r)) {
+            Fit::Yes
+        } else if nw.cases.is_some() && rs.iter().any(|r| r.case == "gen") {
+            Fit::Modifier
+        } else {
+            Fit::No
+        })
+    }
+
+    /// Forms of `w` (lowercase) that fit where it doesn't: the same noun or adjective in the
+    /// case (and for agreement the number) required: šiaurės → šiaurę after `į`.
+    pub fn refit_next(an: &Analyzer, nw: &NextWord, w: &str) -> Vec<String> {
+        let c = Grammar::default();
+        let g = G { an, c: &c };
+        let mut out: Vec<String> = Vec::new();
+        for a in g.case_analyses(w) {
+            let parts = g.parts(&a);
+            if !matches!(parts[0].as_str(), "N" | "A") {
+                continue;
+            }
+            let Some(r) = g.readings(std::slice::from_ref(&a)).into_iter().next() else { continue };
+            let targets: Vec<(&str, Option<&str>)> = match nw.cases {
+                Some(cs) => cs.iter().map(|c| (*c, r.number)).collect(),
+                None => nw
+                    .agree
+                    .iter()
+                    .filter(|x| x.gender.is_none() || r.gender.is_none() || x.gender == r.gender)
+                    .map(|x| (x.case, x.number.or(r.number)))
+                    .collect(),
+            };
+            for (case, number) in targets {
+                if case == "voc" {
+                    continue;
+                }
+                let tag: Vec<&str> = parts
+                    .iter()
+                    .map(|p| match p.as_str() {
+                        p if CASES.contains(&p) => case,
+                        "sg" | "pl" => number.unwrap_or(p),
+                        p => p,
+                    })
+                    .collect();
+                for f in g.inflect(&a, &tag.join(".")) {
+                    if f != w && !out.contains(&f) && Grammar::fits_next(an, nw, &f) == Some(Fit::Yes) {
+                        out.push(f);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Fit {
+    Yes,
+    /// a genitive after a preposition that doesn't take it: it may modify the object to come
+    /// (į Lietuvos sostinę, su Rusijos rinktine, į šiaurės rytus)
+    Modifier,
+    No,
+}
+
+impl NextWord {
+    fn allows(&self, r: &Reading) -> bool {
+        match self.cases {
+            Some(cs) => cs.contains(&r.case),
+            None => r.case == "gen" || self.agree.iter().any(|a| agree(a, r)),
+        }
+    }
+}
+
+impl<'a> G<'a> {
+    /// The analyses of a lowercase word, or of the name it is the lowercase of (lietuvos).
+    fn case_analyses(&self, w: &str) -> Vec<Analysis> {
+        let a = self.an.analyze_exact(w);
+        if a.is_empty() { self.an.analyze_exact(&capitalize(w)) } else { a }
+    }
+
+    /// The case readings of a word that is only an adjective or a determiner (gražią, kitą,
+    /// tokį): no verb, adverb or personal pronoun reading, no noun of its own lemma (a
+    /// substantivised adjective counts: geras), not a relative or question word, not a definite
+    /// form (those are often nouns: pėsčiųjų tiltas).
+    fn adjective(&self, w: &str) -> Option<Vec<Reading>> {
+        if KURIS.contains(&w) || INTERROGATIVES.contains(&w) || POSSESSIVES.contains(&w) {
+            return None;
+        }
+        let an = self.an.analyze_exact(w);
+        let adj_lemma = |l: &str| an.iter().any(|a| matches!(self.parts(a)[0].as_str(), "A" | "P") && a.lemma == l);
+        let ok = !an.is_empty()
+            && an.iter().all(|a| match self.parts(a)[0].as_str() {
+                "A" | "P" => a.lemma != "kas" && !self.tag(a).contains(".def"),
+                "N" => adj_lemma(&a.lemma),
+                _ => false,
+            });
+        if !ok {
+            return None;
+        }
+        let rs: Vec<Reading> = self.readings(&an).into_iter().filter(|r| r.pos == Pos::Adj && r.case != "voc").collect();
+        if rs.is_empty() { None } else { Some(rs) }
+    }
+}

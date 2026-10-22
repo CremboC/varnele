@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::analyzer::{Analyzer, Status};
 use crate::data::Data;
-use crate::grammar::{Grammar, Issue};
+use crate::grammar::{Fit, Grammar, Issue};
 use crate::text::*;
 
 pub type Finding = Issue;
@@ -38,6 +38,13 @@ pub struct Checker {
 /// The ghost adds the next word from this probability: its top word is right 64–75% of the time
 /// there on the dialogue test sets (2% of words).
 const GHOST_NEXT_P: f64 = 0.5;
+/// A prediction the grammar rules out (a genitive after `į`) keeps this share of its probability.
+const MISFIT: f64 = 0.01;
+/// A genitive after a preposition that takes another case keeps this share: it may modify the
+/// object to come (į Lietuvos sostinę).
+const MODIFIER: f64 = 0.3;
+/// Candidates the grammar re-ranks when the words before require a case.
+const GRAMMAR_CANDIDATES: usize = 30;
 
 const TLDS: &[&str] = &["lt", "com", "org", "net", "eu", "gov", "edu", "info"];
 
@@ -332,12 +339,43 @@ impl Checker {
         self.predict_in(&self.an.lm_context(context), context, prefix, n, formal)
     }
 
+    /// The language model's candidates, re-ranked by what the words before require (see
+    /// [`Grammar::next_word`]): a word that can't fit is demoted below the ones that can, and its
+    /// forms that fit join in (eiti į šiaurės -> šiaurę).
+    fn grammar_rerank(&self, ctx: &crate::lm::LmContext, context: &str, prefix: &str, n: usize) -> Vec<(String, f64)> {
+        let Some(nw) = Grammar::next_word(&self.an, context) else {
+            return self.an.predict_words(ctx, context, &lower(prefix), n * 3);
+        };
+        let fp = fold(&lower(prefix));
+        let mut out: Vec<(String, f64)> = Vec::new();
+        for (w, p) in self.an.predict_words(ctx, context, &lower(prefix), GRAMMAR_CANDIDATES) {
+            let fit = Grammar::fits_next(&self.an, &nw, &w);
+            if matches!(fit, None | Some(Fit::Yes)) {
+                out.push((w, p));
+                continue;
+            }
+            for f in Grammar::refit_next(&self.an, &nw, &w) {
+                if fold(&f).starts_with(&fp) && clen(&f) > clen(prefix) && !out.iter().any(|o| o.0 == f) {
+                    let pf = self.an.p_predict(ctx, &f);
+                    out.push((f, pf));
+                }
+            }
+            out.push((w, p * if fit == Some(Fit::Modifier) { MODIFIER } else { MISFIT }));
+        }
+        // a form can come twice: as a candidate and refitted from another
+        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then_with(|| a.0.cmp(&b.0)));
+        let mut seen = crate::fx::FxSet::default();
+        out.retain(|(w, _)| seen.insert(w.clone()));
+        out.truncate(n * 3);
+        out
+    }
+
     fn predict_in(&self, ctx: &crate::lm::LmContext, context: &str, prefix: &str, n: usize, formal: bool) -> Vec<(String, f64)> {
         let written: crate::fx::FxMap<String, &str> =
             context.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty()).map(|w| (lower(w), w)).collect();
         let fp = fold(&lower(prefix));
         let mut out: Vec<(String, f64)> = Vec::new();
-        for (w, p) in self.an.predict_words(ctx, context, &lower(prefix), n * 3) {
+        for (w, p) in self.grammar_rerank(ctx, context, prefix, n) {
             let known = |w: &str| self.an.check(w).status != Status::Unknown;
             let w = match self.an.check(&w) {
                 // the completion must still begin with what was typed
