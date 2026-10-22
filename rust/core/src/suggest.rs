@@ -106,8 +106,8 @@ impl Analyzer {
                 if !first_lower(&c) || an.is_empty() {
                     return None;
                 }
-                let lf = an.iter().map(|a| *self.data.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0)).max().unwrap_or(0);
-                let f = *self.data.freq.get(&c).unwrap_or(&0);
+                let lf = an.iter().map(|a| self.data.lemma_freq.get(&lower(&a.lemma))).max().unwrap_or(0);
+                let f = self.data.freq.get(&c);
                 let shifted = fold(&c).chars().zip(&typed).filter(|(a, b)| a != *b).count();
                 Some((-((lf + f) as i64), shifted, c))
             })
@@ -124,12 +124,12 @@ impl Analyzer {
         let lf = self
             .analyze_exact(cand)
             .iter()
-            .map(|a| *self.data.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0))
+            .map(|a| self.data.lemma_freq.get(&lower(&a.lemma)))
             .max()
             .unwrap_or(0);
         // a negated form is as common as the plain one: neturėtų counts like turėtų
-        let f = match *self.data.freq.get(&cl).unwrap_or(&0) {
-            0 => cl.strip_prefix("ne").and_then(|r| self.data.freq.get(r)).copied().unwrap_or(0),
+        let f = match self.data.freq.get(&cl) {
+            0 => cl.strip_prefix("ne").map_or(0, |r| self.data.freq.get(r)),
             f => f,
         };
         let bonus = 0.12 * (1.0 + f as f64).log10() + 0.1 * (1.0 + lf as f64).log10();

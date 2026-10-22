@@ -13,6 +13,7 @@
 
 pub mod analyzer;
 pub mod checker;
+pub mod counts;
 pub mod data;
 pub mod derivation;
 pub mod fx;

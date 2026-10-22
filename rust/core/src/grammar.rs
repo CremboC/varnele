@@ -361,11 +361,11 @@ impl<'a> G<'a> {
     }
 
     fn lemma_freq(&self, a: &Analysis) -> u32 {
-        *self.an.data.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0)
+        self.an.data.lemma_freq.get(&lower(&a.lemma))
     }
 
     fn freq(&self, w: &str) -> u32 {
-        *self.an.data.freq.get(&lower(w)).unwrap_or(&0)
+        self.an.data.freq.get(&lower(w))
     }
 
     fn variants_of(&self, w: &str) -> Vec<String> {
@@ -447,8 +447,15 @@ impl<'a> G<'a> {
             return false;
         }
         let (mut verb, mut other) = (0u32, 0u32);
+        // a prefix the rules added counts with the dictionary's own prefixed verb if there is one:
+        // apsiuvu is ap+siuva only through apsiuva (never seen), not through siuva (common)
+        let spelt = |a: &Analysis| lower(&format!("{}{}", a.prefix, a.lemma));
         for a in analyses {
-            let f = *self.an.data.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0);
+            let shortest = analyses.iter().filter(|b| spelt(b) == spelt(a)).map(|b| clen(&b.prefix)).min().unwrap_or(0);
+            if clen(&a.prefix) > shortest {
+                continue;
+            }
+            let f = self.an.data.lemma_freq.get(&lower(&a.lemma));
             if self.tag(a).starts_with("V.") {
                 verb = verb.max(f);
             } else {

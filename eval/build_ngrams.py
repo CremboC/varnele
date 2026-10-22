@@ -1,4 +1,5 @@
-"""Count word pairs in corpus/freq (never the test set) -> data/bigrams.tsv
+"""Count word pairs in the training text (eval/training.py: the Wikipedia dump, else corpus/freq;
+never the test set) -> data/bigrams.tsv
 
 Words as the keyboard sees them (runs of letters, lowercased); "<s>" starts a sentence. First
 the words seen MIN+ times "<TAB>WORD<TAB>N"; then for every previous word: one line "PREV<TAB><TAB>TOTAL<TAB>DISTINCT" (all its pairs, for smoothing),
@@ -6,7 +7,7 @@ then its pairs seen at least MIN times "PREV<TAB>WORD<TAB>N". `python3 -m varnel
 them into varnele.bin for the keyboard's language model (`P(word | previous word)`, backing off
 to word frequency). Sentences of reference boilerplate (archive links) are left out.
 
-    python3 eval/build_ngrams.py [--min 2]
+    python3 eval/build_ngrams.py [--min 10]
 """
 import argparse
 import collections
@@ -15,6 +16,9 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "eval"))
+from training import texts  # noqa: E402
+
 WORD = re.compile(r"[^\W\d_]+")
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
 START = "<s>"
@@ -32,26 +36,28 @@ def sentences(text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--min", type=int, default=2)
+    ap.add_argument("--min", type=int, default=10, help="pairs seen fewer times are left out (5: +3.5 MB, +0.4 points swipe)")
     a = ap.parse_args()
+    ids = {START: 0}       # words as numbers: tens of millions of pairs fit in memory
     pairs = collections.Counter()
-    for p in sorted((ROOT / "corpus" / "freq").glob("*.txt")):
-        lines = p.read_text("utf-8").splitlines()[2:]   # title, blank line
-        text = "\n".join(l for l in lines if "\\displaystyle" not in l and "{\\" not in l)
+    for text in texts():
         for words in sentences(text):
-            prev = START
+            prev = 0
             for w in words:
-                pairs[prev, w] += 1
-                prev = w
+                i = ids.setdefault(w, len(ids))
+                pairs[prev << 32 | i] += 1
+                prev = i
+    word = list(ids)
     total, distinct, kept = collections.Counter(), collections.Counter(), collections.defaultdict(list)
-    for (v, w), n in pairs.items():
+    for k, n in pairs.items():
+        v, w = word[k >> 32], word[k & 0xFFFFFFFF]
         total[v] += n
         distinct[v] += 1
         if n >= a.min:
             kept[v].append((w, n))
     words = collections.Counter()
-    for (v, w), n in pairs.items():
-        words[w] += n
+    for k, n in pairs.items():
+        words[word[k & 0xFFFFFFFF]] += n
     with open(ROOT / "data" / "bigrams.tsv", "w") as f:
         for w, n in sorted(words.items(), key=lambda wn: (-wn[1], wn[0])):
             if n >= a.min:

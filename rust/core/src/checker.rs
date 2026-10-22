@@ -255,10 +255,10 @@ impl Checker {
         let d = &self.an.data;
         let lw = lower(word);
         let chars: Vec<char> = lw.chars().collect();
-        if chars.len() < 2 || chars.len() > 4 || !first_lower(word) || d.freq.get(&lw).copied().unwrap_or(0) > 0 {
+        if chars.len() < 2 || chars.len() > 4 || !first_lower(word) || d.freq.get(&lw) > 0 {
             return None;
         }
-        if self.an.analyze(word).iter().any(|a| d.lemma_freq.get(&lower(&a.lemma)).copied().unwrap_or(0) > 0) {
+        if self.an.analyze(word).iter().any(|a| d.lemma_freq.get(&lower(&a.lemma)) > 0) {
             return None;
         }
         let mut best: Option<(u32, String)> = None;
@@ -267,7 +267,7 @@ impl Checker {
                 let mut v = chars.clone();
                 v[i] = k;
                 let cand: String = v.into_iter().collect();
-                let f = d.freq.get(&cand).copied().unwrap_or(0);
+                let f = d.freq.get(&cand);
                 if f >= COMMON && best.as_ref().map_or(true, |b| f > b.0) && !self.an.analyze_exact(&cand).is_empty() {
                     best = Some((f, cand));
                 }
@@ -282,11 +282,11 @@ impl Checker {
         const CASE_PARTS: &[&str] = &["nom", "gen", "dat", "acc", "ins", "loc", "voc"];
         let d = &self.an.data;
         let lemma_freq = |w: &str| {
-            self.an.analyze(w).iter().map(|a| *d.lemma_freq.get(&lower(&a.lemma)).unwrap_or(&0)).max().unwrap_or(0)
+            self.an.analyze(w).iter().map(|a| d.lemma_freq.get(&lower(&a.lemma))).max().unwrap_or(0)
         };
         let lw = lower(word);
         // a capitalised word is also its lowercase self: Kuriu is the name Kurys, but also kuriu (I create)
-        if d.freq.get(&lw).copied().unwrap_or(0) > 0 || lemma_freq(word) > 0 || lemma_freq(&lw) > 0 {
+        if d.freq.get(&lw) > 0 || lemma_freq(word) > 0 || lemma_freq(&lw) > 0 {
             return None;
         }
         let lowercase = first_lower(word);
@@ -304,7 +304,7 @@ impl Checker {
                 })
             })
             .map(|c| {
-                let f = d.freq.get(&lower(&c)).copied().unwrap_or(0);
+                let f = d.freq.get(&lower(&c));
                 (lemma_freq(&c) + f, c)
             })
             .filter(|(score, _)| *score >= 3)

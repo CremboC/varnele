@@ -11,3 +11,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "varnele"
 path = "src/main.rs"
+
+[dependencies]
+fst = "0.4"

@@ -10,25 +10,29 @@ Format (little-endian). str = u16 byte length + UTF-8 bytes. Sections in order:
   signatures    u32 n, (u16 m, (str suffix, u8 k, u16 tag*k)*m)*n
   stems         u32 n, (str stem, u16 m, (u16 sig, u32 entry)*m)*n     in index order
   blacklist     u32 n, str*n
-  freq          u32 n, (str, u32)*n
-  lemma_freq    u32 n, (str, u32)*n
+  freq          table     word -> count
+  lemma_freq    table     lemma -> count
   abbreviations u32 n, str*n
   deriv_stems   u32 n, str*n
   suffix_rests  u32 n, (str rest, str label)*n
   head_rests    u32 n, str*n
-  words         u32 n, (str, u32)*n                    word counts for the language model
-  bigrams       u32 n, (str prev, u32 total, u32 distinct, u32 m, (str word, u32 count)*m)*n
+  words         table     word -> count, for the language model
+  pairs         table     "PREV WORD" -> count; "PREV " -> total << 32 | distinct followers
                 (both from data/bigrams.tsv, eval/build_ngrams.py; "<s>" = sentence start)
+table = u32 byte length + a finite-state transducer (Rust `fst` crate), built by the Rust
+binary's `fst` subcommand: build it first (cargo build --release --manifest-path rust/Cargo.toml).
 """
 
 import struct
+import subprocess
 
 from .derivation import Derivation
 from .index import Index
 from .lexicon import ROOT
 from .suggest import _load_freq
 
-VERSION = 2
+VERSION = 3
+RUST = ROOT / "rust" / "target" / "release" / "varnele"
 KINDS = ["noun", "adj", "pron", "num", "inf", "prs", "pst", "word"]
 OUT = ROOT / "data" / "varnele.bin"
 
@@ -45,6 +49,15 @@ class Writer:
 
     def u32(self, x):
         self.buf += struct.pack("<I", x)
+
+    def table(self, items):
+        """(key, count) pairs as an FST, built by the Rust binary."""
+        if not RUST.exists():
+            raise SystemExit(f"{RUST} not found: cargo build --release --manifest-path rust/Cargo.toml")
+        data = "".join(f"{k}\t{v}\n" for k, v in items).encode()
+        out = subprocess.run([str(RUST), "fst"], input=data, capture_output=True, check=True).stdout
+        self.u32(len(out))
+        self.buf += out
 
     def str(self, s):
         b = s.encode("utf-8")
@@ -93,11 +106,7 @@ def export(path=OUT):
 
     w.strs(sorted(idx.blacklist))
     for name in ("freq.tsv", "lemma_freq.tsv"):
-        f = _load_freq(name)
-        w.u32(len(f))
-        for word, n in f.items():
-            w.str(word)
-            w.u32(n)
+        w.table(_load_freq(name).items())
     w.strs(abbrev)
     w.strs(sorted(deriv.stems))
     w.u32(len(deriv.suffix_rests))
@@ -106,7 +115,7 @@ def export(path=OUT):
         w.str(sorted(labels)[0])
     w.strs(sorted(deriv.head_rests))
 
-    words, bigrams = {}, {}   # word -> count; prev -> (total, distinct, [(word, count)])
+    words, pairs = {}, {}   # word -> count; "PREV WORD" -> count, "PREV " -> total << 32 | distinct
     path_bg = ROOT / "data" / "bigrams.tsv"
     if path_bg.exists():
         for line in path_bg.read_text("utf-8").splitlines():
@@ -114,22 +123,11 @@ def export(path=OUT):
             if not v:
                 words[word] = int(a)
             elif not word:
-                bigrams[v] = (int(a), int(b[0]), [])
+                pairs[f"{v} "] = int(a) << 32 | int(b[0])
             else:
-                bigrams[v][2].append((word, int(a)))
-    w.u32(len(words))
-    for word, n in words.items():
-        w.str(word)
-        w.u32(n)
-    w.u32(len(bigrams))
-    for v, (total, distinct, words) in bigrams.items():
-        w.str(v)
-        w.u32(total)
-        w.u32(distinct)
-        w.u32(len(words))
-        for word, n in words:
-            w.str(word)
-            w.u32(n)
+                pairs[f"{v} {word}"] = int(a)
+    w.table(words.items())
+    w.table(pairs.items())
 
     path.write_bytes(bytes(w.buf))
     return path, len(w.buf)

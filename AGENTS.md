@@ -32,12 +32,15 @@ varnele/        Python: lexicon loading, paradigms, analyzer, suggestions, gramm
 rust/core       Rust runtime: same behaviour, loads data/varnele.bin   (crate "varnele")
 rust/android    JNI bridge (cdylib libvarnele_android.so, data embedded via include_bytes!)
 android/        Stand-alone app: system spell checker service + test screen
-eval/           evaluate.py (vs Hunspell), restore.py, parity.py, keyboard_sim.py, corpus fetch/freq
+eval/           evaluate.py (vs Hunspell), restore.py, parity.py, keyboard_sim.py, corpus fetch/freq,
+                extract_wiki.py + training.py (dump text), build_ngrams.py, swipe_sim.py, predict_sim.py
 tests/          unittest: test_morphology.py, test_grammar.py
 vendor/ispell-lt  BSD word list (stems + class flags only; its affix rules are NOT used)
 data/           extra.txt (our lexicon additions), abbreviations.txt, freq.tsv, lemma_freq.tsv,
                 varnele.bin (generated, git-ignored), index.pkl (cache, git-ignored)
-corpus/         Wikipedia articles (git-ignored): test/ (150, evaluation only), freq/ (600, frequencies)
+corpus/         Wikipedia (git-ignored): test/ (150 articles, evaluation only), freq/ (600 articles, the old
+                frequency corpus), wiki/ (the lt dump + text/ from extract_wiki.py: 213k articles, 31M words,
+                the test articles left out; eval/training.py counts on it when present, else on freq/)
 ```
 
 ## Commands
@@ -46,7 +49,8 @@ corpus/         Wikipedia articles (git-ignored): test/ (150, evaluation only), 
 python3 -m unittest discover tests                 # all tests (must stay green)
 python3 -m varnele check FILE [--formal] [--no-grammar]
 python3 -m varnele words WORD...                   # analyses + suggestions
-python3 -m varnele export                          # -> data/varnele.bin (needed by Rust/Android)
+python3 -m varnele export                          # -> data/varnele.bin (needed by Rust/Android); build the Rust
+                                                   # binary first: count tables are built by `varnele fst`
 cargo build --release --manifest-path rust/Cargo.toml
 rust/target/release/varnele check FILE | json FILE | words W... | kb WORD [CONTEXT...] | bench
 python3 eval/parity.py                             # Rust must equal Python: 100% identical findings
@@ -58,7 +62,9 @@ rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tC
                                                    # "gesture\tX,Y X,Y…\tCAP\tN\tCONTEXT" / "predict\tCONTEXT\tPREFIX\tN" (used by the sims)
 rust/target/release/varnele swipe WORD...         # decode each word's ideal swipe path
 python3 eval/swipe_sim.py [--noise 0.3] [--cut 0.4] # restore.py's 300 sentences swiped through the gesture decoder + keyboard model
-python3 eval/build_ngrams.py                       # corpus/freq word pairs -> data/bigrams.tsv (then export)
+python3 eval/extract_wiki.py                       # corpus/wiki/ltwiki-latest-pages-articles.xml.bz2 -> corpus/wiki/text
+python3 eval/build_freq.py                         # training text -> data/freq.tsv, lemma_freq.tsv (words seen 10+ times)
+python3 eval/build_ngrams.py                       # training text -> data/bigrams.tsv (pairs seen 10+ times; then export)
 python3 eval/predict_sim.py                        # next word among the top 3 predictions, same 300 sentences
 .venv/bin/python eval/evaluate.py                  # vs Hunspell lt_LT (needs spylls + make myspell)
 ```
@@ -131,8 +137,8 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 | context ranking of unknown words (reorders suggestions only) | both adjective and noun unknown: each keeps the candidates agreeing with the other's (`dalyvaujanciu saliu` → `dalyvaujančių`); after a TRANSITIVE_VERBS verb (itself possibly unknown, by its candidates) accusative candidates first (`rado salyga` → `sąlygą`); genitive-before-noun for unknown words, all genitive candidates (`sienu klausimas` → `sienų`) | allowed candidates keep the suggester's order (`sienų`, not `šienų`); not when the adjective's candidates include a finite verb (`% sudare baltaodziai` → `sudarė`); no infinitive/verb in the object phrase (`turi buti`); compared with the rule for known words: an unknown head counts by its candidates, the head's diacritic twins count for the shared-case check (`zaidimu bendrove`), genitive chains allowed, no corpus-evidence guard for an instrumental after a genitive; any verb instead of TRANSITIVE_VERBS was worse (`sudaro dirbama zeme`) |
 | preposition that became a verb | `kabo virs stalo` → `virš` | the phrase after it takes the preposition's case and the clause already has a verb before it (`Mama virs sriubos` = will boil) |
 | negation | `neturiu laiką` → `laiko`; a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas, a one-word phrase with an adverb reading (`neatėjo laiku` = on time) |
-| subject | `aš buvo` → `buvau`, `aš vakar buvo`, `jis jau einu` | pronoun + finite verb, up to 2 adverb/particle-only words between (not pronouns, connectives, prepositions, `ne`, `tai`); not a coordinated subject (`aš ir jis buvome`). An unknown word after the pronoun ranks verbs of that person first (`jis ziuri` → `žiūri`, not the jury `žiuri`, which the Wikipedia corpus prefers) |
-| object (1st/2nd person verb; 3rd person transitive verb with its subject before it) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą`, `Jonas mato namas`, `jis vakar nupirko nauja knyga`, `mačiau labai gražus namas` (adverbs between) | 3rd person: only TRANSITIVE_VERBS with a real prefix, not reflexive (`atsirado` = atsi+rado); the subject is jis/ji/jie or a noun whose most frequent lemma is nominative (`Jonas`, not the name Jona), not coordinated (`Jonas ir Petras`); no infinitive in the phrase (`turėtų būti suprantama`), no lone adverb (`atsirado kartu`); copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`). After a transitive verb the phrase may hold participles and an instrumental-only word takes its accusative diacritic twin (`radau nukritusia sagute` → `nukritusią sagutę`) when the whole phrase is instrumental or the head is already accusative (keyboard order); same POS/number/gender (`tuo metu` ≠ `metų`); not `tapusią vienuole` |
+| subject | `aš buvo` → `buvau`, `aš vakar buvo`, `jis jau einu` | pronoun + finite verb, up to 2 adverb/particle-only words between (not pronouns, connectives, prepositions, `ne`, `tai`); not a coordinated subject (`aš ir jis buvome`). An unknown word after the pronoun ranks verbs of that person first (`jis ziuri` → `žiūri`, not the jury `žiuri`, more frequent on Wikipedia) |
+| object (1st/2nd person verb; 3rd person transitive verb with its subject before it) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą`, `Jonas mato namas`, `jis vakar nupirko nauja knyga`, `mačiau labai gražus namas` (adverbs between) | 3rd person: only TRANSITIVE_VERBS with a real prefix, not reflexive (`atsirado` = atsi+rado); the subject is jis/ji/jie or a noun whose most frequent lemma is nominative (`Jonas`, not the name Jona), not coordinated (`Jonas ir Petras`); no infinitive in the phrase (`turėtų būti suprantama`), no lone adverb (`atsirado kartu`); copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`). "Mostly a verb" skips a reading whose prefix the rules added when another reading with a shorter prefix spells the same prefixed lemma: `apsiuvu` (instrumental of apsiuvas) is ap+siuva only through the dictionary's apsiuva (never seen), not through the common siuva (`aukso spalvos apsiuvu žvaigždė` stays). After a transitive verb the phrase may hold participles and an instrumental-only word takes its accusative diacritic twin (`radau nukritusia sagute` → `nukritusią sagutę`) when the whole phrase is instrumental or the head is already accusative (keyboard order); same POS/number/gender (`tuo metu` ≠ `metų`); not `tapusią vienuole` |
 | relative | `žodžių kuriu aš rašau` → `kurių`; case from the clause verb: `knyga, kuria skaičiau` → `kurią` | needs a following finite verb (`dainas kuriu pats` stays); not when `kuriu` is the verb kurti: an object pronoun or `ir` + verb follows (`kuriu tai, kas`, `kuriu ir rašau`); the case fix needs a non-negated, non-reflexive TRANSITIVE_VERBS verb within 2 words (a transitive reading counts even if not "mostly a verb": `skaičiau`/`skaičius`); not `plunksna, kuria rašau`, `kuria didžiuojuosi` |
 | comma | `sakė kad` → `, kad`; before `net`/`ypač` + connective (`veikia, net jeigu`); indirect question after QUESTION_VERBS when a verb follows (`matau, ką man rašo`, not `ką nors`, `ką tik`), before kuris-forms and preps + kuris; demonstrative + kas-word (`tai, kas reikalinga`, `viską, ką turiu`) | `bet kas`, `kai kurie`, `kas nors` (also typed without diacritics: `koki nors`), `nors ir`, names/initials, after another connective; a kuris-form that is the verb kurti (`kuria ir parduoda`, `kuria baldus`, `kuri kuria`, `kuria tai`; `kuria ir` at the end waits for the next word); `Tai kas …?` at a sentence start |
 | comma (section 8) | parenthetical `Deja, …`, `Beje`, `Pavyzdžiui`, `Vadinasi`, `Kita vertus`, `Be abejo`, `Mano nuomone`, `Ko gero` at sentence start; `jis, deja, …` / `beje` / `pavyzdžiui` inside (both sides); greeting + address `Labas, Jonai, kaip…`, `Ačiū, drauge`; `…, negu` + verb within 3 words; repeated `nei…, nei`, `arba…, arba`, `Ar…, ar`; postposed participial phrase `žmogus, stovintis prie lango, žiūri`; lists `obuolius, kriaušes ir slyvas` | `Žinoma` only before a pronoun/verb (`Žinoma tik viena rūšis`); not after a connective; `Laba diena`, `Sveiki draugai` (agreeing adjective); mid-sentence `ar` = "or"; participle: not a nominative past participle (predicate `Pavadinimas kilęs`), not a nominative with no other verb in the sentence (`Laumės mėgstančios`), not if a capitalised word or agreeing noun follows within 3 words (`žygiavusia Aleksandro kariauna`), not genitive-only agreement; list: three lowercase nouns with no genitive reading sharing case+number, not time words, not after a modifier (`tomis pačiomis spalvomis ir`) |
@@ -234,14 +240,22 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - Gradle task `cargoBuildVarnele` builds the Rust lib for 4 ABIs from
   `../varnele` (or `-Pvarnele.dir=`) into `app/src/main/jniLibs` (git-ignored).
 
-- **Language model** (`rust/core/src/lm.rs`, keyboard only): P(word | previous word) from
-  corpus/freq word pairs (`eval/build_ngrams.py` → `data/bigrams.tsv` → varnele.bin, data version 2:
-  word counts tokenised like the keyboard, and per previous word its total, distinct followers and
-  the pairs seen 2+ times), absolute discounting (D 0.75) backing off to word frequency; `<s>` =
+- **Language model** (`rust/core/src/lm.rs`, keyboard only): P(word | previous word) from the
+  Wikipedia dump's word pairs (`eval/build_ngrams.py` → `data/bigrams.tsv` → varnele.bin: word counts
+  tokenised like the keyboard, and per previous word its total and distinct followers over all pairs,
+  then the pairs seen 10+ times), absolute discounting (D 0.75) backing off to word frequency; `<s>` =
   sentence start. Plus a paragraph cache: lemmas of the last 150 words, the form's share of its
   lemma (`Vilnius` earlier → `Vilniaus`), 10% of the probability for swipe, 30% for predictions.
   `Analyzer::predict_words` ranks followers of the previous word, the paragraph's words and
   frequent words by it. Not wired to the keyboard yet (no next-word strip or ghost text).
+- **Data format v3**: freq, lemma_freq, the language model's word counts and its pairs (`"PREV WORD"` →
+  count, `"PREV "` → total << 32 | distinct) are finite-state transducers (`rust/core/src/counts.rs`,
+  `fst` crate), read in place: no hash map of 150k+ strings on the phone's heap. `export.py` pipes each
+  table through `varnele fst`, so the Rust binary must be built before exporting. Lossless: every
+  evaluation is identical to the v2 hash-map format. Sizes at words 10+ / pairs 10+: freq 1.1 MB,
+  lemma_freq 0.2 MB, LM words 1.1 MB, pairs 3.5 MB (310k), the lexicon ~4.9 MB; varnele.bin 10.9 MB
+  (v2 with words 2+ was 20.2 MB). Words 2+ instead of 10+ changed no result; pairs 5+ adds 3.5 MB for
+  +0.2 points swipe, +0.8 / +2.0 prediction.
 
 ## Release builds and Google Play (keyboard)
 
@@ -273,8 +287,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 - Wikipedia (150 articles, 65k words): 20 context flags, **all real errors**
   (16 commas incl. `nariu, pasiekusiu tokį aukštą postą`, `kylanti grėsme`, `prastos kokybes`, `daugybę metu`,
-  `FIA Šiaurines Europos zonos`). The 600 freq articles: 84 flags (`kuri kuria`, `kurie kuria` no longer get a
-  comma; `pasteliniu spalvų deriniai`).
+  `FIA Šiaurines Europos zonos`); unchanged by the Wikipedia-dump frequencies once `apsiuvu` was fixed.
+  The 600 freq articles: 84 flags (`kuri kuria`, `kurie kuria` no longer get a comma; `pasteliniu spalvų
+  deriniai`); 86 with the dump frequencies, the new ones not yet reviewed.
 - Commas removed from the articles (`eval/commas.py`), new rules, right/wrong on test+freq:
   participial phrase 91/10 (8 of the 10 are commas missing in the articles), lists 27/0,
   parenthetical 31/0, address 2/0, negu 2/0, repeated connective 1/0. Old rules 2440/62
@@ -283,7 +298,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   better diacritic fixes (#1 correct 56.7% vs 40.0%), worse on keyboard typos
   (detect 89.3 vs 95.3%, #1 70.0 vs 76.0%).
 - Restoration typed word by word through the keyboard model (`eval/keyboard_restore.py`, same 300
-  sentences): 72.5% restored, 34.3% whole sentences right, 3 correct words changed (71.8%, 32.7% before
+  sentences): 74.0% restored, 36.0% whole sentences right, 2 correct words changed (`ari` → `aria`,
+  `ekspansija` → `ekspansiją`) with the Wikipedia-dump frequencies; 72.5%, 34.3%, 3 with the 600 articles (71.8%, 32.7% before
   the keyboard-order fixes `dalyvaujančių`, `teisės`, `Medžioklės`, `pažintinį`); the rare-twin
   rule makes the keyboard beat the checker (`metu` → `metų`, `siu` → `šių`, `padare` → `padarė`). The
   checker still gets 8 words the keyboard misses. Left on purpose: `žanru`, `papuošalu` after a genitive
@@ -294,12 +310,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   objects). The keyboard changes `kultūrinė ekspansija` to `kultūrinę ekspansiją`: autocorrect picks
   `kultūrinę` for `kulturine` on a frequency tie (0.008 vs 0.017) and the sentence fixer then makes
   the noun agree; it cannot tell autocorrected diacritics from typed ones.
-- Restoration (all diacritics stripped, 300 sentences): 63.1% → 68.8% with
-  context rules, 0 correct words changed (68.3% and 1 before the keyboard-order fixes; 67.7% before context ranking of unknown words, 66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
+- Restoration (all diacritics stripped, 300 sentences): 65.3% → 70.1% with
+  context rules, 0 correct words changed, with the Wikipedia-dump frequencies (63.1% → 68.8% with the
+  600 articles; 68.3% and 1 before the keyboard-order fixes; 67.7% before context ranking of unknown words, 66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
   checker; a most-frequent-spelling baseline gets 71.9%.
-- Rust: load 22 ms, correct word 0.001 ms, misspelling + suggestions ~0.8 ms,
-  sentence ~1.6 ms (Mac). Phone (Fold7): 0.05–0.8 ms valid words, 6–17 ms
-  unknown words with suggestions, data load ~110 ms. Data file 5.3 MB.
+- Rust: load 31 ms, correct word 0.001 ms, misspelling + suggestions ~0.9 ms,
+  sentence ~2.5 ms (Mac, data v3). Phone (Fold7, measured with the old 5.3 MB data): 0.05–0.8 ms valid
+  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 10.9 MB (v3).
 - Keyboard simulation: `kodel nepataiso visu zodzou kuriu as rasau?` →
   `kodėl nepataiso visų žodžių, kurių aš rašau?`; `dabar meginu nauja sakini` →
   `dabar mėginu naują sakinį`; Rust key-shift search 0.4 ms, sentence 1.5 ms (Mac).
@@ -309,13 +326,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   on the keyboard): keys right top-1 / top-3 / final word with diacritics right:
   σ 0.2: 87.1 / 96.4 / 77.2%; σ 0.3: 74.9 / 87.3 / 66.8%; σ 0.4: 52.3 / 63.9 / 46.8% (frequency
   only). With the language model and the article text before each sentence as the paragraph,
-  σ 0.3: 77.0 / 88.1 / 68.5% (previous word alone 75.7 / 87.5 / 67.4%). When the keys are right
-  the diacritics are right 89%. Decode on the Mac: median 2.5 ms, 95% 29 ms, max 169 ms (σ 0.3).
+  σ 0.3: 77.0 / 88.1 / 68.5% (previous word alone 75.7 / 87.5 / 67.4%); with the Wikipedia-dump
+  frequencies and pairs: 82.5 / 90.3 / 73.9%. When the keys are right the diacritics are right 89%.
+  Decode on the Mac: median 2.8 ms, 95% 32 ms, max 186 ms (σ 0.3).
   The noise model is a guess: no real swipe traces yet.
 - Next-word prediction (`eval/predict_sim.py`, 3,997 words): the word is among the top 3 before
-  typing 12.9%, after its first letter 26.3% (no paragraph: 12.4 / 22.7%; previous word only, with
-  the paragraph's words as candidates: 12.5 / 21.5%). The corpus (167k words of Wikipedia, 13.6k
-  pairs seen twice) is what limits it.
+  typing 16.2%, after its first letter 33.1% with the Wikipedia dump (31M words, 310k pairs seen 10+
+  times). With the 600 articles (167k words, 13.6k pairs seen twice): 12.9 / 26.3% (no paragraph:
+  12.4 / 22.7%; previous word only, with the paragraph's words as candidates: 12.5 / 21.5%). All test
+  sentences are Wikipedia: conversational text would score differently (see the corpus backlog item).
 
 ## Gotchas (learned the hard way)
 
@@ -349,7 +368,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - **Next: next-word prediction with ghost text** (owner's pick, 2026-10-22, after the swipe
   prototype). Started: `lm.rs` (bigrams + paragraph lemma cache, see the keyboard design section),
   used by swipe ranking and `predict_words`; the owner wants context from the whole sentence and
-  paragraph. Next: a much bigger corpus (it limits everything below), then trigrams, the grammar
+  paragraph. Done: the full Wikipedia dump. Next: conversational text (corpus item below), trigrams, the grammar
   rules steering predictions (case after a preposition, agreement), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
   corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
   plus a per-user overlay learned on the phone from the *final* text (after autocorrect and the
@@ -368,6 +387,20 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   Fold7 to replace the noise model. (4) Ranking is the main loss (92% of words are among the
   candidates, 75% first): short words on one row are the same line (`tuo`/`to`, `kaip`/`karo`,
   `kiek`/`kurk`), only context separates them: the next-word prediction model above.
+
+- **Corpus beyond Wikipedia** (owner, 2026-10-22): Wikipedia is encyclopedic, third person, full of
+  dates/places/`m.`; a keyboard types chat and everyday prose (`aš`, `tu`, questions, spoken forms
+  `valgyt`, `buvom`). Candidate sources, licences and sizes still to check:
+  - OpenSubtitles (OPUS): conversational, 1st/2nd person, short sentences: best match for typing.
+  - Leipzig Corpora Collection: Lithuanian news and web sentence sets, several sizes.
+  - Web crawls (CC-100, OSCAR, HPLT, MaCoCu): big and broad (forums, blogs), noisy: filter
+    boilerplate and duplicates.
+  - News sites directly (LRT, 15min, Delfi): terms of service; prefer a packaged collection.
+  - Dabartinės lietuvių kalbos tekstynas (VDU): high quality, search-only as far as known.
+  Plan: keep Wikipedia for vocabulary breadth (names, rare forms); weight conversational text
+  more in the word-pair model (register matters more than size for prediction). Only counts ship
+  in varnele.bin, not text, but check each licence. Needs a held-out conversational test set:
+  restore/swipe/predict evaluations are all Wikipedia sentences and would understate the gain.
 
 ### Phone-testing list of 2026-10-19: done, and what was left on purpose
 
@@ -410,23 +443,17 @@ Left deliberately:
   (`Jonas mato namas` → `namą`) are shown but never autocorrected; `nauja knyga` → `naują knygą` is.
 - Verify on the phone (owner's tests so far found real gaps every time): the
   score compensation for `zodzou`, rare twins, key-shift autocorrect.
-- The frequency corpus (600 articles, 173k words) is too small for the rare-twin
-  rule and for ranking; a full Wikipedia dump would help a lot.
 
 - **Verb transitivity**: a small hand list (TRANSITIVE_VERBS) exists; a corpus-derived
   one would cover more. Still open: `Radau nukritusia sagute` (participles end the
   phrase, and `sagute` is instrumental-only so it needs the acc diacritic variant).
 - Agreement across a whole phrase: `dar viena nukritusią sagutę` → `vieną`
   (pronoun/numeral before adj+noun).
-- Bigger frequency corpus (full Wikipedia dump) and word-pair counts for ranking
-  ambiguous diacritic choices (`žmones`/`žmonės`).
+- Word-pair counts (now in the language model) for the checker's ambiguous diacritic choices
+  (`žmones`/`žmonės`): only swipe ranking and predictions use them so far.
 - ispell-lt has no plain reflexive-only verbs (džiaugtis, juoktis, elgtis, domėtis;
   only apsidžiaugti etc. in lietuviu.ivpk). Added to data/extra.txt; others may be
   missing too: check 1sg `-uosi` forms of common ones.
-- data/freq.tsv counts a word before a full stop separately (`metais.` vs `metais`, 1,542 entries):
-  build_freq.py uses the checker's tokenizer, which keeps the dot for abbreviations. The language
-  model has its own word counts (build_ngrams.py); fixing freq.tsv would change every ranking, so
-  it needs a full re-evaluation.
 - data/extra.txt drops `bereikal` (`-bereikal`) and adds `bereikalo`.
 - Idea: `net ne vienos/vieno/vienas` + noun almost always means `nė vienos` (not a single);
   plain `ne vienas` ("more than one") is valid, so only `net ne` + a vienas form is a signal.
@@ -446,9 +473,8 @@ Left deliberately:
   agreement (optional in modern use), word order/aspect (tendencies), neuter predicates
   (`buvo vėsu`). The article has no usable sections on comma rules or verb government beyond
   what is above; a Lithuanian source (VLKK rules) would be the next step.
-- `ziuri` on its own still becomes `žiuri` (jury): `žiūri` never occurs in the 750 Wikipedia
-  articles, `žiuri` 6 times. Only a subject pronoun fixes it (`jis ziuri`); a conversational
-  frequency corpus would fix it for good.
+- `ziuri` on its own now suggests `žiūri` first (with the dump: `žiūri` 185 times, the jury `žiuri`
+  421, the ranking's lemma frequency decides); with the 600 articles it was `žiuri`.
 - `adb install` waits forever when wireless adb has dropped: reconnect first
   (`adb mdns services`, then `adb connect HOST:PORT`).
 - HeliBoard capitalises sentences only if the text field asks for it
@@ -494,3 +520,6 @@ Left deliberately:
 17. gesture (swipe) decoder prototype in Rust (`gesture.rs`, `varnele swipe`, serve `gesture`), eval/swipe_sim.py
 18. language model: corpus bigrams + paragraph lemma cache (`lm.rs`, data version 2), in swipe ranking
     and `predict_words`; eval/build_ngrams.py, eval/predict_sim.py
+19. frequencies and word pairs from the full Wikipedia dump (eval/extract_wiki.py, eval/training.py; the
+    `metais.` double count fixed), count tables as FSTs (`counts.rs`, data version 3, 10.9 MB),
+    "mostly a verb" ignores rule-built prefixes shadowed by a dictionary verb (`apsiuvu`)

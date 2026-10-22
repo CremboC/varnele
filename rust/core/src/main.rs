@@ -1,5 +1,5 @@
 //! varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W... | kb WORD [CONTEXT...]
-//!         | swipe WORD... | serve | bench
+//!         | swipe WORD... | serve | bench | fst (stdin KEY<TAB>VALUE lines -> FST bytes, for the export)
 
 use std::io::Read;
 use std::time::Instant;
@@ -39,6 +39,18 @@ fn read_input(path: &str) -> String {
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("fst") {
+        // build a count table for `python3 -m varnele export` (needs no data file)
+        use std::io::Write;
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input).unwrap();
+        let pairs = input
+            .lines()
+            .filter_map(|l| l.rsplit_once('\t').and_then(|(k, v)| Some((k.to_string(), v.parse().ok()?))))
+            .collect();
+        std::io::stdout().write_all(&varnele::counts::build(pairs)).unwrap();
+        return;
+    }
     let mut data_path = "data/varnele.bin".to_string();
     if let Some(i) = args.iter().position(|a| a == "--data") {
         data_path = args[i + 1].clone();

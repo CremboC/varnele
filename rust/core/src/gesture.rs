@@ -322,7 +322,7 @@ impl Analyzer {
                     continue;
                 }
                 let mut c = self.score(&kw, &lower(&f)) - CONTEXT_WEIGHT * self.context_score(ctx, &lower(&f), crate::lm::CACHE_SWIPE);
-                if prefixed.contains(&f) && !self.data.freq.contains_key(&lower(&f)) {
+                if prefixed.contains(&f) && self.data.freq.get(&lower(&f)) == 0 {
                     c += UNSEEN_PREFIXED; // only the prefix rules say so: įįvykdyte
                 }
                 if first_upper(&f) && !cap {

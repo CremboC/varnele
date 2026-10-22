@@ -9,6 +9,8 @@ use crate::text::*;
 pub const START: &str = "<s>";
 /// discount on every pair count; the mass taken goes to the word's own frequency
 const D: f64 = 0.75;
+/// predictions before any letter is typed come from the followers of the previous word, then these
+const TOP_WORDS: usize = 2000;
 
 /// The previous word of a context as the model knows it: the last word, lowercased, or the
 /// sentence start when there is none or a sentence just ended.
@@ -32,16 +34,24 @@ pub fn previous_word(context: &str) -> String {
 impl Data {
     /// How often the word occurs, smoothed: an unseen word counts as half an occurrence.
     pub fn p_word(&self, w: &str) -> f64 {
-        let n = self.words.get(w).copied().unwrap_or(0) as f64;
-        (n.max(0.5)) / (self.words_total.max(1) as f64)
+        (self.words.get(w) as f64).max(0.5) / (self.words_total.max(1) as f64)
     }
 
     /// P(w | prev), both lowercase.
     pub fn p_next(&self, prev: &str, w: &str) -> f64 {
-        let Some(f) = self.bigrams.get(prev) else { return self.p_word(w) };
-        let total = f.total as f64;
-        let c = f.next.iter().find(|(x, _)| x == w).map_or(0.0, |&(_, n)| n as f64);
-        (c - D).max(0.0) / total + D * f.distinct as f64 / total * self.p_word(w)
+        let Some(packed) = self.pairs.value(&format!("{prev} ")) else { return self.p_word(w) };
+        let (total, distinct) = ((packed >> 32) as f64, (packed & 0xFFFF_FFFF) as f64);
+        let c = self.pairs.get(&format!("{prev} {w}")) as f64;
+        (c - D).max(0.0) / total + D * distinct / total * self.p_word(w)
+    }
+
+    /// The most frequent words, most frequent first.
+    fn top_words(&self) -> &[String] {
+        self.top_words.get_or_init(|| {
+            let mut all = self.words.with_prefix("");
+            all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            all.into_iter().take(TOP_WORDS).map(|(w, _)| w).collect()
+        })
     }
 
     /// log10 of how much likelier the word is after `prev` than anywhere: > 0 when the pair
@@ -53,24 +63,31 @@ impl Data {
     /// The most likely next words after `prev` (lowercase) that start with `prefix` (compared
     /// without diacritics, so a prefix typed without them matches), with their probability.
     pub fn predict(&self, prev: &str, prefix: &str, n: usize) -> Vec<(String, f64)> {
-        let fp = fold(&lower(prefix));
-        let matches = |w: &str| fold(w).starts_with(&fp) && (clen(w) > clen(prefix) || prefix.is_empty());
-        let mut out: Vec<(String, f64)> = Vec::new();
-        if let Some(f) = self.bigrams.get(prev) {
-            for (w, _) in f.next.iter().filter(|(w, _)| matches(w)) {
-                out.push((w.clone(), self.p_next(prev, w)));
-                if out.len() == n {
-                    return out;
-                }
-            }
+        let longer = |w: &str| clen(w) > clen(prefix) || prefix.is_empty();
+        let head = format!("{prev} ");
+        // the words seen after `prev`, most frequent first
+        let mut next: Vec<(String, u64)> = self
+            .pairs
+            .with_folded_prefix(&format!("{prev} {prefix}"))
+            .into_iter()
+            .filter_map(|(k, c)| k.strip_prefix(&head).filter(|w| !w.is_empty() && longer(w)).map(|w| (w.to_string(), c)))
+            .collect();
+        next.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let mut out: Vec<(String, f64)> = next.into_iter().take(n).map(|(w, _)| { let p = self.p_next(prev, &w); (w, p) }).collect();
+        if out.len() == n {
+            return out;
         }
         // then frequent words (the pairs list is pruned): by P(w | prev) too, which for an
         // unlisted pair is the backed-off word frequency
-        let mut rest: Vec<(String, f64)> = self
-            .words
-            .keys()
-            .filter(|w| matches(w) && !out.iter().any(|o| &o.0 == *w))
-            .map(|w| (w.clone(), self.p_next(prev, w)))
+        let cands: Vec<String> = if prefix.is_empty() {
+            self.top_words().to_vec() // all of them would be a scan of every word
+        } else {
+            self.words.with_folded_prefix(prefix).into_iter().map(|(w, _)| w).collect()
+        };
+        let mut rest: Vec<(String, f64)> = cands
+            .into_iter()
+            .filter(|w| longer(w) && !out.iter().any(|o| &o.0 == w))
+            .map(|w| { let p = self.p_next(prev, &w); (w, p) })
             .collect();
         rest.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then_with(|| a.0.cmp(&b.0)));
         out.extend(rest.into_iter().take(n - out.len()));
@@ -126,8 +143,8 @@ impl crate::analyzer::Analyzer {
             for a in self.analyze_exact(w) {
                 let l = lower(&a.lemma);
                 if let Some(&k) = ctx.lemmas.get(&l) {
-                    let form = d.freq.get(w).copied().unwrap_or(0) as f64 + 0.5;
-                    let lemma = d.lemma_freq.get(&l).copied().unwrap_or(0) as f64 + 1.0;
+                    let form = d.freq.get(w) as f64 + 0.5;
+                    let lemma = d.lemma_freq.get(&l) as f64 + 1.0;
                     pc = pc.max(k as f64 / ctx.words as f64 * (form / lemma).min(1.0));
                 }
             }

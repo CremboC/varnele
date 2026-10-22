@@ -341,7 +341,11 @@ class Grammar:
         if any(a.tag == "W" for a in analyses):
             return False          # tik, beveik: listed particles/adverbs, not imperatives
         verb = other = 0
+        # a prefix the rules added counts with the dictionary's own prefixed verb if there is one:
+        # apsiuvu is ap+siuva only through apsiuva (never seen), not through siuva (common)
         for a in analyses:
+            if len(a.prefix) > min(len(b.prefix) for b in analyses if (b.prefix + b.lemma).lower() == (a.prefix + a.lemma).lower()):
+                continue
             f = self.lemma_freq.get(a.lemma.lower(), 0)
             if a.tag.startswith("V."):
                 verb = max(verb, f)
