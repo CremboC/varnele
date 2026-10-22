@@ -62,6 +62,7 @@ fn main() {
     let load = t.elapsed();
     let formal = args.iter().any(|a| a == "--formal");
     let grammar = !args.iter().any(|a| a == "--no-grammar");
+    let raw_lm = args.iter().any(|a| a == "--raw-lm"); // serve: predict with the bare language model
     match args.first().map(String::as_str) {
         Some("words") => {
             for w in args[1..].iter().filter(|a| !a.starts_with("--")) {
@@ -113,6 +114,7 @@ fn main() {
             //   json<TAB>TEXT            -> one finding per line, then an empty line
             //   gesture<TAB>X,Y X,Y ...<TAB>CAP(0/1)<TAB>N<TAB>CONTEXT  -> JSON list of N candidates (QWERTY, key widths)
             //   predict<TAB>CONTEXT<TAB>PREFIX<TAB>N  -> JSON list of N next words
+            //   ghost<TAB>CONTEXT<TAB>TYPED  -> JSON string, the keyboard's ghost ("" for none)
             let layout = Layout::qwerty();
             use std::io::{BufRead, Write};
             let mut out = std::io::stdout().lock();
@@ -138,10 +140,18 @@ fn main() {
                     "predict" => {
                         let context = parts.get(1).copied().unwrap_or("");
                         let n = parts.get(3).and_then(|n| n.parse().ok()).unwrap_or(3);
-                        let ctx = ck.an.lm_context(context);
-                        let words = ck.an.predict_words(&ctx, context, parts.get(2).copied().unwrap_or(""), n);
+                        let words = if raw_lm {
+                            let ctx = ck.an.lm_context(context);
+                            ck.an.predict_words(&ctx, context, parts.get(2).copied().unwrap_or(""), n)
+                        } else {
+                            ck.keyboard_predict(context, parts.get(2).copied().unwrap_or(""), n, formal)
+                        };
                         let items: Vec<String> = words.iter().map(|(w, p)| format!("{{\"w\":{},\"p\":{p:.6}}}", varnele::json::string(w))).collect();
                         writeln!(out, "[{}]", items.join(",")).unwrap();
+                    }
+                    "ghost" => {
+                        let ghost = ck.keyboard_ghost(parts.get(1).copied().unwrap_or(""), parts.get(2).copied().unwrap_or(""), formal);
+                        writeln!(out, "{}", varnele::json::string(&ghost.unwrap_or_default())).unwrap();
                     }
                     _ => writeln!(out, "{{\"error\":\"unknown request\"}}").unwrap(),
                 }

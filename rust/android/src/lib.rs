@@ -1,4 +1,4 @@
-//! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative}
+//! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative, predictNative, ghostNative}
 //! The compiled data file is embedded in the library, so the app ships one .so.
 
 use std::sync::{Mutex, OnceLock};
@@ -24,6 +24,7 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_warmUp(_env: JNIEnv, _cl
     let layout = varnele::gesture::Layout::qwerty();
     let path: Vec<(f32, f32)> = "labas".chars().filter_map(|c| layout.centre(c)).collect();
     let _ = ck.an.gesture(&path, &layout, false, "", 1, false); // and the gesture search's tables
+    let _ = ck.keyboard_predict("Labas, kaip", "", 3, false); // and the language model's frequent words
 }
 
 /// Same as warmUp, for the HeliBoard bridge (which wraps it in a Kotlin warmUp()).
@@ -119,4 +120,47 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_gestureNative<'l>(
         varnele::json::gesture(&ck.an.gesture(&path, &layout, false, &context, n.max(1) as usize, formal != 0))
     };
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// Next-word predictions: the words likeliest to follow `context` (the text before the cursor,
+/// up to a paragraph) that start with `prefix` (empty before a word is begun; diacritics may be
+/// left out). `formal`: spoken forms as their standard forms. Returns a JSON array of {w, p},
+/// likeliest first.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_predictNative<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    context: JString<'l>,
+    prefix: JString<'l>,
+    n: jint,
+    formal: jboolean,
+) -> jstring {
+    let context: String = env.get_string(&context).map(Into::into).unwrap_or_default();
+    let prefix: String = env.get_string(&prefix).map(Into::into).unwrap_or_default();
+    let json = {
+        let ck = checker().lock().unwrap();
+        let items: Vec<String> = ck
+            .keyboard_predict(&context, &prefix, n.max(1) as usize, formal != 0)
+            .iter()
+            .map(|(w, p)| format!("{{\"w\":{},\"p\":{p:.6}}}", varnele::json::string(w)))
+            .collect();
+        format!("[{}]", items.join(","))
+    };
+    env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// The ghost for the word being typed (`typed`, after `context`): its completion, maybe with the
+/// next word ("kodėl tu"); empty when there is none worth showing. `formal` as for predictNative.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_ghostNative<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    context: JString<'l>,
+    typed: JString<'l>,
+    formal: jboolean,
+) -> jstring {
+    let context: String = env.get_string(&context).map(Into::into).unwrap_or_default();
+    let typed: String = env.get_string(&typed).map(Into::into).unwrap_or_default();
+    let ghost = checker().lock().unwrap().keyboard_ghost(&context, &typed, formal != 0).unwrap_or_default();
+    env.new_string(ghost).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }

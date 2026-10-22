@@ -82,7 +82,18 @@ impl Data {
         let cands: Vec<String> = if prefix.is_empty() {
             self.top_words().to_vec() // all of them would be a scan of every word
         } else {
-            self.words.with_folded_prefix(prefix).into_iter().map(|(w, _)| w).collect()
+            // an unlisted pair backs off to the word's frequency, so the most frequent words are
+            // the ones that can win: scoring all of them took 30+ ms on the phone after one letter
+            let want = 4 * n;
+            let fp = fold(prefix);
+            let top: Vec<String> = self.top_words().iter().filter(|w| fold(w).starts_with(&fp)).take(want).cloned().collect();
+            if top.len() == want {
+                top // the same words as below: top_words is in frequency order (listing every k- word: 3 ms)
+            } else {
+                let mut all = self.words.with_folded_prefix(prefix);
+                all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+                all.into_iter().take(want).map(|(w, _)| w).collect()
+            }
         };
         let mut rest: Vec<(String, f64)> = cands
             .into_iter()
@@ -102,6 +113,14 @@ const CACHE_WORDS: usize = 150;
 /// loses (77.0 → 76.5% top-1).
 pub const CACHE_PREDICT: f64 = 0.3;
 pub const CACHE_SWIPE: f64 = 0.1;
+/// Predictions take the cache's share in as the context grows: words / (words + this) of it.
+/// A few words are no topic, and at the full share `Aš vakar buvau` predicted `aš`, `vakar`.
+/// Top 3 before typing / after one letter, 0 → 300: Tatoeba (one sentence) 13.0 / 44.9 →
+/// 18.5 / 46.9%, subtitles 11.8 / 31.3 → 12.4 / 32.9%, Wikipedia 16.0 / 31.2 → 16.1 / 30.4%.
+const CACHE_RAMP: f64 = 300.0;
+/// Candidates from the previous word's followers and the frequent words, before the paragraph
+/// re-ranks them: 20 gives the same top 3 as 200 on all three test sets, 5× faster (0.5 ms).
+const CANDIDATES: usize = 20;
 
 /// What the model knows of the text before a word: the previous word, and the lemmas used
 /// earlier (a topic cache: `Vilnius` in the paragraph makes `Vilniaus` likely).
@@ -153,12 +172,17 @@ impl crate::analyzer::Analyzer {
         p
     }
 
+    /// P(w | context) as predictions rank it (w lowercase): the paragraph's share grows with its length.
+    pub fn p_predict(&self, ctx: &LmContext, w: &str) -> f64 {
+        self.p_context(ctx, w, CACHE_PREDICT * ctx.words as f64 / (ctx.words as f64 + CACHE_RAMP))
+    }
+
     /// The most likely next words that start with `prefix` (compared without diacritics, so a
     /// prefix typed without them matches): candidates are the words seen after the previous
     /// one, the paragraph's own words and the frequent ones, ranked by [`Self::p_context`].
     pub fn predict_words(&self, ctx: &LmContext, context: &str, prefix: &str, n: usize) -> Vec<(String, f64)> {
         let mut cands: crate::fx::FxSet<String> = Default::default();
-        for (w, _) in self.data.predict(&ctx.prev, prefix, 200) {
+        for (w, _) in self.data.predict(&ctx.prev, prefix, CANDIDATES) {
             cands.insert(w);
         }
         let fp = fold(&lower(prefix));
@@ -168,7 +192,7 @@ impl crate::analyzer::Analyzer {
                 cands.insert(lw);
             }
         }
-        let mut out: Vec<(String, f64)> = cands.into_iter().map(|w| { let p = self.p_context(ctx, &w, CACHE_PREDICT); (w, p) }).collect();
+        let mut out: Vec<(String, f64)> = cands.into_iter().map(|w| { let p = self.p_predict(ctx, &w); (w, p) }).collect();
         out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then_with(|| a.0.cmp(&b.0)));
         out.truncate(n);
         out

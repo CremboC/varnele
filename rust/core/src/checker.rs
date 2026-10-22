@@ -35,6 +35,10 @@ pub struct Checker {
     grammar: Grammar,
 }
 
+/// The ghost adds the next word from this probability: its top word is right 64–75% of the time
+/// there on the dialogue test sets (2% of words).
+const GHOST_NEXT_P: f64 = 0.5;
+
 const TLDS: &[&str] = &["lt", "com", "org", "net", "eu", "gov", "edu", "info"];
 
 /// Blank out URLs and e-mail addresses (same positions, spaces instead).
@@ -315,6 +319,76 @@ impl Checker {
             .filter(|(score, _)| *score >= 3)
             .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)))
             .map(|(_, c)| cap_like(word, &c))
+    }
+
+    /// The keyboard's next words (or completions of `prefix`, typed with or without diacritics)
+    /// after `context`, the text before the cursor: the language model's words as they are
+    /// written, a name with its capital (lietuvos -> Lietuvos). A word Varnelė doesn't know is
+    /// kept only if the context has it (TSR, Freiburg: the user's own words, as written there),
+    /// not from the corpus alone (foreign words, typos). `formal`: a spoken form (einam) is given
+    /// as its standard form (einame), once, as swipe does.
+    pub fn keyboard_predict(&self, context: &str, prefix: &str, n: usize, formal: bool) -> Vec<(String, f64)> {
+        self.predict_in(&self.an.lm_context(context), context, prefix, n, formal)
+    }
+
+    fn predict_in(&self, ctx: &crate::lm::LmContext, context: &str, prefix: &str, n: usize, formal: bool) -> Vec<(String, f64)> {
+        let written: crate::fx::FxMap<String, &str> =
+            context.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty()).map(|w| (lower(w), w)).collect();
+        let fp = fold(&lower(prefix));
+        let mut out: Vec<(String, f64)> = Vec::new();
+        for (w, p) in self.an.predict_words(ctx, context, &lower(prefix), n * 3) {
+            let known = |w: &str| self.an.check(w).status != Status::Unknown;
+            let w = match self.an.check(&w) {
+                // the completion must still begin with what was typed
+                r if formal && r.status == Status::Colloquial => match r.formal.into_iter().find(|f| fold(f).starts_with(&fp)) {
+                    Some(f) => f,
+                    None => continue,
+                },
+                _ => w,
+            };
+            if out.iter().any(|(o, _)| *o == w) {
+                continue;
+            }
+            // the counts drop numbers and full stops, so `1990 m.` left a lone `m` (top prediction
+            // at a sentence start)
+            let w = if clen(&w) == 1 && w != "į" && w != "o" {
+                continue;
+            } else if w != "kai" && self.an.data.abbrev.contains(&format!("{w}.")) {
+                continue; // pr, kun: written with a full stop, the counts drop it
+            } else if known(&w) {
+                w
+            } else if known(&capitalize(&w)) {
+                capitalize(&w)
+            } else if let Some(as_written) = written.get(&w) {
+                as_written.to_string()
+            } else {
+                continue;
+            };
+            out.push((w, p));
+            if out.len() == n {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The keyboard's ghost for the word being typed: its likeliest completion (kod -> kodėl), and
+    /// the next word too when the model gives it [`GHOST_NEXT_P`] or more. None when nothing
+    /// completes it or the word as typed is likelier than the completion (tau, not tautos).
+    /// `formal` as for [`Self::keyboard_predict`].
+    pub fn keyboard_ghost(&self, context: &str, typed: &str, formal: bool) -> Option<String> {
+        let mut ctx = self.an.lm_context(context);
+        let (word, p) = self.predict_in(&ctx, context, typed, 1, formal).into_iter().next()?;
+        // a dictionary lookup: check() would also guess derivations and compounds, 35 ms for `se`
+        if !self.an.analyze(typed).is_empty() && self.an.p_predict(&ctx, &lower(typed)) >= p {
+            return None;
+        }
+        ctx.prev = lower(&word); // the paragraph's lemmas stay: one word more changes little
+        let next = self.predict_in(&ctx, &format!("{context} {word}"), "", 1, formal).into_iter().next();
+        Some(match next {
+            Some((n, pn)) if pn >= GHOST_NEXT_P => format!("{word} {n}"),
+            _ => word,
+        })
     }
 
     /// All findings in a text, in order: misspellings, spoken forms, grammar.

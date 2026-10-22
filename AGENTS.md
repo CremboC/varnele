@@ -281,9 +281,27 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   tokenised like the keyboard, and per previous word its total and distinct followers over all pairs,
   then the pairs seen 10+ times), absolute discounting (D 0.75) backing off to word frequency; `<s>` =
   sentence start. Plus a paragraph cache: lemmas of the last 150 words, the form's share of its
-  lemma (`Vilnius` earlier → `Vilniaus`), 10% of the probability for swipe, 30% for predictions.
-  `Analyzer::predict_words` ranks followers of the previous word, the paragraph's words and
-  frequent words by it. Not wired to the keyboard yet (no next-word strip or ghost text).
+  lemma (`Vilnius` earlier → `Vilniaus`), 10% of the probability for swipe, 30% for predictions
+  scaled by words / (words + 300): a few words are no topic (`Aš vakar buvau` predicted `aš`, `vakar`).
+  `Analyzer::predict_words` ranks followers of the previous word (20 candidates), the paragraph's
+  words and frequent words by it. `Checker::keyboard_predict` (JNI `predictNative`, serve `predict`)
+  is what the keyboard shows: a name capitalised (`lietuvos` → `Lietuvos`), single letters other than
+  `į`/`o` and abbreviations (`m`, `pr`, `kun`: the counts drop numbers and full stops) left out, and a
+  word Varnelė doesn't know only if the context has it (`TSR`, as written there). Formal mode: a spoken
+  form is given as its standard form, once (`ein` → `einame`, never `einam`), as swipe does.
+- **Predictions in the keyboard** (fork branch `paulius/varnele-predict`): `InputLogic.getSuggestedWords`
+  hands the text before the word (the connection's 1024-character cache) to
+  `VarneleDictionary.textBefore`. Nothing typed: `getSuggestions` returns 5 predictions
+  (`KIND_PREDICTION`, Varnelė's order). Typing: `Suggest.addVarneleGhost` adds the **ghost**
+  (`Checker::keyboard_ghost`, JNI `ghostNative`, serve `ghost`): the word completed (`kod` → `kodėl`),
+  none when the word as typed is likelier than the completion (`tau`, not `tautos`), plus the next word
+  when P ≥ 0.5 (top word right 64–75% there on the dialogue sets), added after the autocorrect decision, so it never autocorrects: it goes in the strip's
+  centre, or next to it when the centre shows what space commits (an autocorrection, the typed word
+  with "center suggestion is text to enter"). `SuggestionStripLayoutHelper` greys the part after the
+  typed letters (`kod|ėl tu`); a tap commits it. Owner's choice (2026-10-22): strip first, inline ghost
+  text in the field later (it would live in the composing region, which the app sees: search fields
+  would query it). Varnelė's predictions are kept out of `shouldBeAutoCorrected`'s empty-word
+  comparison (other scale).
 - **Data format v3**: freq, lemma_freq, the language model's word counts and its pairs (`"PREV WORD"` →
   count, `"PREV "` → total << 32 | distinct) are finite-state transducers (`rust/core/src/counts.rs`,
   `fst` crate), read in place: no hash map of 150k+ strings on the phone's heap. `export.py` pipes each
@@ -375,6 +393,17 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   times). With the 600 articles (167k words, 13.6k pairs seen twice): 12.9 / 26.3% (no paragraph:
   12.4 / 22.7%; previous word only, with the paragraph's words as candidates: 12.5 / 21.5%). All test
   sentences are Wikipedia: conversational text scores lower, see below.
+  The keyboard's predictions (`keyboard_predict`, cache ramp, conversational counts), before typing /
+  after one letter: Tatoeba 13.0 / 44.9 → **19.2 / 47.1%**, subtitles 12.0 / 31.5 → **13.0 / 32.9%**,
+  Wikipedia 16.5 / 32.0 → 15.7 / 30.4% (the filter drops `m` and names Varnelė doesn't know: `Reicho`,
+  `Freiburg`). 0.5 ms per call on the Mac after warm-up.
+  Ghost (`predict_sim.py --ghost`, letters typed without diacritics): a shown ghost is the word being
+  typed 23.1% (Tatoeba), 16.3% (subtitles), 14.7% (Wikipedia) of the time; tapping the first right one
+  completes 75.2 / 59.5 / 62.8% of the words of 3+ letters and saves 21.7 / 14.7 / 19.9% of their
+  letters. On the Fold7: predictions 1–8 ms, the ghost 1–10 ms (34 ms after one letter before the
+  frequent candidates came from the 2,000 most frequent words instead of every word with that letter;
+  the typed-word test is a dictionary lookup, `check` guessed compounds for `se`); the strip shows
+  `kod | kad | kod·ėl` (typed, autocorrection, ghost) and tapping the ghost commits `kodėl`.
 - **Conversational counts** (W=1: subtitles and Tatoeba count like Wikipedia; `eval/training.py`
   `conversational()`, lines of 4+ words once, cutoffs on raw counts so a pair seen once in a subtitle
   never ships; data file 10.9 → 13.0 MB), on the three test sets, before → after:
@@ -437,8 +466,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - **Next: next-word prediction with ghost text** (owner's pick, 2026-10-22, after the swipe
   prototype). Started: `lm.rs` (bigrams + paragraph lemma cache, see the keyboard design section),
   used by swipe ranking and `predict_words`; the owner wants context from the whole sentence and
-  paragraph. Done: the full Wikipedia dump. Next: conversational text (corpus item below), trigrams, the grammar
-  rules steering predictions (case after a preposition, agreement), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
+  paragraph. Done: the full Wikipedia dump, conversational text, predictions and the ghost in the
+  strip (keyboard design section). Next: phone-test the strip, inline ghost text, trigrams, the grammar
+  rules steering predictions (case after a preposition: `eiti į` predicts the genitive `šiaurės` first; agreement), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
   corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
   plus a per-user overlay learned on the phone from the *final* text (after autocorrect and the
   sentence fixer, unlike HeliBoard's user history, which learns words as typed). Expose one
@@ -603,7 +633,8 @@ Left deliberately:
 - HeliBoard capitalises sentences only if the text field asks for it
   (TYPE_TEXT_FLAG_CAP_SENTENCES); the test app's field now does.
 - The keyboard fixer's fold keeps `y` (it is a key): i/y changes are never auto-applied.
-- Lexicon gaps: loanwords and names (`klipas`, `singlas`); induce stems from a
+- Lexicon gaps: loanwords and names (`klipas`, `singlas`); spoken `eime` ("let's go") is unknown, so
+  predictions give its name reading `Eime` (the ghost after `Gal e`, phone test 2026-10-22); induce stems from a
   corpus by finding multiple forms of a guessed paradigm.
 - Keyboard: completions for half-typed words (now we show corrections);
   speed up unknown-word suggestions (6–17 ms on phone); interplay of the
@@ -647,3 +678,5 @@ Left deliberately:
 20. swipe in the keyboard (JNI `gestureNative`, threaded prefix chains), eval/phone_ready.sh; conversational
     test sets and cleaning (eval/extract_conv.py, eval/clean_conv.py); subtitles and Tatoeba counted with
     Wikipedia (W=1, cutoffs on raw counts, 13.0 MB), credits for the frequency sources
+21. next-word predictions and the ghost in the keyboard strip (`keyboard_predict`, `keyboard_ghost`, JNI
+    `predictNative`/`ghostNative`, serve `ghost`, `predict_sim.py --ghost`); paragraph cache faded in by length

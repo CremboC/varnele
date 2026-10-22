@@ -21,11 +21,14 @@ SAFE_RULES = {"case", "agreement", "quantity", "negation", "relative", "object",
 _server = None
 
 
+SERVE = ["serve"]   # extra flags may follow (predict_sim.py --raw-lm)
+
+
 def _ask(line):
     """One request to a long-running `varnele serve` (loading the data once, not per call)."""
     global _server
     if _server is None:
-        _server = subprocess.Popen(RUST + ["serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        _server = subprocess.Popen(RUST + SERVE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     _server.stdin.write(line + "\n")
     _server.stdin.flush()
     return _server.stdout
