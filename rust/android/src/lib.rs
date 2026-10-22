@@ -185,16 +185,23 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_userEnabledNative(_env: 
 }
 
 /// The text before the cursor after a finished word, as it ends up: finished sentences are learned.
+/// `cut`: the text is the end of a longer one (its first sentence may be a piece).
 #[no_mangle]
-pub extern "system" fn Java_dev_imbrasas_varnele_Native_userObserveNative<'l>(mut env: JNIEnv<'l>, _class: JClass<'l>, text: JString<'l>) {
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userObserveNative<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    text: JString<'l>,
+    cut: jboolean,
+) {
     let text: String = env.get_string(&text).map(Into::into).unwrap_or_default();
-    checker().lock().unwrap().an.user.write().unwrap().observe(&text);
+    checker().lock().unwrap().an.user.write().unwrap().observe(&text, cut != 0);
 }
 
-/// The message is done (sent, field cleared or left): learn its last sentence too.
+/// The message is done: learn its last sentence too. `gone`: sent or the field cleared (the same
+/// text can't be seen again); otherwise the field was left.
 #[no_mangle]
-pub extern "system" fn Java_dev_imbrasas_varnele_Native_userCommitNative(_env: JNIEnv, _class: JClass) {
-    checker().lock().unwrap().an.user.write().unwrap().commit();
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userCommitNative(_env: JNIEnv, _class: JClass, gone: jboolean) {
+    checker().lock().unwrap().an.user.write().unwrap().commit(gone != 0);
 }
 
 /// Save the counts if they changed. Returns false if the file could not be written.

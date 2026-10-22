@@ -52,35 +52,40 @@ pub struct UserLm {
     n_pairs: usize,
     /// the text before the cursor when last shown: its last sentence is not learned yet
     pending: String,
+    pending_cut: bool,
     learned: VecDeque<u64>,
     learned_set: FxSet<u64>,
     pub dirty: bool,
 }
 
 /// Sentences of a text as the corpus counts split them: after . ! ? and a space, or at a line end.
-fn sentences(text: &str) -> Vec<&str> {
+/// With the byte offset where each starts.
+fn sentences(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut prev_end = false;
     for (i, c) in text.char_indices() {
         if c == '\n' || (c.is_whitespace() && prev_end) {
-            out.push(&text[start..i]);
+            out.push((start, &text[start..i]));
             start = i + c.len_utf8();
         }
         prev_end = matches!(c, '.' | '!' | '?');
     }
-    out.push(&text[start..]);
-    out.into_iter().filter(|s| s.chars().any(char::is_alphabetic)).collect()
+    out.push((start, &text[start..]));
+    out.into_iter().filter(|(_, s)| s.chars().any(char::is_alphabetic)).collect()
 }
 
 fn words_of(s: &str) -> impl Iterator<Item = &str> {
     s.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty())
 }
 
-/// A sentence's words: the same sentence with or without its full stop is learned once.
-fn hash(s: &str) -> u64 {
+/// A sentence where it is in the text: its words and the three words before it. The same text
+/// seen again (with or without the sentence's full stop) gives the same key; the same sentence
+/// written again elsewhere (`Labas.` in the next message) does not.
+fn key(before: &str, s: &str) -> u64 {
     let mut h = FxHasher::default();
-    for w in words_of(s) {
+    let prev: Vec<&str> = words_of(before).collect();
+    for w in prev[prev.len().saturating_sub(3)..].iter().chain(&words_of(s).collect::<Vec<_>>()) {
         w.hash(&mut h);
     }
     h.finish()
@@ -169,7 +174,7 @@ impl UserLm {
 
     /// Learn every sentence of a text (the evaluations' shortcut for a user who wrote it).
     pub fn learn_text(&mut self, text: &str) {
-        for s in sentences(text) {
+        for (_, s) in sentences(text) {
             self.learn_sentence(s);
         }
     }
@@ -195,8 +200,7 @@ impl UserLm {
         }
     }
 
-    fn learn_once(&mut self, s: &str) {
-        let h = hash(s);
+    fn learn_once(&mut self, h: u64, s: &str) {
         if !self.learned_set.insert(h) {
             return;
         }
@@ -208,29 +212,36 @@ impl UserLm {
         self.learn_sentence(s);
     }
 
-    /// The text before the cursor after a finished word, as it ends up. Sentences followed by
-    /// the start of another are learned (once each); the last one waits.
-    pub fn observe(&mut self, text: &str) {
+    /// The text before the cursor after a finished word, as it ends up; `cut`: the text is the
+    /// end of a longer one, so its first sentence may be a piece of one (not learned). Sentences
+    /// followed by the start of another are learned (once each); the last one waits.
+    pub fn observe(&mut self, text: &str, cut: bool) {
         if !self.enabled {
             return;
         }
         let ss = sentences(text);
         if let Some((_, done)) = ss.split_last() {
-            for s in done {
-                self.learn_once(s);
+            for &(start, s) in done.iter().skip(cut as usize) {
+                self.learn_once(key(&text[..start], s), s);
             }
         }
         self.pending = text.to_string();
+        self.pending_cut = cut;
     }
 
-    /// The message is done (sent, field cleared or left): learn the last sentence too.
-    pub fn commit(&mut self) {
+    /// The message is done: learn its last sentence too. `gone`: the text is gone (sent, the
+    /// field cleared), so it can't be seen again and the memory of what was learned is cleared;
+    /// otherwise (the field left) it stays, and a refocused field is not learned twice.
+    pub fn commit(&mut self, gone: bool) {
         let text = std::mem::take(&mut self.pending);
-        if !self.enabled {
-            return;
+        if self.enabled {
+            for &(start, s) in sentences(&text).iter().skip(self.pending_cut as usize) {
+                self.learn_once(key(&text[..start], s), s);
+            }
         }
-        for s in sentences(&text) {
-            self.learn_once(s);
+        if gone {
+            self.learned.clear();
+            self.learned_set.clear();
         }
     }
 
@@ -320,28 +331,51 @@ mod tests {
     #[test]
     fn learns_finished_sentences_once() {
         let mut u = user();
-        u.observe("Labas, kaip ");
+        u.observe("Labas, kaip ", false);
         assert_eq!(u.total(), 0.0); // the sentence is not finished
-        u.observe("Labas, kaip sekasi? Gerai ");
+        u.observe("Labas, kaip sekasi? Gerai ", false);
         assert_eq!(u.total(), 3.0);
-        u.observe("Labas, kaip sekasi? Gerai, ačiū. Tu ");
+        u.observe("Labas, kaip sekasi? Gerai, ačiū. Tu ", false);
         assert_eq!(u.total(), 5.0); // the first sentence is not learned again
-        u.commit();
+        u.commit(false);
         assert_eq!(u.total(), 6.0);
         assert!(u.p_next("kaip", "sekasi") > 0.3);
         assert!(u.p_next(START, "labas") > 0.0);
+        // the field refocused: nothing new
+        u.observe("Labas, kaip sekasi? Gerai, ačiū. Tu ", false);
+        u.commit(false);
+        assert_eq!(u.total(), 6.0);
+    }
+
+    #[test]
+    fn a_sentence_written_again_counts_again() {
+        let mut u = user();
+        u.observe("Labas. Labas. Labas. Kaip ", false);
+        assert_eq!(u.total(), 3.0);
+        u.commit(true); // sent
+        u.observe("Labas", false);
+        u.commit(true); // the next message
+        assert_eq!(u.word("labas").unwrap().0, 4.0);
+    }
+
+    #[test]
+    fn a_cut_text_skips_its_first_piece() {
+        let mut u = user();
+        u.observe("nas valgo. Mano drakonas valgo morkas. Ir ", true);
+        assert!(u.word("nas").is_none());
+        assert_eq!(u.total(), 4.0);
     }
 
     #[test]
     fn backspaced_words_are_not_learned() {
         let mut u = user();
-        u.observe("Mes einam i ");
-        u.observe("Mes einame į ");
-        u.observe("Mes einame į parką. ");
+        u.observe("Mes einam i ", false);
+        u.observe("Mes einame į ", false);
+        u.observe("Mes einame į parką. ", false);
         assert_eq!(u.total(), 0.0); // the last sentence waits for the message to be done
-        u.commit();
-        u.observe("Mes einame į parką");
-        u.commit(); // the same sentence again (field refocused)
+        u.commit(false);
+        u.observe("Mes einame į parką", false);
+        u.commit(false); // the same sentence again (field refocused)
         assert_eq!(u.total(), 4.0);
         assert!(u.word("einame").is_some() && u.word("einam").is_none() && u.word("i").is_none());
     }
@@ -372,8 +406,8 @@ mod tests {
     #[test]
     fn disabled_learns_nothing() {
         let mut u = UserLm::default();
-        u.observe("Labas. Kaip ");
-        u.commit();
+        u.observe("Labas. Kaip ", false);
+        u.commit(true);
         assert_eq!(u.total(), 0.0);
         assert_eq!(u.share(START), 0.0);
     }

@@ -312,7 +312,10 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   sentence once the next one is begun, so a word backspaced and retyped is learned as it ends up, and the
   last sentence on `commit`: the enter key's editor action (send), the app clearing the field
   (`onUpdateSelection` to 0 with no text: a chat's send button), `onFinishInput`, a restarted field.
-  A sentence is learned once (hashes of its words, the last 1,000), so a refocused field isn't counted twice.
+  A sentence is learned once where it stands (key: its words and the three words before it; the last
+  1,000 keys), so a refocused field isn't counted twice; a send or a cleared field forgets the keys, so
+  `Labas.` in every message counts every time (a first version keyed on the words alone learned it once,
+  ever). A text cut at 1,024 characters skips its first piece of a sentence.
   Not learned: incognito (also fields asking for no learning), passwords, URLs/e-mail, other languages.
   Storage: `files/varnele_user.txt` (text, `1 word count [written]` / `2 prev word count`), loaded on the
   thread that loads Varnelė's data (not at all for a keyboard not typing Lithuanian), saved when the
@@ -322,6 +325,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   so predictions, the ghost and swipe ranking all get it; `predict_words` adds the user's followers of
   `prev` and most frequent words as candidates; a word Varnelė doesn't know is predicted once the user
   wrote it twice, as written (`Freiburg`). Off: neither learned nor used (the file stays until forgotten).
+  HeliBoard caches next-word suggestions per previous words (`Suggest.nextWordSuggestionsCache`); for
+  Varnelė's locale the fork skips that cache, else the strip never changed after the first time in a
+  field session (also hiding the paragraph context).
+  Tested on the emulator (2026-10-22): after `Mano drakonas valgo morkas.` was learned once `valgo` came
+  2nd after `drakonas`, after four times 1st; in a fresh text without it: `mano` first at a sentence
+  start, `drakonas` after `Mano`, `valgo` after it; kept across a keyboard restart; Forget deletes the
+  file and the strip is the corpus's again; switched off, the counts stay in the file but are not used.
 - **Data format v3**: freq, lemma_freq, the language model's word counts and its pairs (`"PREV WORD"` →
   count, `"PREV "` → total << 32 | distinct) are finite-state transducers (`rust/core/src/counts.rs`,
   `fst` crate), read in place: no hash map of 150k+ strings on the phone's heap. `export.py` pipes each
@@ -482,6 +492,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   `androidComponents.sdkComponents.sdkDirectory` + `android.ndkVersion`.
 - `android:supportedAttributes` in spellchecker.xml is not recognised by SDK 35.
 - targetSdk 35+ is edge-to-edge: apply window insets (status bar, cutout, ime).
+- **Android emulator** (installed 2026-10-22: `~/Library/Android/sdk/cmdline-tools/latest`, `emulator`,
+  AVD `varnele_test` = Pixel 7, API 35 google_apis arm64): `~/Library/Android/sdk/emulator/emulator
+  -avd varnele_test -no-snapshot -no-audio -no-boot-anim &`, then `adb -s emulator-5554 …`. After
+  `adb install -r` of the keyboard the system falls back to Gboard: `adb shell ime set
+  dev.imbrasas.varnele.keyboard.debug/helium314.keyboard.latin.LatinIME` again and check
+  `dumpsys input_method | grep mInputShown` before tapping keys. With the number row on, a 1080×2400
+  screen has the letter rows at y 1767 / 1905 / 2043 (`q` x 54, step 108; `a` x 108; `z` x 216), space
+  (648, 2181). `run-as dev.imbrasas.varnele.keyboard.debug cat files/varnele_user.txt` reads the
+  learned counts.
 - Galaxy Z Fold7 has two displays: `screencap` needs a display id; use
   `uiautomator dump` to read the screen as text instead.
 - Wireless adb drops regularly; re-check `adb devices` before installing.
