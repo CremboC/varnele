@@ -445,6 +445,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   linked to the standard lemma; formal mode ranks with the standard table, informal with the
   mixed one, the user overlay on top of both. The n-gram model above uses the same split.
 
+- **Bug (2026-10-22, owner found it on the Fold7): swipe can't produce spoken forms.** `einam`
+  swiped → `rytinam`, even as a noise-free path (`varnele swipe einam` → `rytinam`, `valgyt` →
+  `valgyti`, `buvom` → `buvok`); `einame` decodes fine. Not ranking: the gesture search
+  (`Analyzer::gesture`, `Data::walk_forms`) only walks dictionary forms, while the spoken register
+  (`-m`, `-t`, `-s`, `-oj`…: `analyzer::COLLOQUIAL`, used by `check_word`/`suggest_scored`) is never
+  generated. Fix: also walk the short spoken endings (a form whose folded ending is a COLLOQUIAL
+  full ending also yields its short twin, `einame` → `einam`), score them like the rest, and keep
+  them as typed (the keyboard accepts `einam` as colloquial); then measure on the subtitle test set,
+  where spoken forms are common, and check the Wikipedia set doesn't lose.
 - **Swipe, next steps** ((1) is done, phone-tested with replayed swipes; still to try with real
   fingers): (1) wire it into the fork: enable gesture input for `lt` without
   `JniUtils.sHaveGestureLib`, pass `ComposedData.mInputPointers` + key centres (divided by the key
