@@ -527,6 +527,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   `--ghost` on the three sets and swipe_sim on subtitles unchanged). What is left with a long paragraph
   (1,500 characters): `lm_context` analysing its last 150 words, 0.3 ms, and `p_predict` for each of
   its ~190 words as candidates, 0.6 ms (`analyze_exact` per word), done again for the ghost's next word.
+  On the emulator, warm predictions at a sentence start now take 1–5 ms (were 1.3–2.9 s); the
+  remaining 0.1–2 s outliers come with the emulator's own frames at 600–800 ms (Mac load 16), and the
+  same request a moment later takes 3 ms: emulator timings are only meaningful on an idle Mac.
   The emulator's red underlines come from its system spell checker (Gboard, English), not Varnelė.
 - **Conversational counts** (W=1: subtitles and Tatoeba count like Wikipedia; `eval/training.py`
   `conversational()`, lines of 4+ words once, cutoffs on raw counts so a pair seen once in a subtitle
