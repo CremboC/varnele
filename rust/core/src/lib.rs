@@ -16,6 +16,7 @@ pub mod checker;
 pub mod data;
 pub mod derivation;
 pub mod fx;
+pub mod gesture;
 pub mod grammar;
 pub mod json;
 pub mod suggest;

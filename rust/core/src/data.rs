@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use crate::fx::{FxMap, FxSet};
-use crate::text::{fold, lower};
+use crate::text::{fold, lower, FOLDED_ALPHABET};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -57,6 +57,14 @@ pub struct Signature {
 struct Folded {
     stems: FxMap<String, Vec<u32>>,         // folded stem -> stem indices
     sigs: Vec<FxMap<String, Vec<usize>>>,   // folded suffix -> suffix indices
+}
+
+/// The callbacks of [`Data::walk_forms`].
+struct Walk<'a, S> {
+    step: &'a dyn Fn(S, char) -> Option<S>,
+    end: &'a dyn Fn(S) -> bool,
+    entry_ok: &'a dyn Fn(u32) -> bool,
+    last_ok: &'a dyn Fn(char) -> bool,
 }
 
 pub struct Data {
@@ -331,6 +339,67 @@ impl Data {
             cur.push(c);
             if prefixes.contains(cur.as_str()) {
                 self.neighbour_dfs(opts, pos + 1, cur, f, prefixes, out, budget);
+            }
+            cur.pop();
+        }
+    }
+
+    /// Unprefixed forms whose folded spelling can be walked letter by letter: `step(state, letter)`
+    /// is the state after one more letter (None: no word goes on this way), `end(state)` whether a
+    /// word may stop there. Only entries `entry_ok` accepts, only words whose last folded letter
+    /// `last_ok` accepts. Drives the gesture search; `budget` bounds the stem prefixes visited
+    /// and suffixes tried.
+    #[allow(clippy::too_many_arguments)]
+    pub fn walk_forms<S: Copy>(&self, start: S, step: &dyn Fn(S, char) -> Option<S>, end: &dyn Fn(S) -> bool,
+                               entry_ok: &dyn Fn(u32) -> bool, last_ok: &dyn Fn(char) -> bool,
+                               out: &mut Vec<String>, budget: &mut usize) {
+        let mut cur = String::new();
+        let w = Walk { step, end, entry_ok, last_ok };
+        self.walk_dfs(start, &mut cur, &w, out, budget);
+    }
+
+    fn walk_dfs<S: Copy>(&self, state: S, cur: &mut String, w: &Walk<S>, out: &mut Vec<String>, budget: &mut usize) {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        let f = self.folded();
+        if let Some(idxs) = f.stems.get(cur.as_str()) {
+            let stem_last = cur.chars().last();
+            for &si in idxs {
+                let st = &self.stem_list[si as usize];
+                for &(sid, eid) in &self.stems[st] {
+                    if !(w.entry_ok)(eid) {
+                        continue;
+                    }
+                    for (fsuf, ks) in &f.sigs[sid as usize] {
+                        if !fsuf.chars().last().or(stem_last).is_some_and(w.last_ok) {
+                            continue;
+                        }
+                        if *budget == 0 {
+                            return;
+                        }
+                        *budget -= 1;
+                        let mut s = Some(state);
+                        for c in fsuf.chars() {
+                            s = s.and_then(|s| (w.step)(s, c));
+                        }
+                        if s.is_some_and(w.end) {
+                            for &k in ks {
+                                out.push(format!("{st}{}", self.sigs[sid as usize].suffixes[k].0));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let prefixes = self.stem_prefixes();
+        for c in FOLDED_ALPHABET {
+            cur.push(c);
+            if prefixes.contains(cur.as_str()) {
+                if let Some(s) = (w.step)(state, c) {
+                    self.walk_dfs(s, cur, w, out, budget);
+                }
             }
             cur.pop();
         }

@@ -54,7 +54,9 @@ python3 eval/restore.py --sentences 300            # strip all diacritics, measu
 python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precision of each comma rule
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
 python3 eval/keyboard_restore.py                   # restore.py's 300 sentences typed through the keyboard model
-rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" (used by the sims)
+rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" / "gesture\tX,Y X,Y…\tCAP\tN" (used by the sims)
+rust/target/release/varnele swipe WORD...         # decode each word's ideal swipe path
+python3 eval/swipe_sim.py [--noise 0.3] [--cut 0.4] # restore.py's 300 sentences swiped through the gesture decoder + keyboard model
 .venv/bin/python eval/evaluate.py                  # vs Hunspell lt_LT (needs spylls + make myspell)
 ```
 
@@ -187,7 +189,23 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   - `Suggest.kt` (fork change): a whitelisted Varnelė suggestion always autocorrects.
     Upstream lets the user-history predictions veto a fix when the typed word is valid,
     and testing teaches it the uncorrected words (`nauja sakini` stayed).
-  - gesture typing (batch mode) is left to binary dictionaries
+  - gesture typing (batch mode) is still left to binary dictionaries (Google's closed library);
+    the Rust gesture decoder below is not wired to the keyboard yet
+- **Gesture decoder prototype** (`rust/core/src/gesture.rs`, Rust only like key-shift; no Python
+  twin, so not in parity). Input: finger path in key widths over `Layout` (QWERTY default: keys 1
+  wide, rows 1.4 high, `z` after a 1.5 wide shift). Candidates: `Data::walk_forms` walks the
+  folded stems like the key-shift DFS; each letter's key (folded `i` = `i` or `y` key) must be
+  within 1.0 of the path after the previous letter's match (earliest match, a doubled letter is
+  one key), first/last within 1.2 of the start/end, and the ideal path so far ≥ 0.6 × the finger
+  path so far − 1 (a skipped letter makes it short). Prefix chains as in the analyzer, walking
+  only entries that can take them (verbs, `ne`+N flag). Score: shape = 0.2 × mean distance of
+  corresponding resampled points (32) + 0.8 × DTW mean distance (DTW only for the 300 best),
+  cost = 4·shape² + the suggester's frequency score, +0.3 for a capitalised name with shift off,
+  +0.3 for a never-seen prefixed form (`įįvykdyte`). Output: the keys swiped (no diacritics), which
+  the keyboard then treats as a word typed without diacritics (autocorrect + sentence fixer pick
+  `prieš`, `dienų`). Nothing found → one retry with radii ×1.5 and a smaller budget.
+  Tried and dropped: a per-letter anchor distance (favours short words, 34% top-1), a "don't cut
+  past a sharp corner" prune (real corners are often > 1 key from the letter: recall 92 → 74%).
 - `inputlogic/VarneleSentenceFixer.kt`, hooked at the end of
   `InputLogic.handleSeparatorEvent` and `onPickSuggestionManually` (a picked suggestion
   finishes a word too; the picked word itself is left as chosen): after each finished word, re-check the
@@ -273,6 +291,13 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   `kodėl nepataiso visų žodžių, kurių aš rašau?`; `dabar meginu nauja sakini` →
   `dabar mėginu naują sakinį`; Rust key-shift search 0.4 ms, sentence 1.5 ms (Mac).
 
+- Swipe simulation (`eval/swipe_sim.py`, 3,493 swiped known words of the 300 sentences; each key
+  missed by N(0, σ) in x, 1.2σ in y, corners cut by up to `cut` keys, Catmull-Rom curve, finger kept
+  on the keyboard): keys right top-1 / top-3 / final word with diacritics right:
+  σ 0.2: 87.1 / 96.4 / 77.2%; σ 0.3: 74.9 / 87.3 / 66.8%; σ 0.4: 52.3 / 63.9 / 46.8%. When the
+  keys are right the diacritics are right 89%. Decode on the Mac: median 2.1 ms, 95% 27 ms, max
+  161 ms (σ 0.3). The noise model is a guess: no real swipe traces yet.
+
 ## Gotchas (learned the hard way)
 
 - The keyboard simulation splits words at every non-letter (quotes, brackets, no-break spaces,
@@ -301,6 +326,26 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   the history comparison in `Suggest.shouldBeAutoCorrected`.
 
 ## Ideas and open problems (backlog)
+
+- **Next: next-word prediction with ghost text** (owner's pick, 2026-10-22, after the swipe
+  prototype). Build a language-model layer in the Rust core, not a separate system:
+  corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
+  plus a per-user overlay learned on the phone from the *final* text (after autocorrect and the
+  sentence fixer, unlike HeliBoard's user history, which learns words as typed). Expose one
+  `P(word | context)` via JNI that next-word suggestions, ghost text (inline completion of the
+  current prefix + predicted next word, new UI in the fork), swipe ranking and tap autocorrect
+  all use; it also breaks frequency ties (`žmones`/`žmonės`). Predictions keep diacritics through
+  the analyzer. Needs a bigger, more conversational corpus than the 600 Wikipedia articles.
+
+- **Swipe, next steps**: (1) wire it into the fork: enable gesture input for `lt` without
+  `JniUtils.sHaveGestureLib`, pass `ComposedData.mInputPointers` + key centres (divided by the key
+  width) from `VarneleDictionary.getSuggestions` in batch mode to a new `Native.gesture`, run the
+  top keys through `Native.check` for the diacritics; check the sentence fixer runs after a
+  gesture (no separator is typed). (2) Phone speed: the Mac 95th percentile is 27 ms, the phone is
+  ~5–10× slower, and HeliBoard asks again while the finger moves. (3) Record real traces on the
+  Fold7 to replace the noise model. (4) Ranking is the main loss (92% of words are among the
+  candidates, 75% first): short words on one row are the same line (`tuo`/`to`, `kaip`/`karo`,
+  `kiek`/`kurk`), only context separates them: the next-word prediction model above.
 
 ### Phone-testing list of 2026-10-19: done, and what was left on purpose
 
@@ -420,3 +465,4 @@ Left deliberately:
 16. keyboard order: adjective before genitives (`dalyvaujančių`), genitive between a preposition
     and its object (`į teises mokykla` → `teisės mokyklą`), case+number for the one-phrase check,
     -tinas participles take no accusative
+17. gesture (swipe) decoder prototype in Rust (`gesture.rs`, `varnele swipe`, serve `gesture`), eval/swipe_sim.py

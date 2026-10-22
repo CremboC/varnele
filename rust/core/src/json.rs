@@ -63,3 +63,14 @@ pub fn keyboard_word(k: &crate::checker::KeyboardWord) -> String {
         k.key_shift
     )
 }
+
+/// Gesture candidates as JSON.
+pub fn gesture(cands: &[crate::gesture::GestureCandidate]) -> String {
+    let items: Vec<String> = cands
+        .iter()
+        .map(|c| {
+            format!("{{\"w\":{},\"best\":{},\"cost\":{:.4},\"shape\":{:.4}}}", string(&c.word), string(&c.best), c.cost, c.shape)
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
