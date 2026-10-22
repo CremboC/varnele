@@ -396,6 +396,14 @@ impl<'a> G<'a> {
         v
     }
 
+    /// Candidates of an unknown word that the context allows, in the suggester's order
+    /// (frequency first): sienu before a noun -> sienų, not šienų (hay).
+    fn ranked(&self, w: &str, mut forms: Vec<String>) -> Vec<String> {
+        let order = self.suggestions_of(w);
+        forms.sort_by_key(|f| { let l = lower(f); order.iter().position(|o| *o == l).unwrap_or(order.len()) });
+        forms
+    }
+
     fn known(&self, w: &str) -> bool {
         if let Some(&k) = self.c.known.borrow().get(w) {
             return k;
@@ -1244,6 +1252,55 @@ impl Grammar {
             }
         }
 
+        // an unknown word after a verb (both may be typed without diacritics): its accusative
+        // candidates first (iskele salyga -> sąlygą); it only reorders suggestions
+        let cand_analyses = |t: &Word| -> Vec<Analysis> {
+            if t.known { g.analyses(&t.text) } else { t.variants(&g).iter().flat_map(|(f, _)| g.analyses(f)).collect() }
+        };
+        for (i, w) in toks.iter().enumerate() {
+            if i + 1 >= toks.len() || !adjacent[i + 1] {
+                continue;
+            }
+            let alls = cand_analyses(w);
+            let verbs: Vec<&Analysis> = alls.iter().filter(|a| g.finite(a)).collect();
+            if verbs.is_empty() || !g.mostly_verb(&alls)
+                || (w.pos_readings(&g).iter().any(|r| r.pos == Pos::Adj) && could_agree(&g, w, &toks[i + 1]))
+            {
+                continue;
+            }
+            if verbs.iter().any(|a| COPULAS.contains(&a.lemma.as_str())) || COPULA_FORMS.contains(&w.lower.as_str())
+                || verbs.iter().any(|a| a.prefix.starts_with("ne") || g.tag(a).ends_with(".refl"))
+                || !verbs.iter().any(|a| TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)))
+            {
+                continue;
+            }
+            let mut k = i;
+            while k + 1 < toks.len() && adjacent[k + 1] && (OBJECT_SKIP.contains(&toks[k + 1].lower.as_str()) || between(k + 1)) {
+                k += 1;
+            }
+            let span = phrase(k, true);
+            if span.is_empty()
+                || !toks[*span.last().unwrap()].is_noun(&g)
+                || CLAUSE_WORDS.contains(&toks[span[0]].lower.as_str())
+                || span.iter().any(|&x| cand_analyses(&toks[x]).iter().any(|a| g.tag(a) == "V.inf" || g.finite(a)))
+            {
+                continue; // turi buti (būti, not būtį)
+            }
+            for &x in &span {
+                let t = &toks[x];
+                let acc: Vec<String> = t.variants(&g).iter()
+                    .filter(|(_, rs)| rs.iter().any(|r| r.case == "acc"))
+                    .map(|(f, _)| t.cap(f)).collect();
+                if !t.known && !acc.is_empty() && acc.len() < t.variants(&g).len() {
+                    add(&mut issues, Issue {
+                        start: t.start, end: t.end, word: t.text.clone(), rule: "context",
+                        message: format!("the object of '{}' takes the accusative", w.text),
+                        suggestions: g.ranked(&t.text, acc),
+                    });
+                }
+            }
+        }
+
         // subject pronoun + verb: aš buvo -> buvau
         for i in 0..toks.len().saturating_sub(1) {
             let pron = &toks[i];
@@ -1381,7 +1438,7 @@ impl Grammar {
             if !adjacent[i] || issues.contains_key(&a.start) {
                 continue;
             }
-            if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) || !(a.known || n.known) {
+            if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) {
                 continue;
             }
             // viena kitą = each other (but: vienos eilutes -> eilutės)
@@ -1426,6 +1483,22 @@ impl Grammar {
                 .filter(|(_, rs)| rs.iter().any(|x| x.pos == Pos::Adj && nr.iter().any(|y| agree(x, y))))
                 .map(|(f, _)| a.cap(f)).collect();
             let msg = format!("'{} {}': adjective and noun must agree in case and number", a.text, n.text);
+            if !a.known && !n.known {
+                if a.variants(&g).iter().any(|(f, _)| g.analyses(f).iter().any(|x| g.finite(x))) {
+                    continue; // % sudare baltaodziai: sudarė (a verb), not the participle sudarę
+                }
+                // both typed without diacritics: each puts first the candidates that agree with
+                // the other's, when that narrows them (dalyvaujanciu saliu -> dalyvaujančių šalių)
+                for (t, fix) in [(n, &fix_n), (a, &fix_a)] {
+                    if !fix.is_empty() && fix.len() < t.variants(&g).len() {
+                        add(&mut issues, Issue {
+                            start: t.start, end: t.end, word: t.text.clone(), rule: "context", message: msg.clone(),
+                            suggestions: g.ranked(&t.text, fix.clone()),
+                        });
+                    }
+                }
+                continue;
+            }
             if !n.known {
                 fix_a.clear();
             }
@@ -1458,12 +1531,21 @@ impl Grammar {
 
         // 9. a noun right before another noun is its genitive modifier: gyventoju skaičius ->
         //    gyventojų, vietoves gyventojai -> vietovės (the -ų/-ės lost their diacritics)
+        //    An unknown word (typed without diacritics) gets its genitive candidates first:
+        //    Hulos slapynes dalis -> šlapynės. Its other candidates stand for its own reading.
         for i in 0..toks.len().saturating_sub(1) {
             let w = &toks[i];
-            if issues.contains_key(&w.start) || !adjacent[i + 1] || !w.known || (first_upper(&w.text) && !starts_sentence(i)) {
+            if issues.contains_key(&w.start) || !adjacent[i + 1] || (first_upper(&w.text) && !starts_sentence(i)) {
                 continue;
             }
-            let an_w = g.analyses(&w.text);
+            let (an_w, own, own_forms): (Vec<Analysis>, Vec<Reading>, Vec<String>) = if w.known {
+                (g.analyses(&w.text), w.own.clone(), vec![w.lower.clone()])
+            } else {
+                let rest: Vec<String> = w.variants(&g).iter()
+                    .filter(|(_, rs)| !rs.iter().any(|r| r.pos == Pos::Noun && r.case == "gen"))
+                    .map(|(f, _)| f.clone()).collect();
+                (rest.iter().flat_map(|f| g.analyses(f)).collect(), rest.iter().flat_map(|f| g.readings_of(f)).collect(), rest)
+            };
             let nouns: Vec<&Analysis> = an_w.iter().filter(|a| g.tag(a).starts_with("N.")).collect();
             if nouns.is_empty()
                 || an_w.iter().any(|a| g.tag(a).ends_with(".gen") || matches!(g.tag(a), "W" | "Adv"))
@@ -1474,7 +1556,7 @@ impl Grammar {
             let fix: Vec<String> = w.variants(&g).iter()
                 .filter(|(f, _)| first_lower(f) && g.analyses(f).iter().any(|a| {
                     let t = g.tag(a);
-                    t.starts_with("N.") && t.ends_with(".gen") && nouns.iter().any(|n| n.lemma == a.lemma)
+                    t.starts_with("N.") && t.ends_with(".gen") && (!w.known || nouns.iter().any(|n| n.lemma == a.lemma))
                 }))
                 .map(|(f, _)| w.cap(f)).collect();
             if fix.is_empty() {
@@ -1483,22 +1565,33 @@ impl Grammar {
             let span = phrase(i, false);
             let Some(&h) = span.last() else { continue };
             let head = &toks[h];
-            if !head.is_noun(&g) || !head.known || first_upper(&head.text)
-                || g.analyses(&head.text).iter().any(|a| matches!(g.tag(a), "W" | "Adv"))
+            // (an unknown head counts by its candidates when the word itself is unknown: on the
+            // keyboard the head has been corrected by the time the sentence is re-checked)
+            if !head.is_noun(&g) || !(head.known || !w.known) || first_upper(&head.text)
+                || cand_analyses(head).iter().any(|a| matches!(g.tag(a), "W" | "Adv"))
                 || verb_at(i + span.len())
             {
                 continue; // su broliu namo: namo is an adverb
             }
-            if w.own.iter().any(|r| head.own.iter().any(|x| x.case == r.case))
-                || (!head.own.is_empty() && head.own.iter().all(|r| r.case == "gen"))
-            {
-                continue; // one phrase: pilotu bandytoju, naktiniu gyvenimu; tarpininku liaudies švietime
+            let mut head_cases: Vec<&str> = head.pos_readings(&g).iter().map(|r| r.case).collect();
+            let own_cases: Vec<&str> = own.iter().map(|r| r.case).collect();
+            if w.known {
+                if head_cases.is_empty() || head_cases.iter().any(|c| own_cases.contains(c)) || head_cases.iter().all(|c| *c == "gen") {
+                    continue; // one phrase: pilotu bandytoju, naktiniu gyvenimu; tarpininku liaudies švietime
+                }
+            } else {
+                // the head may have lost its diacritics too (zaidimu bendrove -> bendrovė): skip only
+                // when every spelling of it could share the word's case
+                head_cases.extend(head.variants(&g).iter().flat_map(|(_, rs)| rs.iter().map(|r| r.case)));
+                if head_cases.is_empty() || head_cases.iter().all(|c| own_cases.contains(c)) {
+                    continue;
+                }
             }
             if nouns.iter().all(|a| a.lemma == "metas") {
                 continue; // vienu metu, tam tikru metu: "at a time"
             }
             // an adverbial instrumental seen as often as its genitive: Sovietmečiu, laikotarpiu, būdu
-            let own_f = g.freq(&w.lower);
+            let own_f = own_forms.iter().map(|f| g.freq(f)).max().unwrap_or(0);
             let fix_f = fix.iter().map(|f| g.freq(f)).max().unwrap_or(0);
             if own_f > 0 && own_f * 3 >= fix_f {
                 continue;
@@ -1512,7 +1605,7 @@ impl Grammar {
             let mut ok = true;
             while k >= 0 && adjacent[k as usize + 1] && toks[k as usize].is_adj(&g) {
                 let m = &toks[k as usize];
-                if !m.own.iter().any(|x| w.own.iter().any(|y| agree(x, y))) {
+                if !m.own.iter().any(|x| own.iter().any(|y| agree(x, y))) {
                     break;
                 }
                 let mf: Vec<String> = m.variants(&g).iter()
@@ -1531,7 +1624,7 @@ impl Grammar {
             if k >= 0 && adjacent[k as usize + 1] {
                 let p = &toks[k as usize];
                 let an_p = g.analyses(&p.text);
-                if prep_cases(&p.lower).is_some_and(|cs| w.own.iter().any(|r| cs.contains(&r.case))) {
+                if prep_cases(&p.lower).is_some_and(|cs| own.iter().any(|r| cs.contains(&r.case))) {
                     continue; // su metaliniu lankeliu dugne
                 }
                 if an_p.iter().any(|a| g.tag(a).starts_with("V.")) && g.mostly_verb(&an_p) {
@@ -1544,7 +1637,7 @@ impl Grammar {
                 // after a genitive (or a name) an instrumental is often its head: karo metu,
                 // Vyriausybės potvarkiu, Aifelio dialektu; only a genitive the corpus knows well
                 // wins there (vidaus reikalų, Čikagos lietuvių)
-                if w.own.iter().any(|r| r.case == "ins")
+                if w.known && own.iter().any(|r| r.case == "ins")
                     && (pr.iter().any(|r| r.pos == Pos::Noun && r.case == "gen") || pr.is_empty())
                     && fix_f < 5
                 {
@@ -1558,9 +1651,9 @@ impl Grammar {
             while j >= 0 && j >= k - 3 && adjacent[j as usize + 1] && !governed {
                 let t = &toks[j as usize];
                 governed = if let Some(cs) = prep_cases(&t.lower) {
-                    w.own.iter().any(|r| cs.contains(&r.case))
+                    own.iter().any(|r| cs.contains(&r.case))
                 } else {
-                    w.own.iter().any(|r| r.case == "ins")
+                    own.iter().any(|r| r.case == "ins")
                         && g.analyses(&t.text).iter().any(|a| g.tag(a).starts_with("V.") && PREDICATIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)))
                 };
                 j -= 1;
@@ -1569,6 +1662,11 @@ impl Grammar {
                 continue;
             }
             let why = format!("'{} {}': a noun before another noun is usually its genitive", w.text, head.text);
+            if !w.known {
+                // an unknown word never changes a known neighbour
+                add(&mut issues, Issue { start: w.start, end: w.end, word: w.text.clone(), rule: "context", message: why, suggestions: g.ranked(&w.text, fix) });
+                continue;
+            }
             for (m, mf) in mods {
                 let t = &toks[m];
                 add(&mut issues, Issue { start: t.start, end: t.end, word: t.text.clone(), rule: "case", message: why.clone(), suggestions: mf });

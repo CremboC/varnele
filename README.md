@@ -25,7 +25,7 @@ python3 -m unittest discover tests
 | Prefix grammar | `varnele/analyzer.py` | `ne-/nebe-/be-/te-/tebe-` + 12 verbal prefixes + the `-si-` infix, checked against each verb's prefix flags |
 | Spoken register | `varnele/analyzer.py` | `-ti→-t`, `-me→-m`, `-te→-t`, `-si→-s`, `-oje→-oj`, `-uose→-uos`, `-oms→-om`, … mapped back to formal forms |
 | Word formation | `varnele/derivation.py` | Productive suffixes (`-inis`, `-iškas`, `-ininkas`, diminutives…), compounds, `geo-/anti-/neo-…` prefixes. **Blocked** whenever a dictionary word is one slip away |
-| Context rules | `varnele/grammar.py` | Preposition government (`prieš pora` → `porą`, `kabo virs stalo` → `virš`), adjective–noun agreement in case/number/gender, predicate adjectives (`ji nedidele` → `nedidelė`), genitive after quantities (`daug vaiku` → `vaikų`) and before a head noun (`gyventoju skaičius` → `gyventojų`), missing commas before `kad`, `nes`, `bet`, `kuris`…; genitive after negation (`neturiu laiką` → `laiko`), subject–verb person (`aš buvo` → `buvau`), objects of 1st/2nd person verbs and of 3rd person ones whose subject comes first (`mačiau namas`, `Jonas mato namas` → `namą`). Fixes are generated from the word's own paradigm |
+| Context rules | `varnele/grammar.py` | Preposition government (`prieš pora` → `porą`, `kabo virs stalo` → `virš`), adjective–noun agreement in case/number/gender, predicate adjectives (`ji nedidele` → `nedidelė`), genitive after quantities (`daug vaiku` → `vaikų`) and before a head noun (`gyventoju skaičius` → `gyventojų`), missing commas before `kad`, `nes`, `bet`, `kuris`…; genitive after negation (`neturiu laiką` → `laiko`), subject–verb person (`aš buvo` → `buvau`), objects of 1st/2nd person verbs and of 3rd person ones whose subject comes first (`mačiau namas`, `Jonas mato namas` → `namą`). Fixes are generated from the word's own paradigm. For an unknown word typed without diacritics the same rules choose among its candidates (`dalyvaujanciu saliu` → `dalyvaujančių`, `rado salyga` → `sąlygą`) |
 | Suggestions | `varnele/suggest.py` | Diacritic-blind lookup + one typo, ranked by weighted edit distance (diacritic swaps cheap, adjacent keys cheaper), form and lemma frequency |
 
 Additions to the lexicon go in `data/extra.txt` (same `word/FLAGS` syntax as ispell-lt).
@@ -60,9 +60,9 @@ the top suggestion for each flagged word and counts what comes back:
 
 | | words only | + context rules |
 |---|---|---|
-| Words needing a diacritic, restored correctly | 63.1 % | **67.7 %** |
+| Words needing a diacritic, restored correctly | 63.1 % | **68.3 %** |
 | Correct words wrongly changed | 0 | 1 |
-| Whole sentence exactly right | 24.3 % | **28.3 %** |
+| Whole sentence exactly right | 24.3 % | **29.0 %** |
 
 Most of what is still missed is valid without diacritics and grammar can't decide
 it (`kalba` is "speaks" and "language", `žmones` an accusative). A model of case

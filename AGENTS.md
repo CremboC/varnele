@@ -121,6 +121,7 @@ Varnelė debug logs on the phone: `adb logcat -s Varnele:V`.
 | agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų` | `viena kitą` (only before a kitas form: `vienos eilutes` → `eilutės`); adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`). Which word changes: a preposition before decides (`pro nedideles gyvenvietės` → `gyvenvietes`), else the one typed without diacritics (`nedidele mergaitė` → `nedidelė`, `visa energiją` → `visą`) |
 | predicate adjective | `ji nedidele` → `nedidelė`, `mergaitė buvo (labai) nedidele` | subject = jis/ji/jie/jos or a noun whose most frequent lemma is nominative; nouns and `jos` need a nominative copula (būti, atrodyti, likti, jaustis; not `tapo parapine`); the adjective ends the clause; participles skipped |
 | genitive before a head noun | `miesto gyventoju skaičius` → `gyventojų`, `vietoves gyventojai` → `vietovės`, `branduoliniu ginklu sutartis` (modifiers too) | each from Wikipedia: not when both share a case (`pilotu bandytoju`, `naktiniu gyvenimu`), head genitive-only, head a verb or adverb (`su broliu namo`); not lemma metas (`vienu metu`); not when the form is ≥⅓ as frequent as its genitive (`Sovietmečiu`, `laikotarpiu`); not after a verb, possessive, `šiuo`, or a governing preposition up to 3 words left (`į Kalavijuočių ordino žemes`); an instrumental after a genitive or name only if its genitive is seen 5+ times (`vidaus reikalų` yes, `karo metu`, `Vyriausybės potvarkiu` no) |
+| context ranking of unknown words (reorders suggestions only) | both adjective and noun unknown: each keeps the candidates agreeing with the other's (`dalyvaujanciu saliu` → `dalyvaujančių`); after a TRANSITIVE_VERBS verb (itself possibly unknown, by its candidates) accusative candidates first (`rado salyga` → `sąlygą`); genitive-before-noun for unknown words, all genitive candidates (`sienu klausimas` → `sienų`) | allowed candidates keep the suggester's order (`sienų`, not `šienų`); not when the adjective's candidates include a finite verb (`% sudare baltaodziai` → `sudarė`); no infinitive/verb in the object phrase (`turi buti`); compared with the rule for known words: an unknown head counts by its candidates, the head's diacritic twins count for the shared-case check (`zaidimu bendrove`), genitive chains allowed, no corpus-evidence guard for an instrumental after a genitive; any verb instead of TRANSITIVE_VERBS was worse (`sudaro dirbama zeme`) |
 | preposition that became a verb | `kabo virs stalo` → `virš` | the phrase after it takes the preposition's case and the clause already has a verb before it (`Mama virs sriubos` = will boil) |
 | negation | `neturiu laiką` → `laiko`; a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas, a one-word phrase with an adverb reading (`neatėjo laiku` = on time) |
 | subject | `aš buvo` → `buvau`, `aš vakar buvo`, `jis jau einu` | pronoun + finite verb, up to 2 adverb/particle-only words between (not pronouns, connectives, prepositions, `ne`, `tai`); not a coordinated subject (`aš ir jis buvome`). An unknown word after the pronoun ranks verbs of that person first (`jis ziuri` → `žiūri`, not the jury `žiuri`, which the Wikipedia corpus prefers) |
@@ -247,8 +248,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - vs Hunspell lt_LT: fewer false alarms on lowercase words (2,018 vs 2,483 tokens),
   better diacritic fixes (#1 correct 56.7% vs 40.0%), worse on keyboard typos
   (detect 89.3 vs 95.3%, #1 70.0 vs 76.0%).
-- Restoration (all diacritics stripped, 300 sentences): 63.1% → 67.7% with
-  context rules (66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
+- Restoration (all diacritics stripped, 300 sentences): 63.1% → 68.3% with
+  context rules (67.7% before context ranking of unknown words, 66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
   checker; a most-frequent-spelling baseline gets 71.9%.
 - Rust: load 22 ms, correct word 0.001 ms, misspelling + suggestions ~0.8 ms,
   sentence ~1.6 ms (Mac). Phone (Fold7): 0.05–0.8 ms valid words, 6–17 ms
@@ -317,6 +318,10 @@ Left deliberately:
   `karo metu` and acc/nom choices needing the verb. As a re-ranker of unknown words'
   diacritic candidates it moved #1 from 1005 to 1024 of 1267. Not worth a new table in
   varnele.bin; retry with a much bigger corpus (full Wikipedia dump plus conversational text).
+- Restoration misses after context ranking (300 test sentences): 396 words valid without
+  diacritics and left alone, 62 unknown words with the right form ranked lower. Many of those
+  heads are rare valid words in stripped text (`daliu` = adjective dalus), which the keyboard's
+  rare-twin rule fixes first; the checker does not have that rule.
 - The keyboard applies only diacritic-only fixes, so re-inflections from the object rule
   (`Jonas mato namas` → `namą`) are shown but never autocorrected; `nauja knyga` → `naują knygą` is.
 - Verify on the phone (owner's tests so far found real gaps every time): the
@@ -393,3 +398,5 @@ Left deliberately:
 13. `koki nors` (no comma, `kokį`), numbers + genitive plural, genitive verbs
 14. genitive before a head noun, 3rd person objects with adverbs between, predicate
     adjectives, agreement fix direction, `virs` → `virš`
+15. context ranking of unknown words: on 1500 stripped sentences the top suggestion for
+    unknown words is wrong 246 times instead of 272 (26 better, 0 worse)

@@ -382,6 +382,12 @@ class Grammar:
             self._sugg[w] = [s.lower() for s in self.sg.suggest(w)]
         return self._sugg[w]
 
+    def ranked(self, w, forms):
+        """Candidates of an unknown word that the context allows, in the suggester's order
+        (frequency first): sienu before a noun -> sienų, not šienų (hay)."""
+        order = self.suggestions_of(w)
+        return sorted(forms, key=lambda f: order.index(f.lower()) if f.lower() in order else len(order))
+
     def variants_of(self, w):
         """Other real words spelled like w apart from diacritics."""
         if w not in self._var:
@@ -836,6 +842,36 @@ class Grammar:
                             add(Issue(x.start, x.end, x.text, "object",
                                       f"the object of '{w.text}' takes the accusative", fix))
 
+        # an unknown word after a verb (both may be typed without diacritics): its accusative
+        # candidates first (iskele salyga -> sąlygą); it only reorders suggestions
+        def cand_analyses(t):
+            return self.analyses(t.text) if t.known else [a for f, _ in t.variants for a in self.analyses(f)]
+
+        for i, w in enumerate(toks):
+            if i + 1 >= len(toks) or not adjacent[i + 1]:
+                continue
+            alls = cand_analyses(w)
+            verbs = [a for a in alls if finite(a)]
+            if not verbs or not self.mostly_verb(alls) or (any(r.pos == "adj" for r in w.pos_readings())
+                                                          and _could_agree(w, toks[i + 1])):
+                continue
+            if (any(a.lemma in COPULAS for a in verbs) or w.lower in COPULA_FORMS
+                    or any(a.prefix.startswith("ne") or a.tag.endswith(".refl") for a in verbs)
+                    or not any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)):
+                continue
+            k = i
+            while k + 1 < len(toks) and adjacent[k + 1] and (toks[k + 1].lower in OBJECT_SKIP or between(k + 1)):
+                k += 1
+            span = phrase(k, participles=True)
+            if (not span or not span[-1].is_noun or span[0].lower in CLAUSE_WORDS
+                    or any(any(a.tag == "V.inf" or finite(a) for a in cand_analyses(x)) for x in span)):
+                continue          # turi buti (būti, not būtį)
+            for x in span:
+                acc = [x.cap(f) for f, rs in x.variants if any(r.case == "acc" for r in rs)]
+                if not x.known and acc and len(acc) < len(x.variants):
+                    add(Issue(x.start, x.end, x.text, "context", f"the object of '{w.text}' takes the accusative",
+                                self.ranked(x.text, acc)))
+
         # subject pronoun + verb: aš buvo -> buvau
         for i in range(len(toks) - 1):
             pron = toks[i]
@@ -927,7 +963,7 @@ class Grammar:
             a, n = toks[i - 1], toks[i]
             if not adjacent[i] or a.start in issues:
                 continue
-            if not (a.is_adj and n.is_noun) or a.can_be_verb or not (a.known or n.known):
+            if not (a.is_adj and n.is_noun) or a.can_be_verb:
                 continue
             no_gen = False
             if a.lower in ("vienas", "viena", "vieni", "vienos") and n.lower.startswith("kit"):
@@ -962,6 +998,15 @@ class Grammar:
             fix_a = [a.cap(f) for f, rs in a.variants
                      if any(_agree(x, y) for x in rs if x.pos == "adj" for y in nr)]
             msg = f"'{a.text} {n.text}': adjective and noun must agree in case and number"
+            if not a.known and not n.known:
+                if any(finite(x) for f, _ in a.variants for x in self.analyses(f)):
+                    continue      # % sudare baltaodziai: sudarė (a verb), not the participle sudarę
+                # both typed without diacritics: each puts first the candidates that agree with
+                # the other's, when that narrows them (dalyvaujanciu saliu -> dalyvaujančių šalių)
+                for t, fix in ((n, fix_n), (a, fix_a)):
+                    if fix and len(fix) < len(t.variants):
+                        add(Issue(t.start, t.end, t.text, "context", msg, self.ranked(t.text, fix)))
+                continue
             # An unknown word may only reorder its own suggestions; it never
             # justifies changing a correctly spelled neighbour.
             if not n.known:
@@ -985,33 +1030,52 @@ class Grammar:
 
         # 9. a noun right before another noun is its genitive modifier: gyventoju skaičius ->
         #    gyventojų, vietoves gyventojai -> vietovės (the -ų/-ės lost their diacritics)
+        #    An unknown word (typed without diacritics) gets its genitive candidates first:
+        #    Hulos slapynes dalis -> šlapynės. Its other candidates stand for its own reading.
         for i in range(len(toks) - 1):
             w = toks[i]
-            if (w.start in issues or not adjacent[i + 1] or not w.known
+            if (w.start in issues or not adjacent[i + 1]
                     or w.text[:1].isupper() and not starts_sentence(i)):
                 continue
-            an_w = self.analyses(w.text)
+            if w.known:
+                an_w = self.analyses(w.text)
+                own, own_forms = w.own, [w.lower]
+            else:
+                rest = [f for f, rs in w.variants if not any(r.pos == "noun" and r.case == "gen" for r in rs)]
+                an_w = [a for f in rest for a in self.analyses(f)]
+                own, own_forms = [r for f in rest for r in self.readings_of(f)], rest
             nouns = [a for a in an_w if a.tag.startswith("N.")]
             if (not nouns or any(a.tag.endswith(".gen") for a in an_w) or any(a.tag in ("W", "Adv") for a in an_w)
                     or self.mostly_verb(an_w) and any(finite(a) for a in an_w)):
                 continue          # laiku (on time), metu (I throw) are not modifiers
             lemmas = {a.lemma for a in nouns}
             fix = [w.cap(f) for f, _ in w.variants if f[:1].islower()
-                   and any(a.lemma in lemmas and a.tag.startswith("N.") and a.tag.endswith(".gen")
+                   and any((a.lemma in lemmas or not w.known) and a.tag.startswith("N.") and a.tag.endswith(".gen")
                            for a in self.analyses(f))]
             if not fix:
                 continue
             span = phrase(i)
             head = span[-1] if span else None
-            if (not head or not head.is_noun or not head.known or head.text[:1].isupper()
-                    or any(a.tag in ("W", "Adv") for a in self.analyses(head.text)) or verb_at(i + len(span))):
+            # (an unknown head counts by its candidates when the word itself is unknown: on the
+            # keyboard the head has been corrected by the time the sentence is re-checked)
+            if (not head or not head.is_noun or not (head.known or not w.known) or head.text[:1].isupper()
+                    or any(a.tag in ("W", "Adv") for a in cand_analyses(head)) or verb_at(i + len(span))):
                 continue          # su broliu namo: namo is an adverb
-            if {r.case for r in w.own} & {r.case for r in head.own} or {r.case for r in head.own} == {"gen"}:
-                continue          # one phrase: pilotu bandytoju, naktiniu gyvenimu; tarpininku liaudies švietime
+            head_cases = {r.case for r in head.pos_readings()}
+            own_cases = {r.case for r in own}
+            if w.known:
+                if not head_cases or own_cases & head_cases or head_cases == {"gen"}:
+                    continue      # one phrase: pilotu bandytoju, naktiniu gyvenimu; tarpininku liaudies švietime
+            else:
+                # the head may have lost its diacritics too (zaidimu bendrove -> bendrovė): skip only
+                # when every spelling of it could share the word's case
+                head_cases |= {r.case for _, rs in head.variants for r in rs}
+                if not head_cases or head_cases <= own_cases:
+                    continue
             if lemmas == {"metas"}:
                 continue          # vienu metu, tam tikru metu: "at a time"
             # an adverbial instrumental seen as often as its genitive: Sovietmečiu, laikotarpiu, būdu
-            own_f = self.freq.get(w.lower, 0)
+            own_f = max(self.freq.get(f.lower(), 0) for f in own_forms)
             if own_f and own_f * 3 >= max(self.freq.get(f.lower(), 0) for f in fix):
                 continue
             # modifiers before it must agree with the genitive too: branduoliniu ginklu -> branduolinių
@@ -1020,7 +1084,7 @@ class Grammar:
             mods, k, ok = [], i - 1, True
             while k >= 0 and adjacent[k + 1] and toks[k].is_adj:
                 m = toks[k]
-                if not any(_agree(x, y) for x in m.own for y in w.own):
+                if not any(_agree(x, y) for x in m.own for y in own):
                     break
                 mf = [m.cap(f) for f, rs in m.variants if any(_agree(x, y) for x in rs if x.pos == "adj" for y in gen)]
                 if not mf:
@@ -1033,7 +1097,7 @@ class Grammar:
             if k >= 0 and adjacent[k + 1]:
                 p = toks[k]
                 an_p = self.analyses(p.text)
-                if p.lower in PREPOSITIONS and any(r.case in PREPOSITIONS[p.lower] for r in w.own):
+                if p.lower in PREPOSITIONS and any(r.case in PREPOSITIONS[p.lower] for r in own):
                     continue      # su metaliniu lankeliu dugne
                 if any(a.tag.startswith("V.") for a in an_p) and self.mostly_verb(an_p):
                     continue      # pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
@@ -1043,7 +1107,7 @@ class Grammar:
                 # after a genitive (or a name) an instrumental is often its head: karo metu,
                 # Vyriausybės potvarkiu, Aifelio dialektu; only a genitive the corpus knows well
                 # wins there (vidaus reikalų, Čikagos lietuvių)
-                if (any(r.case == "ins" for r in w.own)
+                if (w.known and any(r.case == "ins" for r in own)
                         and (any(r.pos == "noun" and r.case == "gen" for r in pr) or not pr)
                         and max(self.freq.get(f.lower(), 0) for f in fix) < 5):
                     continue
@@ -1053,14 +1117,17 @@ class Grammar:
             while j >= 0 and j >= k - 3 and adjacent[j + 1] and not governed:
                 t = toks[j]
                 if t.lower in PREPOSITIONS:
-                    governed = any(r.case in PREPOSITIONS[t.lower] for r in w.own)
+                    governed = any(r.case in PREPOSITIONS[t.lower] for r in own)
                 else:
-                    governed = any(r.case == "ins" for r in w.own) and any(
+                    governed = any(r.case == "ins" for r in own) and any(
                         a.tag.startswith("V.") and a.lemma.endswith(PREDICATIVE_VERBS) for a in self.analyses(t.text))
                 j -= 1
             if governed:
                 continue
             why = f"'{w.text} {head.text}': a noun before another noun is usually its genitive"
+            if not w.known:
+                add(Issue(w.start, w.end, w.text, "context", why, self.ranked(w.text, fix)))
+                continue      # an unknown word never changes a known neighbour
             for m, mf in mods:
                 add(Issue(m.start, m.end, m.text, "case", why, mf))
             add(Issue(w.start, w.end, w.text, "case", why, fix))

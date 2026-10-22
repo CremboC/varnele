@@ -103,6 +103,11 @@ FLAGGED = [
     ("Ji nedidele.", "nedidele", "agreement", "nedidelė"),
     ("Mergaitė buvo labai nedidele.", "nedidele", "agreement", "nedidelė"),
     ("Lempa kabo virs stalo.", "virs", "case", "virš"),               # virs = will become, unless a verb came before
+    # unknown words typed without diacritics: the context picks among their candidates
+    ("Memorandume dalyvaujanciu saliu atstovai.", "dalyvaujanciu", "unknown", "dalyvaujančių"),  # agrees with šalių
+    ("Jis rado salyga.", "salyga", "unknown", "sąlygą"),                       # object of a transitive verb
+    ("Ten veikė Parsukovo papuosalu dirbtuve.", "papuosalu", "unknown", "papuošalų"),  # genitive before a noun
+    ("Iškilo tarpusavio sienu klausimas.", "sienu", "unknown", "sienų"),       # not šienų (hay)
 ]
 
 CORRECT = [
