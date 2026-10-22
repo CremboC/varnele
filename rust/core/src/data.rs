@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
+use crate::analyzer::COLLOQUIAL;
 use crate::counts::Counts;
 use crate::fx::{FxMap, FxSet};
 use crate::text::{fold, lower, FOLDED_ALPHABET};
@@ -58,6 +59,7 @@ pub struct Signature {
 struct Folded {
     stems: FxMap<String, Vec<u32>>,         // folded stem -> stem indices
     sigs: Vec<FxMap<String, Vec<usize>>>,   // folded suffix -> suffix indices
+    spoken: Vec<Vec<(String, Vec<String>)>>, // folded spoken suffix -> its real spellings (einam: me -> m)
 }
 
 /// The callbacks of [`Data::walk_forms`].
@@ -272,7 +274,31 @@ impl Data {
                     m
                 })
                 .collect();
-            Folded { stems, sigs }
+            // a suffix with a spoken shortening for one of its tags: valgy|ti -> valgy|t
+            let spoken = self
+                .sigs
+                .iter()
+                .map(|sig| {
+                    let mut m: Vec<(String, Vec<String>)> = Vec::new();
+                    for (suf, tags) in &sig.suffixes {
+                        for (short, full, test) in COLLOQUIAL {
+                            let Some(head) = suf.strip_suffix(full) else { continue };
+                            if !tags.iter().any(|&t| test.ok(&self.tags[t as usize].s)) {
+                                continue;
+                            }
+                            let real = format!("{head}{short}");
+                            let fs = fold(&real);
+                            match m.iter_mut().find(|e| e.0 == fs) {
+                                Some(e) if e.1.contains(&real) => {}
+                                Some(e) => e.1.push(real),
+                                None => m.push((fs, vec![real])),
+                            }
+                        }
+                    }
+                    m
+                })
+                .collect();
+            Folded { stems, sigs, spoken }
         })
     }
 
@@ -373,7 +399,8 @@ impl Data {
     /// is the state after one more letter (None: no word goes on this way), `end(state)` whether a
     /// word may stop there. Only entries `entry_ok` accepts, only words whose last folded letter
     /// `last_ok` accepts; `verbs_only`: walk only the stems of verbs (faster for a verbal prefix).
-    /// Drives the gesture search; `budget` bounds the stem prefixes visited and suffixes tried.
+    /// A form with a spoken shortening (`einame` → `einam`, `valgyti` → `valgyt`) also yields the
+    /// short form. Drives the gesture search; `budget` bounds the stem prefixes visited and suffixes tried.
     #[allow(clippy::too_many_arguments)]
     pub fn walk_forms<S: Copy>(&self, start: S, step: &dyn Fn(S, char) -> Option<S>, end: &dyn Fn(S) -> bool,
                                entry_ok: &dyn Fn(u32) -> bool, last_ok: &dyn Fn(char) -> bool, verbs_only: bool,
@@ -398,7 +425,21 @@ impl Data {
                     if !(w.entry_ok)(eid) {
                         continue;
                     }
+                    let sig = &self.sigs[sid as usize];
                     for (fsuf, ks) in &f.sigs[sid as usize] {
+                        if *budget == 0 {
+                            return;
+                        }
+                        if fsuf.chars().last().or(stem_last).is_some_and(w.last_ok) {
+                            *budget -= 1;
+                            if Self::walk_suffix(state, fsuf, w) {
+                                for &k in ks {
+                                    out.push(format!("{st}{}", sig.suffixes[k].0));
+                                }
+                            }
+                        }
+                    }
+                    for (fsuf, reals) in &f.spoken[sid as usize] {
                         if !fsuf.chars().last().or(stem_last).is_some_and(w.last_ok) {
                             continue;
                         }
@@ -406,13 +447,9 @@ impl Data {
                             return;
                         }
                         *budget -= 1;
-                        let mut s = Some(state);
-                        for c in fsuf.chars() {
-                            s = s.and_then(|s| (w.step)(s, c));
-                        }
-                        if s.is_some_and(w.end) {
-                            for &k in ks {
-                                out.push(format!("{st}{}", self.sigs[sid as usize].suffixes[k].0));
+                        if Self::walk_suffix(state, fsuf, w) {
+                            for r in reals {
+                                out.push(format!("{st}{r}"));
                             }
                         }
                     }
@@ -428,6 +465,15 @@ impl Data {
             }
             cur.pop();
         }
+    }
+
+    /// Whether the walk can go on from `state` through `fsuf` and stop there.
+    fn walk_suffix<S: Copy>(state: S, fsuf: &str, w: &Walk<S>) -> bool {
+        let mut s = Some(state);
+        for c in fsuf.chars() {
+            s = s.and_then(|s| (w.step)(s, c));
+        }
+        s.is_some_and(w.end)
     }
 
     /// Every (form, tag) of one entry, read back from the index.

@@ -6,7 +6,8 @@
 //! between the finger's path and the word's ideal path (straight lines through its key
 //! centres), both resampled to the same number of points, plus the usual frequency bonus.
 //! The result is the keys swiped (no diacritics, `y` kept: it is its own key); choosing the
-//! diacritics is left to the keyboard's normal checks of a word typed without them.
+//! diacritics is left to the keyboard's normal checks of a word typed without them. Spoken
+//! shortenings of dictionary forms (`einam`, `valgyt`, `mokykloj`) are candidates too.
 
 use std::collections::HashMap;
 
@@ -353,10 +354,17 @@ impl Analyzer {
             fs.dedup();
             let mut best: Option<(f64, String)> = None;
             for f in fs {
-                if self.analyze_exact(&f).is_empty() {
-                    continue;
-                }
-                let mut c = self.score(&kw, &lower(&f)) - CONTEXT_WEIGHT * self.context_score(ctx, &lower(&f), crate::lm::CACHE_SWIPE);
+                let mut c = if !self.analyze_exact(&f).is_empty() {
+                    self.score(&kw, &lower(&f))
+                } else {
+                    // a spoken form (einam): its own frequency, the lemma frequency of its formal twin
+                    let formal = self.colloquial(&f);
+                    let Some(lf) = formal.iter().flat_map(|w| self.analyze_exact(w)).map(|a| self.data.lemma_freq.get(&lower(&a.lemma))).max() else {
+                        continue;
+                    };
+                    self.score(&kw, &lower(&f)) - 0.1 * (1.0 + lf as f64).log10()
+                };
+                c -= CONTEXT_WEIGHT * self.context_score(ctx, &lower(&f), crate::lm::CACHE_SWIPE);
                 if prefixed.contains(&f) && self.data.freq.get(&lower(&f)) == 0 {
                     c += UNSEEN_PREFIXED; // only the prefix rules say so: įįvykdyte
                 }

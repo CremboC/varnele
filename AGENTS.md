@@ -225,7 +225,12 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   only entries that can take them (verbs, `ne`+N flag). Score: shape = 0.2 × mean distance of
   corresponding resampled points (32) + 0.8 × DTW mean distance (DTW only for the 300 best),
   cost = 4·shape² + the suggester's frequency score, +0.3 for a capitalised name with shift off,
-  +0.3 for a never-seen prefixed form (`įįvykdyte`). Output: the keys swiped (no diacritics), which
+  +0.3 for a never-seen prefixed form (`įįvykdyte`). Spoken shortenings are candidates too: a
+  signature suffix with a COLLOQUIAL full ending whose tag passes the test also yields the short
+  ending (`einame` → `einam`, `valgyti` → `valgyt`; `Folded::spoken`, built once), scored by their
+  own frequency plus the lemma frequency of the formal twin; subtitles σ 0.3 keys top 1 / final word
+  81.8 / 74.4 → 82.7 / 75.0%, Tatoeba 85.6 / 79.3 → 85.4 / 79.2%, Wikipedia unchanged, same speed
+  (a strip-and-check per suffix in the walk instead doubled the 95th percentile). Output: the keys swiped (no diacritics), which
   the keyboard then treats as a word typed without diacritics (autocorrect + sentence fixer pick
   `prieš`, `dienų`). Nothing found → one retry with radii ×1.5 and a smaller budget.
   Speed: prefix chains walk only entries the analyzer's prefix rules allow (`analyzer::allowed` with
@@ -445,15 +450,12 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   linked to the standard lemma; formal mode ranks with the standard table, informal with the
   mixed one, the user overlay on top of both. The n-gram model above uses the same split.
 
-- **Bug (2026-10-22, owner found it on the Fold7): swipe can't produce spoken forms.** `einam`
-  swiped → `rytinam`, even as a noise-free path (`varnele swipe einam` → `rytinam`, `valgyt` →
-  `valgyti`, `buvom` → `buvok`); `einame` decodes fine. Not ranking: the gesture search
-  (`Analyzer::gesture`, `Data::walk_forms`) only walks dictionary forms, while the spoken register
-  (`-m`, `-t`, `-s`, `-oj`…: `analyzer::COLLOQUIAL`, used by `check_word`/`suggest_scored`) is never
-  generated. Fix: also walk the short spoken endings (a form whose folded ending is a COLLOQUIAL
-  full ending also yields its short twin, `einame` → `einam`), score them like the rest, and keep
-  them as typed (the keyboard accepts `einam` as colloquial); then measure on the subtitle test set,
-  where spoken forms are common, and check the Wikipedia set doesn't lose.
+- **Swipe and spoken forms** (fixed 2026-10-22; owner found `einam` → `rytinam` on the Fold7):
+  the walk now also yields spoken shortenings, see the gesture decoder above. Seen in the
+  subtitles: `nepamirškim`, `sakėm` keys right but the keyboard's check of the keys then gives
+  `nepamirškime`, `sakėme` (the suggester restores diacritics and the full ending at once). Next:
+  the formal mode toggle; owner (2026-10-22): with formal on, never suggest a colloquial form,
+  swiped or typed (`einam` swiped → `einame`, merged with it in the strip).
 - **Swipe, next steps** ((1) is done, phone-tested with replayed swipes; still to try with real
   fingers): (1) wire it into the fork: enable gesture input for `lt` without
   `JniUtils.sHaveGestureLib`, pass `ComposedData.mInputPointers` + key centres (divided by the key
