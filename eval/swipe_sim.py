@@ -126,6 +126,43 @@ def preceding(corpus, sample):
     return out
 
 
+class Learner:
+    """The user model learned on the phone, simulated (--learn): the sample is taken in corpus
+    order, and before each sentence the model has learned all the test set's text before it, as if
+    the user wrote the whole test set in order."""
+
+    def __init__(self, corpus, sample, ask):
+        self.ask = ask
+        self.texts = [" ".join(l for l in p.read_text("utf-8").splitlines()[2:]
+                               if l.strip() and "\\displaystyle" not in l and "{\\" not in l)
+                      for p in sorted(pathlib.Path(corpus).glob("*.txt"))]
+        self.pos = {s: next((k, t.find(s)) for k, t in enumerate(self.texts) if s in t) for s in sample}
+        self.order = sorted(sample, key=lambda s: self.pos[s])
+        self.done = (0, 0)     # the text before this position is learned
+        self.chars = 0
+
+    def learn(self, text):
+        text = text.replace("\t", " ").replace("\n", " ").strip()
+        if text:
+            assert json.loads(self.ask(f"learn\t{text}").readline()) == "ok"
+            self.chars += len(text)
+
+    def before(self, s):
+        """Learn the text before the sentence."""
+        k, i = self.pos[s]
+        while self.done < (k, i):
+            d = self.done
+            end = i if d[0] == k else len(self.texts[d[0]])
+            self.learn(self.texts[d[0]][d[1]:end])
+            self.done = (k, i) if d[0] == k else (d[0] + 1, 0)
+
+    def after(self, s):
+        """The user wrote the sentence: learn it (once, if it occurs twice in the sample)."""
+        if self.done == self.pos[s]:
+            self.learn(s)
+            self.done = (self.pos[s][0], self.pos[s][1] + len(s))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sentences", type=int, default=300)
@@ -136,6 +173,8 @@ def main():
     ap.add_argument("--corpus", default=str(ROOT / "corpus" / "test"))
     ap.add_argument("--words", nargs="*")
     ap.add_argument("--no-paragraph", action="store_true", help="don't give the article text before each sentence")
+    ap.add_argument("--learn", action="store_true", help="the user model learns the text before each sentence (see Learner)")
+    ap.add_argument("--in-order", action="store_true", help="the sentences in corpus order, as --learn takes them (its baseline)")
     a = ap.parse_args()
     rng = random.Random(a.seed)
 
@@ -149,11 +188,16 @@ def main():
     pool = list(sentences(a.corpus))
     sample = random.Random(3).sample(pool, min(a.sentences, len(pool)))   # the same as restore.py
     before = {} if a.no_paragraph else preceding(a.corpus, sample)
+    learner = Learner(a.corpus, sample, _ask) if a.learn or a.in_order else None
+    if learner:
+        sample = learner.order
     st = collections.Counter()
     misses = collections.Counter()
     restore_misses = collections.Counter()
     times = []
     for s in sample:
+        if a.learn:
+            learner.before(s)
         log = []
         final = swipe_text(s, rng, a.noise, a.cut, log, before.get(s, ""))
         words, got = WORD.findall(s), WORD.findall(final)
@@ -184,6 +228,8 @@ def main():
                         restore_misses[f"{orig} → {finals[k]}"] += 1
             if gotk != want:
                 misses[f"{orig} → {top}  {top3[1:3]}"] += 1
+        if a.learn:
+            learner.after(s)
     pct = lambda x, n: f"{100 * x / max(n, 1):.1f}%"
     print(f"noise {a.noise}, cut {a.cut}, {st['sentences']} sentences, {st['swiped']} swiped known words "
           f"({st['unknown words (skipped)']} unknown skipped)")

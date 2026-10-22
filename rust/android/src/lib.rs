@@ -1,4 +1,5 @@
-//! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative, predictNative, ghostNative}
+//! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative, predictNative, ghostNative,
+//! user*Native (the user's own language model)}
 //! The compiled data file is embedded in the library, so the app ships one .so.
 
 use std::sync::{Mutex, OnceLock};
@@ -10,6 +11,9 @@ use varnele::Checker;
 
 static DATA: &[u8] = include_bytes!("../../../data/varnele.bin");
 static CHECKER: OnceLock<Mutex<Checker>> = OnceLock::new();
+
+/// where the user model is saved (set by userLoadNative)
+static USER_PATH: Mutex<String> = Mutex::new(String::new());
 
 fn checker() -> &'static Mutex<Checker> {
     CHECKER.get_or_init(|| Mutex::new(Checker::from_bytes(DATA).expect("embedded data file is valid")))
@@ -163,4 +167,60 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_ghostNative<'l>(
     let typed: String = env.get_string(&typed).map(Into::into).unwrap_or_default();
     let ghost = checker().lock().unwrap().keyboard_ghost(&context, &typed, formal != 0).unwrap_or_default();
     env.new_string(ghost).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// The user's language model: load its counts from `path` (an app-private file; missing = empty)
+/// and save them there from now on.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userLoadNative<'l>(mut env: JNIEnv<'l>, _class: JClass<'l>, path: JString<'l>) {
+    let path: String = env.get_string(&path).map(Into::into).unwrap_or_default();
+    checker().lock().unwrap().an.user.write().unwrap().load(&path);
+    *USER_PATH.lock().unwrap() = path;
+}
+
+/// Learn and use the user's words (the setting); off: neither.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userEnabledNative(_env: JNIEnv, _class: JClass, on: jboolean) {
+    checker().lock().unwrap().an.user.write().unwrap().enabled = on != 0;
+}
+
+/// The text before the cursor after a finished word, as it ends up: finished sentences are learned.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userObserveNative<'l>(mut env: JNIEnv<'l>, _class: JClass<'l>, text: JString<'l>) {
+    let text: String = env.get_string(&text).map(Into::into).unwrap_or_default();
+    checker().lock().unwrap().an.user.write().unwrap().observe(&text);
+}
+
+/// The message is done (sent, field cleared or left): learn its last sentence too.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userCommitNative(_env: JNIEnv, _class: JClass) {
+    checker().lock().unwrap().an.user.write().unwrap().commit();
+}
+
+/// Save the counts if they changed. Returns false if the file could not be written.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userSaveNative(_env: JNIEnv, _class: JClass) -> jboolean {
+    let path = USER_PATH.lock().unwrap().clone();
+    if path.is_empty() {
+        return 1;
+    }
+    checker().lock().unwrap().an.user.write().unwrap().save(&path).is_ok() as jboolean
+}
+
+/// Forget everything learned, and delete the file.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userForgetNative(_env: JNIEnv, _class: JClass) {
+    checker().lock().unwrap().an.user.write().unwrap().clear();
+    let path = USER_PATH.lock().unwrap().clone();
+    if !path.is_empty() {
+        let _ = std::fs::remove_file(&path);
+    }
+    // nothing to save until something is learned again
+    checker().lock().unwrap().an.user.write().unwrap().dirty = false;
+}
+
+/// How many words the user model has learned (counts after halving), for the settings screen.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_userWordsNative(_env: JNIEnv, _class: JClass) -> jint {
+    checker().lock().unwrap().an.user.read().unwrap().total() as jint
 }

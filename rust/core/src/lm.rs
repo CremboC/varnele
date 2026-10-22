@@ -169,6 +169,11 @@ impl crate::analyzer::Analyzer {
             }
             p = (1.0 - cache_share) * p + cache_share * pc;
         }
+        let user = self.user.read().unwrap();
+        let share = user.share(&ctx.prev);
+        if share > 0.0 {
+            p = (1.0 - share) * p + share * user.p_next(&ctx.prev, w);
+        }
         p
     }
 
@@ -183,6 +188,9 @@ impl crate::analyzer::Analyzer {
     pub fn predict_words(&self, ctx: &LmContext, context: &str, prefix: &str, n: usize) -> Vec<(String, f64)> {
         let mut cands: crate::fx::FxSet<String> = Default::default();
         for (w, _) in self.data.predict(&ctx.prev, prefix, CANDIDATES) {
+            cands.insert(w);
+        }
+        for w in self.user.read().unwrap().candidates(&ctx.prev, prefix, CANDIDATES) {
             cands.insert(w);
         }
         let fp = fold(&lower(prefix));

@@ -13,6 +13,10 @@ ghost have saved (a tap counts as one key)?
 
 Predictions are the keyboard's (names capitalised, unknown tokens left out); --raw-lm asks
 the bare language model instead.
+
+--learn simulates the user model learned on the phone (swipe_sim.Learner): the sentences are
+measured in corpus order, and before each one the model has learned all the test set's text
+before it (as if the user wrote the whole test set in order: earlier text teaches the later).
 """
 
 import argparse
@@ -29,7 +33,7 @@ sys.path.insert(0, str(ROOT / "eval"))
 from restore import STRIP, sentences  # noqa: E402
 import keyboard_sim  # noqa: E402
 from keyboard_sim import _ask  # noqa: E402
-from swipe_sim import preceding  # noqa: E402
+from swipe_sim import Learner, preceding  # noqa: E402
 
 
 def predict(context, prefix, n=3):
@@ -49,6 +53,7 @@ def main():
     ap.add_argument("--corpus", default=str(ROOT / "corpus" / "test"))
     ap.add_argument("--raw-lm", action="store_true")
     ap.add_argument("--ghost", action="store_true")
+    ap.add_argument("--learn", action="store_true", help="the user model learns the text before each sentence")
     a = ap.parse_args()
     if a.raw_lm:
         keyboard_sim.SERVE.append("--raw-lm")
@@ -56,7 +61,12 @@ def main():
     sample = random.Random(3).sample(pool, min(a.sentences, len(pool)))   # the same as restore.py
     before = {} if a.no_paragraph else preceding(a.corpus, sample)
     st = collections.Counter()
+    learner = Learner(a.corpus, sample, _ask) if a.learn else None
+    if learner:
+        sample = learner.order
     for s in sample:
+        if learner:
+            learner.before(s)
         for m in re.finditer(r"[^\W\d_]+", s):
             w = m.group().lower()
             context = (before.get(s, "") + " " + s[:m.start()]).strip()
@@ -78,9 +88,13 @@ def main():
                         st["ghost words done"] += 1
                         st["ghost saved"] += len(w) - k - 1
                         break
+        if learner:
+            learner.after(s)
     pct = lambda x, n: f"{100 * x / max(n, 1):.1f}%"
     print(f"{st['words']} words; next word among the top 3: before typing {pct(st['0 letters'], st['words'])}, "
           f"after one letter {pct(st['1 letter'], st['1 letter, words'])}")
+    if a.learn:
+        print(f"learned {learner.chars} characters of text")
     if a.ghost:
         print(f"ghost: {st['ghost shown']} shown up to the right one, right {pct(st['ghost right'], st['ghost shown'])}; "
               f"{pct(st['ghost words done'], st['ghost words'])} of the {st['ghost words']} words of 3+ letters "

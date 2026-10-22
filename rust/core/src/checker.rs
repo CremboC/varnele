@@ -324,8 +324,9 @@ impl Checker {
     /// The keyboard's next words (or completions of `prefix`, typed with or without diacritics)
     /// after `context`, the text before the cursor: the language model's words as they are
     /// written, a name with its capital (lietuvos -> Lietuvos). A word Varnelė doesn't know is
-    /// kept only if the context has it (TSR, Freiburg: the user's own words, as written there),
-    /// not from the corpus alone (foreign words, typos). `formal`: a spoken form (einam) is given
+    /// kept only if the context has it (TSR, Freiburg: the user's own words, as written there) or
+    /// the user has written it [`crate::user::UNKNOWN_MIN`] times, not from the corpus alone
+    /// (foreign words, typos). `formal`: a spoken form (einam) is given
     /// as its standard form (einame), once, as swipe does.
     pub fn keyboard_predict(&self, context: &str, prefix: &str, n: usize, formal: bool) -> Vec<(String, f64)> {
         self.predict_in(&self.an.lm_context(context), context, prefix, n, formal)
@@ -361,6 +362,8 @@ impl Checker {
                 capitalize(&w)
             } else if let Some(as_written) = written.get(&w) {
                 as_written.to_string()
+            } else if let Some(as_written) = self.user_word(&w) {
+                as_written
             } else {
                 continue;
             };
@@ -370,6 +373,18 @@ impl Checker {
             }
         }
         out
+    }
+
+    /// A word Varnelė doesn't know that the user writes (lowercase in), as the user writes it.
+    fn user_word(&self, w: &str) -> Option<String> {
+        let user = self.an.user.read().unwrap();
+        if !user.enabled {
+            return None;
+        }
+        match user.word(w)? {
+            (c, written) if c >= crate::user::UNKNOWN_MIN => Some(if written.is_empty() { w.to_string() } else { written.to_string() }),
+            _ => None,
+        }
     }
 
     /// The keyboard's ghost for the word being typed: its likeliest completion (kod -> kodėl), and

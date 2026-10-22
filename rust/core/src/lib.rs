@@ -23,5 +23,6 @@ pub mod json;
 pub mod lm;
 pub mod suggest;
 pub mod text;
+pub mod user;
 
 pub use checker::{Checker, Finding, KeyboardWord, WordStatus};

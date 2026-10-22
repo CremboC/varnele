@@ -59,7 +59,7 @@ python3 eval/restore.py --sentences 300            # strip all diacritics, measu
 python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precision of each comma rule
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
 python3 eval/keyboard_restore.py                   # restore.py's 300 sentences typed through the keyboard model
-rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" /
+rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" / "learn\tTEXT" /
                                                    # "gesture\tX,Y X,Y…\tCAP\tN\tCONTEXT" / "predict\tCONTEXT\tPREFIX\tN" (used by the sims)
 rust/target/release/varnele swipe WORD...         # decode each word's ideal swipe path
 python3 eval/swipe_sim.py [--noise 0.3] [--cut 0.4] # restore.py's 300 sentences swiped through the gesture decoder + keyboard model
@@ -67,6 +67,7 @@ python3 eval/extract_wiki.py                       # corpus/wiki/ltwiki-latest-p
 python3 eval/build_freq.py [--conv-weight W]       # Wikipedia + conversational text -> data/freq.tsv, lemma_freq.tsv (words seen 10+ times)
 python3 eval/build_ngrams.py [--conv-weight W]     # the same -> data/bigrams.tsv (pairs seen 10+ times; then export)
 python3 eval/predict_sim.py                        # next word among the top 3 predictions, same 300 sentences
+                                                   # --learn: the user model learns the test set in order first
 python3 eval/clean_conv.py                         # what cleaning repairs/drops in corpus/raw/{opensubtitles,tatoeba}, with examples
 python3 eval/extract_conv.py                       # cleaned -> corpus/conv/{subtitles,tatoeba} (tests), heldout.tsv, train/*.txt
 python3 eval/predict_sim.py --corpus corpus/conv/subtitles   # any of the four sims on dialogue; tatoeba: add --no-paragraph
@@ -302,6 +303,25 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   text in the field later (it would live in the composing region, which the app sees: search fields
   would query it). Varnelė's predictions are kept out of `shouldBeAutoCorrected`'s empty-word
   comparison (other scale).
+- **User language model** (`rust/core/src/user.rs`, `Analyzer::user`, keyboard only; fork branch
+  `paulius/varnele-user-lm`, setting "Learn from my writing" `varnele_learn`, **default on**, plus
+  "Forget learned words", both on the Varnelė screen). Words and word pairs of the text *as it ends up*
+  (after autocorrect and the sentence fixer; HeliBoard's user history learns words as typed).
+  `VarneleUserLm.observe` hands Rust the text before the cursor after every finished word (separator,
+  picked suggestion, the next gesture), right after the sentence fixer; `UserLm::observe` learns a
+  sentence once the next one is begun, so a word backspaced and retyped is learned as it ends up, and the
+  last sentence on `commit`: the enter key's editor action (send), the app clearing the field
+  (`onUpdateSelection` to 0 with no text: a chat's send button), `onFinishInput`, a restarted field.
+  A sentence is learned once (hashes of its words, the last 1,000), so a refocused field isn't counted twice.
+  Not learned: incognito (also fields asking for no learning), passwords, URLs/e-mail, other languages.
+  Storage: `files/varnele_user.txt` (text, `1 word count [written]` / `2 prev word count`), loaded on the
+  thread that loads Varnelė's data (not at all for a keyboard not typing Lithuanian), saved when the
+  keyboard closes; at 10k words or 40k pairs every count halves and what drops below 0.4 goes (old and
+  rare first). Use: `p_context` mixes in P_user(w | prev) (absolute discounting D 0.5, backing off to the
+  user's word frequency) with share 0.5 · n / (n + 50), n = how often the user wrote `prev` before a word,
+  so predictions, the ghost and swipe ranking all get it; `predict_words` adds the user's followers of
+  `prev` and most frequent words as candidates; a word Varnelė doesn't know is predicted once the user
+  wrote it twice, as written (`Freiburg`). Off: neither learned nor used (the file stays until forgotten).
 - **Data format v3**: freq, lemma_freq, the language model's word counts and its pairs (`"PREV WORD"` →
   count, `"PREV "` → total << 32 | distinct) are finite-state transducers (`rust/core/src/counts.rs`,
   `fst` crate), read in place: no hash map of 150k+ strings on the phone's heap. `export.py` pipes each
@@ -404,6 +424,19 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   frequent candidates came from the 2,000 most frequent words instead of every word with that letter;
   the typed-word test is a dictionary lookup, `check` guessed compounds for `se`); the strip shows
   `kod | kad | kod·ėl` (typed, autocorrection, ghost) and tapping the ghost commits `kodėl`.
+- **User model learned in order** (`predict_sim.py --learn`, `swipe_sim.py --learn` vs `--in-order`: the
+  sample in corpus order, all the test set's text before each sentence learned first, as if one user wrote
+  it all; the test sets are 40 films / unrelated sentences / 150 articles, so a real user, who repeats
+  their own names and phrases, should gain more), without → with:
+
+  | | OpenSubtitles | Tatoeba | Wikipedia |
+  |---|---|---|---|
+  | prediction top 3, before typing / after 1 letter | 13.0 / 32.9 → 13.2 / 33.4% | 19.2 / 47.1 → **20.9 / 48.5%** | 15.7 / 30.4 → **17.6 / 33.6%** |
+  | ghost right / words completed / letters saved | 16.3 / 59.7 / 14.7 → 16.5 / 60.3 / 15.2% | 23.2 / 75.3 / 21.7 → 23.6 / 76.1 / 22.4% | 14.7 / 62.8 / 19.9 → 15.8 / 65.2 / 22.5% |
+  | swipe σ 0.3 keys top 1 / final word (in order) | 83.3 / 75.5 → 83.4 / 75.7% | | 82.3 / 73.8 → 82.7 / 74.2% |
+
+  Shares 0.3–0.7 and ramps 10–100 all landed within ±0.3 points of these; a share for the user's word
+  frequency regardless of the previous word added nothing. No measurable cost in time.
 - **Conversational counts** (W=1: subtitles and Tatoeba count like Wikipedia; `eval/training.py`
   `conversational()`, lines of 4+ words once, cutoffs on raw counts so a pair seen once in a subtitle
   never ships; data file 10.9 → 13.0 MB), on the three test sets, before → after:
@@ -470,8 +503,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   strip (keyboard design section). Next: phone-test the strip, inline ghost text, trigrams, the grammar
   rules steering predictions (case after a preposition: `eiti į` predicts the genitive `šiaurės` first; agreement), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
   corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
-  plus a per-user overlay learned on the phone from the *final* text (after autocorrect and the
-  sentence fixer, unlike HeliBoard's user history, which learns words as typed). Expose one
+  plus a per-user overlay learned on the phone from the *final* text (done 2026-10-22: "User
+  language model" in the keyboard design; next: per-user trigrams if trigrams land, learning which
+  autocorrections the user reverts, a phone test over days of real use). Expose one
   `P(word | context)` via JNI that next-word suggestions, ghost text (inline completion of the
   current prefix + predicted next word, new UI in the fork), swipe ranking and tap autocorrect
   all use; it also breaks frequency ties (`žmones`/`žmonės`). Predictions keep diacritics through
@@ -680,3 +714,5 @@ Left deliberately:
     Wikipedia (W=1, cutoffs on raw counts, 13.0 MB), credits for the frequency sources
 21. next-word predictions and the ghost in the keyboard strip (`keyboard_predict`, `keyboard_ghost`, JNI
     `predictNative`/`ghostNative`, serve `ghost`, `predict_sim.py --ghost`); paragraph cache faded in by length
+22. user language model learned on the phone from the final text (`user.rs`, JNI `user*Native`, serve
+    `learn`/`forget`, `--learn` in predict_sim.py and swipe_sim.py)

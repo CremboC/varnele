@@ -157,11 +157,13 @@ pub(crate) fn allowed(kind: Kind, flags: &str, tag: &str, neg: &str, vi: i32, si
 
 pub struct Analyzer {
     pub data: Data,
+    /// the user's own words, learned on the phone (keyboard only)
+    pub user: std::sync::RwLock<crate::user::UserLm>,
 }
 
 impl Analyzer {
     pub fn new(data: Data) -> Analyzer {
-        Analyzer { data }
+        Analyzer { data, user: Default::default() }
     }
 
     pub fn tag_str(&self, a: &Analysis) -> &str {

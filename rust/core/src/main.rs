@@ -115,6 +115,7 @@ fn main() {
             //   gesture<TAB>X,Y X,Y ...<TAB>CAP(0/1)<TAB>N<TAB>CONTEXT  -> JSON list of N candidates (QWERTY, key widths)
             //   predict<TAB>CONTEXT<TAB>PREFIX<TAB>N  -> JSON list of N next words
             //   ghost<TAB>CONTEXT<TAB>TYPED  -> JSON string, the keyboard's ghost ("" for none)
+            //   learn<TAB>TEXT  -> "ok": the user wrote TEXT (turns the user model on); forget -> "ok": empty it
             let layout = Layout::qwerty();
             use std::io::{BufRead, Write};
             let mut out = std::io::stdout().lock();
@@ -152,6 +153,16 @@ fn main() {
                     "ghost" => {
                         let ghost = ck.keyboard_ghost(parts.get(1).copied().unwrap_or(""), parts.get(2).copied().unwrap_or(""), formal);
                         writeln!(out, "{}", varnele::json::string(&ghost.unwrap_or_default())).unwrap();
+                    }
+                    "learn" => {
+                        let mut user = ck.an.user.write().unwrap();
+                        user.enabled = true;
+                        user.learn_text(parts.get(1).copied().unwrap_or(""));
+                        writeln!(out, "\"ok\"").unwrap();
+                    }
+                    "forget" => {
+                        ck.an.user.write().unwrap().clear();
+                        writeln!(out, "\"ok\"").unwrap();
                     }
                     _ => writeln!(out, "{{\"error\":\"unknown request\"}}").unwrap(),
                 }
