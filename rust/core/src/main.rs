@@ -1,4 +1,4 @@
-//! varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W...
+//! varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W... | kb WORD [CONTEXT...] | serve | bench
 
 use std::io::Read;
 use std::time::Instant;
@@ -62,6 +62,29 @@ fn main() {
             // keyboard view of a word: varnele kb WORD [CONTEXT...]
             let ctx = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>().join(" ");
             println!("{}", varnele::json::keyboard_word(&ck.keyboard_word(&args[1], &ctx, !args.iter().any(|a| a == "--no-key-shift"))));
+        }
+        Some("serve") => {
+            // one request per stdin line, for evaluations that make thousands of calls:
+            //   kb<TAB>WORD<TAB>CONTEXT  -> one JSON line
+            //   json<TAB>TEXT            -> one finding per line, then an empty line
+            use std::io::{BufRead, Write};
+            let mut out = std::io::stdout().lock();
+            for line in std::io::stdin().lock().lines() {
+                let line = line.unwrap();
+                let parts: Vec<&str> = line.split('\t').collect();
+                match parts[0] {
+                    "kb" => writeln!(out, "{}", varnele::json::keyboard_word(
+                        &ck.keyboard_word(parts[1], parts.get(2).copied().unwrap_or(""), true))).unwrap(),
+                    "json" => {
+                        for f in ck.check_text(parts.get(1).copied().unwrap_or(""), formal, grammar) {
+                            writeln!(out, "{}", varnele::json::finding(&f, |i| i)).unwrap();
+                        }
+                        writeln!(out).unwrap();
+                    }
+                    _ => writeln!(out, "{{\"error\":\"unknown request\"}}").unwrap(),
+                }
+                out.flush().unwrap();
+            }
         }
         Some("bench") => {
             // per-call latency: correct words, misspellings (with suggestions), sentences

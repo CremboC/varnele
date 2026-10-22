@@ -53,6 +53,8 @@ python3 eval/parity.py                             # Rust must equal Python: 100
 python3 eval/restore.py --sentences 300            # strip all diacritics, measure restoration
 python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precision of each comma rule
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
+python3 eval/keyboard_restore.py                   # restore.py's 300 sentences typed through the keyboard model
+rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" (used by the sims)
 .venv/bin/python eval/evaluate.py                  # vs Hunspell lt_LT (needs spylls + make myspell)
 ```
 
@@ -248,6 +250,11 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - vs Hunspell lt_LT: fewer false alarms on lowercase words (2,018 vs 2,483 tokens),
   better diacritic fixes (#1 correct 56.7% vs 40.0%), worse on keyboard typos
   (detect 89.3 vs 95.3%, #1 70.0 vs 76.0%).
+- Restoration typed word by word through the keyboard model (`eval/keyboard_restore.py`, same 300
+  sentences): 71.8% restored, 32.7% whole sentences right, 3 correct words changed; the rare-twin
+  rule makes the keyboard beat the checker (`metu` → `metų`, `siu` → `šių`, `padare` → `padarė`). The
+  checker still gets 10 words the keyboard misses, all keyboard order (a word committed before its
+  head noun is typed: `dalyvaujančiu šalių`, `teises mokyklą`, `papuošalu`, `žanru`).
 - Restoration (all diacritics stripped, 300 sentences): 63.1% → 68.3% with
   context rules (67.7% before context ranking of unknown words, 66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
   checker; a most-frequent-spelling baseline gets 71.9%.
@@ -260,6 +267,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 
 ## Gotchas (learned the hard way)
 
+- The keyboard simulation splits words at every non-letter (quotes, brackets, no-break spaces,
+  colons), as the keyboard does; splitting only on spaces left `„Del`, `(del` unfixed.
 - My keyboard simulation (`eval/keyboard_sim.py`) models Varnelė's decisions, not
   HeliBoard's native score normalisation; a fix that works in the simulation can
   still fail on the phone if its score doesn't pass `calcNormalizedScore`. Always

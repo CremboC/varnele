@@ -7,6 +7,7 @@ VarneleSentenceFixer.kt (re-check the sentence, apply safe fixes and commas).
 """
 
 import json
+import re
 import pathlib
 import subprocess
 import sys
@@ -17,14 +18,26 @@ FOLD = str.maketrans("ąčęėįšųūž", "aceeisuuz")   # y is its own key, no
 SAFE_RULES = {"case", "agreement", "quantity", "negation", "relative", "object", "subject"}
 
 
+_server = None
+
+
+def _ask(line):
+    """One request to a long-running `varnele serve` (loading the data once, not per call)."""
+    global _server
+    if _server is None:
+        _server = subprocess.Popen(RUST + ["serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    _server.stdin.write(line + "\n")
+    _server.stdin.flush()
+    return _server.stdout
+
+
 def kb(word, context):
-    return json.loads(subprocess.run(RUST + ["kb", word, *context.split()], capture_output=True,
-                                     text=True, check=True).stdout)
+    return json.loads(_ask(f"kb\t{word}\t{context}").readline())
 
 
 def findings(text):
-    out = subprocess.run(RUST + ["json", "-"], input=text, capture_output=True, text=True, check=True).stdout
-    return [json.loads(l) for l in out.splitlines() if l]
+    out = _ask("json\t" + text.replace("\t", " ").replace("\n", " "))
+    return [json.loads(l) for l in iter(out.readline, "\n")]
 
 
 def autocorrect(word, context):
@@ -64,14 +77,19 @@ def fix_sentence(sentence):
 
 
 def type_text(text):
+    """Type the text word by word. Any non-letter (space, no-break space, quote, bracket, colon,
+    dash) ends a word, as on the keyboard: „Del and Sarasas:Lietuvos are words too."""
     out = ""
-    for i, raw in enumerate(text.split(" ")):
-        tail = ""
-        while raw and not raw[-1].isalpha():
-            tail, raw = raw[-1] + tail, raw[:-1]
-        context = " ".join(out.split()[-3:])
-        word = autocorrect(raw, context) if raw else raw
-        out += word + tail + " "
+    pieces = re.split(r"([^\W\d_]+)", text)      # separator, word, separator, word, ...
+    for i, piece in enumerate(pieces):
+        if i % 2 == 0:
+            out += piece
+            continue
+        context = " ".join(re.findall(r"[^\W\d_]+", out)[-3:])
+        out += autocorrect(piece, context)
+        if i + 1 < len(pieces):           # the separator that finishes the word
+            out += pieces[i + 1]
+            pieces[i + 1] = ""
         out = fix_sentence(out)
     return out.strip()
 
