@@ -193,6 +193,17 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   - suggestion ranking: a negated form with no frequency of its own borrows the plain
     form's (`Neturetu` → `Neturėtų`); a suggestion differing from the input only by being a
     capitalised name costs +0.5.
+  - **Varnelė settings screen** (fork, `settings/screens/VarneleScreen.kt`, main settings entry
+    "Varnelė" shown when the library loads): the fork's own settings go here; more are to move
+    here later (key-shift still sits on Text correction). First one: **formal Lithuanian**
+    (`varnele_formal`, default off). `SettingsValues` copies it into `Native.formal`, which every
+    `Native.check`/`Native.gesture` call passes to Rust: `keyboard_word(…, formal)` gives a
+    colloquial word its standard form as a context fix with rule `formal` (whitelisted, like
+    `subject`/`rare`: `VarneleDictionary.SURE_RULES`, also applied by the sentence fixer), and
+    `gesture(…, formal)` hands back a spoken candidate as its standard form, deduplicated
+    (`einam` → `einame`), so no colloquial form is ever suggested. Unknown words never got
+    spoken suggestions (the suggester only proposes dictionary forms). CLI: `--formal` on
+    `kb`, `swipe` and `serve`.
   - **key-shift** (setting `varnele_key_shift`, default on, Text correction screen):
     if the word is unknown and no correction is within one typo, search words where
     every letter is the typed key or a neighbour (`fofrkua` → `didelis`, `ksbsd` →
@@ -435,10 +446,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   current prefix + predicted next word, new UI in the fork), swipe ranking and tap autocorrect
   all use; it also breaks frequency ties (`žmones`/`žmonės`). Predictions keep diacritics through
   the analyzer. Needs a bigger, more conversational corpus than the 600 Wikipedia articles.
-- **Formal mode toggle** (cheap, do first). The keyboard is already informal: `valgyt` is
-  `colloquial`, not unknown, so it is never autocorrected. Add a setting (default off) passed
-  through `Native.check` into `keyboard_word`; when on, spoken forms become corrections
-  (`valgyt` → `valgyti`, as `--formal`), and ranking can prefer the standard table below.
+- **Formal mode**: done (2026-10-22), see "Varnelė settings screen" in the keyboard design. Still
+  open: ranking with the standard frequency table below.
 - **Corpus for the right register**, best first: (1) the user's own final text, learned on the
   phone (the overlay above); (2) OpenSubtitles Lithuanian (spoken dialogue; check the licence
   before shipping derived counts); (3) web crawls CC-100 / OSCAR / Leipzig `lit_web` (huge, mixed
@@ -453,9 +462,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
 - **Swipe and spoken forms** (fixed 2026-10-22; owner found `einam` → `rytinam` on the Fold7):
   the walk now also yields spoken shortenings, see the gesture decoder above. Seen in the
   subtitles: `nepamirškim`, `sakėm` keys right but the keyboard's check of the keys then gives
-  `nepamirškime`, `sakėme` (the suggester restores diacritics and the full ending at once). Next:
-  the formal mode toggle; owner (2026-10-22): with formal on, never suggest a colloquial form,
-  swiped or typed (`einam` swiped → `einame`, merged with it in the strip).
+  `nepamirškime`, `sakėme` (the suggester restores diacritics and the full ending at once, also
+  when not formal): a typed or swiped spoken form without diacritics can't stay spoken yet.
 - **Swipe, next steps** ((1) is done, phone-tested with replayed swipes; still to try with real
   fingers): (1) wire it into the fork: enable gesture input for `lt` without
   `JniUtils.sHaveGestureLib`, pass `ComposedData.mInputPointers` + key centres (divided by the key
@@ -602,8 +610,6 @@ Left deliberately:
   sentence fixer with HeliBoard's backspace-reverts-autocorrect is untested.
 - Typo detection/ranking still behind Hunspell; keyboard-adjacency weights could
   be tuned on real typing data.
-- Spoken-form normalisation option in the keyboard (`valgyt` → `valgyti`) is
-  available (`--formal`) but not wired to a setting (see "Formal mode toggle" above).
 - iOS later: the Rust core is portable; keyboard extensions have tight memory limits.
 
 ## History (commits on varnele/main)

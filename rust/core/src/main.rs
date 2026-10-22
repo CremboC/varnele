@@ -64,7 +64,7 @@ fn main() {
     let grammar = !args.iter().any(|a| a == "--no-grammar");
     match args.first().map(String::as_str) {
         Some("words") => {
-            for w in &args[1..] {
+            for w in args[1..].iter().filter(|a| !a.starts_with("--")) {
                 let (st, sugg) = ck.check_word(w);
                 println!("{w}: {st:?}{}", if sugg.is_empty() { String::new() } else { format!(" -> {}", sugg.join(", ")) });
                 for a in ck.an.analyze(w).iter().take(8) {
@@ -95,14 +95,14 @@ fn main() {
         Some("kb") => {
             // keyboard view of a word: varnele kb WORD [CONTEXT...]
             let ctx = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>().join(" ");
-            println!("{}", varnele::json::keyboard_word(&ck.keyboard_word(&args[1], &ctx, !args.iter().any(|a| a == "--no-key-shift"))));
+            println!("{}", varnele::json::keyboard_word(&ck.keyboard_word(&args[1], &ctx, !args.iter().any(|a| a == "--no-key-shift"), formal)));
         }
         Some("swipe") => {
-            // decode each word's ideal path: varnele swipe WORD...
+            // decode each word's ideal path: varnele swipe WORD... [--formal]
             let layout = Layout::qwerty();
-            for w in &args[1..] {
+            for w in args[1..].iter().filter(|a| !a.starts_with("--")) {
                 let t = Instant::now();
-                let cands = ck.an.gesture(&ideal_path(w, &layout), &layout, false, "", 5);
+                let cands = ck.an.gesture(&ideal_path(w, &layout), &layout, false, "", 5, formal);
                 let list: Vec<String> = cands.iter().map(|c| format!("{} ({}, {:.2}, {:.3})", c.word, c.best, c.cost, c.shape)).collect();
                 println!("{w}: {}   {:?}", list.join(", "), t.elapsed());
             }
@@ -121,7 +121,7 @@ fn main() {
                 let parts: Vec<&str> = line.split('\t').collect();
                 match parts[0] {
                     "kb" => writeln!(out, "{}", varnele::json::keyboard_word(
-                        &ck.keyboard_word(parts[1], parts.get(2).copied().unwrap_or(""), true))).unwrap(),
+                        &ck.keyboard_word(parts[1], parts.get(2).copied().unwrap_or(""), true, formal))).unwrap(),
                     "json" => {
                         for f in ck.check_text(parts.get(1).copied().unwrap_or(""), formal, grammar) {
                             writeln!(out, "{}", varnele::json::finding(&f, |i| i)).unwrap();
@@ -133,7 +133,7 @@ fn main() {
                         let cap = parts.get(2) == Some(&"1");
                         let n = parts.get(3).and_then(|n| n.parse().ok()).unwrap_or(5);
                         let context = parts.get(4).copied().unwrap_or("");
-                        writeln!(out, "{}", varnele::json::gesture(&ck.an.gesture(&path, &layout, cap, context, n))).unwrap();
+                        writeln!(out, "{}", varnele::json::gesture(&ck.an.gesture(&path, &layout, cap, context, n, formal))).unwrap();
                     }
                     "predict" => {
                         let context = parts.get(1).copied().unwrap_or("");
@@ -172,12 +172,12 @@ fn main() {
             let layout = Layout::qwerty();
             let paths: Vec<Vec<(f32, f32)>> = ["labas", "nežinau", "mačiau", "kodėl", "dienų", "pasakojimas"]
                 .iter().map(|w| ideal_path(w, &layout)).collect();
-            let _ = ck.an.gesture(&paths[0], &layout, false, "", 5);
+            let _ = ck.an.gesture(&paths[0], &layout, false, "", 5, false);
             let mut ts: Vec<f64> = Vec::new();
             for _ in 0..3 {
                 for p in &paths {
                     let t = Instant::now();
-                    ck.an.gesture(p, &layout, false, "", 5);
+                    ck.an.gesture(p, &layout, false, "", 5, false);
                     ts.push(t.elapsed().as_secs_f64() * 1000.0);
                 }
             }

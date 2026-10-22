@@ -175,9 +175,10 @@ impl Checker {
     /// What a keyboard needs for the word being typed: is it valid, and the ranked
     /// corrections (word, cost, differs-only-in-diacritics). `context` is the text
     /// before the word (a few previous words); grammar rules can use it to fix a
-    /// valid word ("prieš pora" -> "porą") or re-rank corrections.
-    pub fn keyboard_word(&self, word: &str, context: &str, key_shift: bool) -> KeyboardWord {
-        let (status, _) = self.check_word(word);
+    /// valid word ("prieš pora" -> "porą") or re-rank corrections. `formal`: a spoken form
+    /// gets its standard form as a fix (valgyt -> valgyti, rule "formal").
+    pub fn keyboard_word(&self, word: &str, context: &str, key_shift: bool, formal: bool) -> KeyboardWord {
+        let (status, formal_forms) = self.check_word(word);
         let lw = lower(word);
         let fw = fold(&lw);
         let entry = |w: String, cost: f64| {
@@ -213,6 +214,10 @@ impl Checker {
                     context_fixes = f.suggestions.iter().map(|s| entry(s.clone(), 0.0)).collect();
                 }
             }
+        }
+        if formal && status == WordStatus::Colloquial && !formal_forms.is_empty() {
+            context_rule = "formal".into();
+            context_fixes = formal_forms.into_iter().map(|w| entry(w, 0.0)).collect();
         }
         // A valid but rare form whose diacritic twin is common was almost certainly typed
         // without diacritics: sakini (rare verb form) -> sakinį. Keyboard only; frequencies

@@ -23,7 +23,7 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_warmUp(_env: JNIEnv, _cl
     let _ = ck.an.key_shift("ksbsd", 1); // and the key-shift prefix table
     let layout = varnele::gesture::Layout::qwerty();
     let path: Vec<(f32, f32)> = "labas".chars().filter_map(|c| layout.centre(c)).collect();
-    let _ = ck.an.gesture(&path, &layout, false, "", 1); // and the gesture search's tables
+    let _ = ck.an.gesture(&path, &layout, false, "", 1, false); // and the gesture search's tables
 }
 
 /// Same as warmUp, for the HeliBoard bridge (which wraps it in a Kotlin warmUp()).
@@ -61,7 +61,8 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_check<'l>(
 }
 
 /// The word being typed, for a keyboard: JSON {status, suggestions, contextRule, contextFixes, keyShift}.
-/// `context` is the text before the word (a few previous words), may be empty.
+/// `context` is the text before the word (a few previous words), may be empty; `formal`: spoken
+/// forms get their standard form as a fix (contextRule "formal").
 #[no_mangle]
 pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
     mut env: JNIEnv<'l>,
@@ -69,12 +70,13 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
     word: JString<'l>,
     context: JString<'l>,
     key_shift: jboolean,
+    formal: jboolean,
 ) -> jstring {
     let word: String = env.get_string(&word).map(Into::into).unwrap_or_default();
     let context: String = env.get_string(&context).map(Into::into).unwrap_or_default();
     let json = {
         let ck = checker().lock().unwrap();
-        varnele::json::keyboard_word(&ck.keyboard_word(&word, &context, key_shift != 0))
+        varnele::json::keyboard_word(&ck.keyboard_word(&word, &context, key_shift != 0, formal != 0))
     };
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
@@ -90,7 +92,8 @@ fn floats(env: &mut JNIEnv, a: &JFloatArray) -> Vec<f32> {
 
 /// A swipe: the finger path and the letter keys' centres, all divided by the key width;
 /// `keys` holds the letters in the order of `key_x`/`key_y`. Returns a JSON array of
-/// candidates {w (the keys swiped, no diacritics), best (most likely real form), cost, shape}.
+/// candidates {w (the keys swiped, no diacritics), best (most likely real form), cost, shape};
+/// `formal`: no spoken forms, their standard forms instead.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_dev_imbrasas_varnele_Native_gestureNative<'l>(
@@ -103,6 +106,7 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_gestureNative<'l>(
     key_y: JFloatArray<'l>,
     context: JString<'l>,
     n: jint,
+    formal: jboolean,
 ) -> jstring {
     let (xs, ys) = (floats(&mut env, &xs), floats(&mut env, &ys));
     let (kx, ky) = (floats(&mut env, &key_x), floats(&mut env, &key_y));
@@ -112,7 +116,7 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_gestureNative<'l>(
     let layout = varnele::gesture::Layout::new(keys.chars().zip(kx.into_iter().zip(ky)).map(|(c, (x, y))| (c, x, y)).collect());
     let json = {
         let ck = checker().lock().unwrap();
-        varnele::json::gesture(&ck.an.gesture(&path, &layout, false, &context, n.max(1) as usize))
+        varnele::json::gesture(&ck.an.gesture(&path, &layout, false, &context, n.max(1) as usize, formal != 0))
     };
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }

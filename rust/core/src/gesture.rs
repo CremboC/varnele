@@ -147,13 +147,14 @@ const NONE: usize = usize::MAX;
 
 impl Analyzer {
     /// Words the path (finger positions, in key widths, in order) may spell, best first.
-    /// `cap`: the gesture was made with shift on; `context`: the text before the word.
-    pub fn gesture(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, context: &str, n: usize) -> Vec<GestureCandidate> {
+    /// `cap`: the gesture was made with shift on; `context`: the text before the word;
+    /// `formal`: a spoken form found (einam) is given as its standard form (einame).
+    pub fn gesture(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, context: &str, n: usize, formal: bool) -> Vec<GestureCandidate> {
         let ctx = self.lm_context(context);
-        let out = self.gesture_within(path, layout, cap, &ctx, n, 1.0, 600_000);
+        let mut out = self.gesture_within(path, layout, cap, &ctx, n, 1.0, 600_000, formal);
         if out.is_empty() {
             // a key missed by more than usual (off the keyboard's edge): look wider, briefly
-            return self.gesture_within(path, layout, cap, &ctx, n, 1.5, 120_000);
+            out = self.gesture_within(path, layout, cap, &ctx, n, 1.5, 120_000, formal);
         }
         out
     }
@@ -162,7 +163,7 @@ impl Analyzer {
     /// without a prefix, a quarter of it for each prefix chain.
     #[allow(clippy::too_many_arguments)]
     fn gesture_within(&self, path: &[(f32, f32)], layout: &Layout, cap: bool, ctx: &crate::lm::LmContext, n: usize, widen: f32,
-                      budget: usize) -> Vec<GestureCandidate> {
+                      budget: usize, formal: bool) -> Vec<GestureCandidate> {
         let (near_r, ends_r) = (NEAR * widen, ENDS * widen);
         let path_len = length(path);
         if path.len() < 2 || path_len < 0.5 {
@@ -375,7 +376,15 @@ impl Analyzer {
                     best = Some((c, f));
                 }
             }
-            let Some((lex, f)) = best else { continue };
+            let Some((lex, mut f)) = best else { continue };
+            let mut kw = kw;
+            if formal {
+                // the strip never offers a spoken form: einam is given as einame (once, with its own cost if better)
+                if let Some(standard) = self.colloquial(&f).into_iter().next() {
+                    kw = key_word(&standard);
+                    f = standard;
+                }
+            }
             out.push(GestureCandidate {
                 word: if cap { upper_first(&kw) } else { kw },
                 cost: SHAPE_WEIGHT * d * d + lex,
@@ -384,6 +393,8 @@ impl Analyzer {
             });
         }
         out.sort_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap().then_with(|| a.word.cmp(&b.word)));
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|c| seen.insert(c.word.clone()));
         out.truncate(n);
         out
     }
