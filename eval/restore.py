@@ -23,7 +23,7 @@ from varnele.__main__ import Checker  # noqa: E402
 
 STRIP = str.maketrans("ąčęėįšųūžĄČĘĖĮŠŲŪŽ", "aceeisuuzACEEISUUZ")
 WORD = re.compile(r"[^\W\d_]+")
-FIX_RULES = {"unknown", "case", "agreement", "quantity", "context"}
+FIX_RULES = {"unknown", "case", "agreement", "quantity", "context", "valency"}
 
 
 def sentences(corpus):

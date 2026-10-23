@@ -310,6 +310,13 @@ fn adds_diacritics(w: &str, f: &str) -> bool {
 
 type Feats = (&'static str, Option<&'static str>, Option<&'static str>);
 
+// valency: a phrase takes the case its verb takes this many times as often as the one it has, seen
+// at least VALENCY_MIN times (eval/build_valency.py -> data/valency.tsv); after a 1st/2nd person verb,
+// where the phrase can't be its subject, VALENCY_RATIO_12 times
+const VALENCY_RATIO: u64 = 30;
+const VALENCY_RATIO_12: u64 = 10;
+const VALENCY_MIN: u64 = 20;
+
 #[derive(Default)]
 pub struct Grammar {
     analyses: RefCell<FxMap<String, Vec<Analysis>>>,
@@ -509,6 +516,50 @@ impl<'a> G<'a> {
         !an.is_empty() && an.iter().all(|a| matches!(self.tag(a), "W" | "Adv"))
     }
 
+    /// (verb, class) of each verb reading of w, for valency: the principal part with its prefix, "!"
+    /// first when negated (nemačiau takes a genitive), "~" last when reflexive; class "12" (1st/2nd
+    /// person), "3", "inf" or "ger". Empty when w is mostly not a verb, a participle (it agrees with
+    /// its noun) or a copula (būti takes a predicate).
+    fn verb_keys(&self, w: &str) -> Vec<(String, &'static str)> {
+        let an = self.analyses(w);
+        // not a participle: they agree with a noun, and the neuter ones (kuriama programa) are predicates
+        let vs: Vec<&Analysis> = an
+            .iter()
+            .filter(|a| {
+                let p = self.parts(a);
+                self.tag(a).starts_with("V.") && !(p[1].starts_with('p') && !FINITE.contains(&p[1].as_str()))
+            })
+            .collect();
+        if vs.is_empty()
+            || !self.mostly_verb(&an)
+            || COPULA_FORMS.contains(&lower(w).as_str())
+            || vs.iter().any(|a| COPULAS.contains(&a.lemma.as_str()))
+        {
+            return vec![];
+        }
+        let mut out: Vec<(String, &'static str)> = Vec::new();
+        for a in vs {
+            let p = self.parts(a);
+            let m = ["nebe", "tebe", "ne", "be", "te"].iter().find(|x| a.prefix.starts_with(**x));
+            let rest = m.map_or(a.prefix.as_str(), |x| &a.prefix[x.len()..]);
+            let neg = matches!(m, Some(&"ne") | Some(&"nebe"));
+            let refl = p.iter().any(|x| x == "refl");
+            let key = format!("{}{}{}{}", if neg { "!" } else { "" }, rest, a.lemma, if refl { "~" } else { "" });
+            let cls = if self.finite(a) {
+                if p[2] != "3" { "12" } else { "3" }
+            } else if p[1] == "inf" {
+                "inf"
+            } else {
+                "ger"
+            };
+            if !out.contains(&(key.clone(), cls)) {
+                out.push((key, cls));
+            }
+        }
+        out.sort();
+        out
+    }
+
     fn word(&self, text: String, start: usize, end: usize) -> Word {
         let own = self.readings_of(&text);
         let known = self.known(&text);
@@ -586,6 +637,96 @@ impl Word {
 
 fn phrase_stop(w: &str) -> bool {
     PHRASE_STOP.contains(&w) || CLAUSE_STARTERS.contains(&w) || KURIS.contains(&w)
+}
+
+/// (case, number, gender) a phrase has as written: its noun's readings every modifier agrees with.
+fn phrase_feats(words: &[&Word]) -> Vec<Feats> {
+    let mut out: Vec<Feats> = Vec::new();
+    let (head, mods) = words.split_last().unwrap();
+    for r in &head.own {
+        let f: Feats = (r.case, r.number, r.gender);
+        if r.pos == Pos::Noun && r.case != "voc" && !out.contains(&f) && mods.iter().all(|t| t.own.iter().any(|x| agree(x, r))) {
+            out.push(f);
+        }
+    }
+    out
+}
+
+/// Indices of the noun phrase right after (adverbs may come between) or right before the verb at
+/// i: modifiers and their noun. None when there is none, or it may belong to something else: a word
+/// before it in the clause (a preposition, a possessive), a noun or adjective after it (a genitive
+/// modifier: mato miesto namus, baigė Vilniaus pedagoginį institutą), or across a quote or number
+/// (baigė Kauno „Aušros“ gimnaziją), an adverb reading of a lone word (imasi kartu su: together).
+fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool, chars: &[char]) -> Option<Vec<usize>> {
+    // the gap before token k holds something other than spaces and clause punctuation
+    let cont = |k: usize| {
+        let gap: String = chars[toks[k - 1].end..toks[k].start].iter().collect();
+        let gap = gap.trim();
+        !gap.is_empty() && !gap.chars().any(|c| ",.;:!?()".contains(c))
+    };
+    // not the emphatic pronoun, listed as a noun: Pati mačiau (I saw it myself)
+    let head = |t: &Word| t.own.iter().any(|r| r.pos == Pos::Noun) && !["pats", "pati", "patys", "pačios"].contains(&t.lower.as_str());
+    let modi = |t: &Word| t.known && !t.own.is_empty() && t.own.iter().all(|r| r.pos == Pos::Adj);
+    // an adverb, not a preposition (su, po), a connective or a quantity
+    let skip = |t: &Word| {
+        g.adverb(&t.text)
+            && prep_cases(&t.lower).is_none()
+            && t.lower != "po"
+            && !CLAUSE_STARTERS.contains(&t.lower.as_str())
+            && !KURIS.contains(&t.lower.as_str())
+            && !NO_COMMA_AFTER.contains(&t.lower.as_str())
+            && !t.is_quantity(g)
+    };
+    if after {
+        let (mut k, mut skipped) = (i + 1, 0);
+        while k < toks.len() && adjacent[k] && skipped < 2 && skip(&toks[k]) {
+            k += 1;
+            skipped += 1;
+        }
+        let start = k;
+        while k < toks.len() && adjacent[k] && toks[k].known && !head(&toks[k]) && modi(&toks[k]) {
+            k += 1;
+        }
+        if k >= toks.len() || !adjacent[k] || !toks[k].known || !head(&toks[k]) {
+            return None;
+        }
+        if k + 1 < toks.len()
+            && (cont(k + 1)
+                || (adjacent[k + 1]
+                    && (head(&toks[k + 1]) || modi(&toks[k + 1]) || ["ir", "bei", "arba"].contains(&toks[k + 1].lower.as_str()))))
+        {
+            return None; // baigė Vilniaus pedagoginį institutą: Vilniaus modifies what comes next; tapė tiršta
+                         // akvarele ir aliejumi: the case of both
+        }
+        return valency_lone(g, toks, (start..=k).collect());
+    }
+    if i == 0 || !adjacent[i] || !toks[i - 1].known || !head(&toks[i - 1]) {
+        return None;
+    }
+    let h = i - 1;
+    let mut k = h as isize - 1;
+    while k >= 0 && adjacent[k as usize + 1] && modi(&toks[k as usize]) && !head(&toks[k as usize]) {
+        k -= 1;
+    }
+    if k >= 0 {
+        let t = &toks[k as usize];
+        if cont(k as usize + 1)
+            || (adjacent[k as usize + 1]
+                && !CLAUSE_STARTERS.contains(&t.lower.as_str())
+                && !KURIS.contains(&t.lower.as_str())
+                && !["ir", "bei", "arba"].contains(&t.lower.as_str()))
+        {
+            return None; // it starts the clause (not: Su šia nuomone sutinka, savo didybe rodo, per dvi savaites privalo)
+        }
+    }
+    valency_lone(g, toks, ((k + 1) as usize..=h).collect())
+}
+
+fn valency_lone(g: &G, toks: &[Word], idx: Vec<usize>) -> Option<Vec<usize>> {
+    if idx.len() == 1 && g.analyses(&toks[idx[0]].text).iter().any(|a| matches!(g.tag(a), "W" | "Adv")) {
+        return None;
+    }
+    Some(idx)
 }
 
 /// Do these two words agree as they are spelled?
@@ -1511,8 +1652,8 @@ impl Grammar {
 
         // 2a. agreement across a phrase of 2+ modifiers and its noun: the case, number and gender
         //     that cost the fewest changes win (viena nukritusią sagutė -> nukritusi, ta mano didele
-        //     kavinę -> tą, didelę). Adding a lost diacritic costs 1, re-inflecting a modifier 2,
-        //     changing a typed diacritic 3 (the noun is never re-inflected).
+        //     kavinę -> tą, didelę). Adding a lost diacritic costs 1, re-inflecting a modifier 2; a typed
+        //     diacritic never changes and the noun is never re-inflected.
         // not an adverb (paprastai, dažniausiai), a neuter pronoun (tai, tam tikras) or a preposition
         let modifier = |k: usize| {
             let t = &toks[k];
@@ -1567,7 +1708,7 @@ impl Grammar {
                     return (2, out);
                 }
             }
-            if dia.is_empty() { (99, vec![]) } else { (3, dia) }
+            (99, vec![]) // a typed diacritic never changes: kavinę, pailga lėkštašlaitė neryškia papėde
         };
         let mut settled = vec![false; toks.len()];
         for h in 0..toks.len() {
@@ -1614,6 +1755,13 @@ impl Grammar {
                 || (idx.iter().any(vien) && idx.iter().any(|&j| toks[j].lower.starts_with("kit")))
             {
                 continue; // tos gražios mergaitės batai; vienas kitam simbolis
+            }
+            if head.own.iter().any(|r| r.pos == Pos::Adj)
+                && h + 1 < toks.len()
+                && adjacent[h + 1]
+                && toks[h + 1].own.iter().any(|r| r.pos == Pos::Adj || r.pos == Pos::Noun)
+            {
+                continue; // an adjective that is also a noun, before more: pirmasis mūrinis pastatas
             }
             let lastk = idx[idx.len() - 2];
             let last = &toks[lastk];
@@ -1709,11 +1857,27 @@ impl Grammar {
                 continue; // an adjective as a noun: pirmoji kairiųjų pergalė, palankesnė baltiesiems baigmė,
                           // nuolatinį pirmosios virsmą
             }
-            // an outlier agrees with no neighbour that stays: du nauji | rusiška heraldika
+            // the noun and the modifier before it, agreeing as written, are a phrase of their own:
+            // pailga lėkštašlaitė | neryškia papėde (with an indistinct foot)
+            if outliers.len() >= 2
+                && outliers[outliers.len() - 1].0 == h
+                && outliers[outliers.len() - 2].0 == idx[idx.len() - 2]
+                && could_agree_own(&toks[idx[idx.len() - 2]], head)
+            {
+                continue;
+            }
+            // an outlier agrees with no neighbour that stays: du nauji | rusiška heraldika, pailga lėkštašlaitė |
+            // neryškia papėde; right before the noun, a neighbour that can also have the phrase's case
+            // doesn't count (viena, nom or ins: viena nukritusia sagutė -> nukritusi)
             let out: Vec<usize> = outliers.iter().map(|o| o.0).collect();
             if idx.iter().enumerate().any(|(n, &t)| {
                 out.contains(&t)
-                    && [n.wrapping_sub(1), n + 1].iter().any(|&m| m < idx.len() && !out.contains(&idx[m]) && could_agree_own(&toks[t], &toks[idx[m]]))
+                    && [n.wrapping_sub(1), n + 1].iter().any(|&m| {
+                        m < idx.len()
+                            && !out.contains(&idx[m])
+                            && could_agree_own(&toks[t], &toks[idx[m]])
+                            && !(n == idx.len() - 2 && toks[idx[m]].own.iter().any(|r| fits_phrase(r, f, r.pos)))
+                    })
             }) {
                 continue;
             }
@@ -2052,6 +2216,137 @@ impl Grammar {
                 add(&mut issues, Issue { start: t.start, end: t.end, word: t.text.clone(), rule: "case", message: why.clone(), suggestions: mf });
             }
             add(&mut issues, Issue { start: w.start, end: w.end, word: w.text.clone(), rule: "case", message: why, suggestions: fix });
+        }
+
+        // 10. valency: a phrase that agrees with itself in a case its verb rarely takes, when its lost
+        //     diacritics (or a re-inflected modifier) give a case the verb often takes, as counted on the
+        //     dump: visa šita isterija mačiau -> visą šitą isteriją (mačiau after a nominative: never)
+        for i in 0..toks.len() {
+            let v = &toks[i];
+            let keys = if v.known { g.verb_keys(&v.text) } else { vec![] };
+            if keys.is_empty() {
+                continue;
+            }
+            for after in [true, false] {
+                let Some(idx) = valency_phrase(&g, &toks, &adjacent, i, after, &chars) else { continue };
+                if idx.iter().any(|&j| issues.contains_key(&toks[j].start)) {
+                    continue;
+                }
+                if after && v.own.iter().any(|r| r.pos == Pos::Adj) && could_agree(&g, v, &toks[idx[0]]) {
+                    continue; // an adjective of the phrase, not a verb: Gausi tautosaka (abundant)
+                }
+                let words: Vec<&Word> = idx.iter().map(|&j| &toks[j]).collect();
+                let h = *idx.last().unwrap();
+                let head = &toks[h];
+                let typed = phrase_feats(&words);
+                if typed.is_empty() {
+                    continue; // it doesn't agree with itself: the phrase rule's
+                }
+                let pos = if after { "after" } else { "before" };
+                if g.analyses(&head.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()) || ["prasmė", "būdas", "metas"].contains(&a.lemma.as_str())) {
+                    continue; // savaite anksčiau, plačiąja prasme, tuo metu: adverbials
+                }
+                if idx.iter().any(|&j| (clen(&toks[j].text) > 1 && is_upper(&toks[j].text)) || (first_upper(&toks[j].text) && !starts_sentence(j))) {
+                    continue; // names and all caps: gyveno San Paule, PABUČIUOK MANE
+                }
+                let classes: Vec<&str> = { let mut c: Vec<&str> = keys.iter().map(|(_, c)| *c).collect(); c.sort(); c.dedup(); c };
+                let has_class = |c: &str| classes.contains(&c);
+                let has_case = |c: &str| typed.iter().any(|f| f.0 == c);
+                if has_case("nom") && has_class("3") && !(after && subject_before(i)) {
+                    continue; // it may be the verb's subject: išleido leidykla, Kompanija prodiusavo
+                }
+                if has_case("loc") {
+                    continue; // an adjunct: kine debiutuojantis, specialiame inde
+                }
+                // the clause, for other subjects: from the verb to the nearest connective or punctuation
+                let (mut lo, mut hi) = (i, i);
+                while lo > 0 && adjacent[lo] && !CLAUSE_STARTERS.contains(&toks[lo - 1].lower.as_str()) && !KURIS.contains(&toks[lo - 1].lower.as_str()) {
+                    lo -= 1;
+                }
+                while hi + 1 < toks.len() && adjacent[hi + 1] && !CLAUSE_STARTERS.contains(&toks[hi + 1].lower.as_str()) && !KURIS.contains(&toks[hi + 1].lower.as_str()) {
+                    hi += 1;
+                }
+                let other_subject = (lo..=hi).any(|j| {
+                    let t = &toks[j];
+                    !idx.contains(&j) && j != i
+                        && (subject_person(&t.lower).is_some() || pronoun_features(&t.lower).is_some()
+                            || t.own.iter().any(|r| r.case == "nom" && r.pos == Pos::Noun))
+                });
+                if has_case("nom") && (has_class("inf") || has_class("ger")) && !other_subject
+                    && (lo..=hi).any(|j| {
+                        j != i && g.analyses(&toks[j].text).iter().any(|a| {
+                            (g.finite(a) && g.parts(a)[2] == "3" && !["reikia", "reikėjo", "reikėti"].iter().any(|x| a.lemma.ends_with(x)))
+                                || toks[j].is_participle(&g)
+                        })
+                    })
+                {
+                    continue; // the subject of the clause's 3rd person verb or participle: ėmė kontroliuoti
+                              // Britanija, pasiekus medžiaga tampa, tvarkyti surengta visuotinė talka (not: Prašau
+                              // jus patikrinti ta informacija, Reikia pasiekti stovykla)
+                }
+                // an object already there: apgynė jį aukščiausiu įvertinimu, gaudo ją drobine paklode (jus: also jūs)
+                let other_object = (lo..=hi).any(|j| {
+                    let t = &toks[j];
+                    !idx.contains(&j) && j != i
+                        && ((neg_pronoun(&t.lower).is_some() && t.lower != "jus") || (!t.own.is_empty() && t.own.iter().all(|r| r.case == "acc")))
+                });
+                let n = |case: &str| -> u64 {
+                    keys.iter().map(|(k, c)| g.an.data.valency.get(&format!("{k}\t{c}\t{pos}\t{case}")) as u64).sum()
+                };
+                let have = typed.iter().map(|f| n(f.0)).max().unwrap();
+                let mut best: Option<(u64, Feats, Vec<(u32, Vec<String>)>)> = None;
+                for (_, rs) in head.variants(&g) {
+                    for r in rs {
+                        let f: Feats = (r.case, r.number, r.gender);
+                        if r.pos != Pos::Noun || r.case == "voc" || typed.iter().any(|x| x.0 == f.0) {
+                            continue;
+                        }
+                        if f.0 == "nom" && (!has_class("3") || other_subject) {
+                            continue; // the subject: of a 3rd person verb, the only one (rūpinimasis gerove nukreipia)
+                        }
+                        if (f.0 == "acc" || f.0 == "gen") && other_object {
+                            continue;
+                        }
+                        let fixes: Vec<(u32, Vec<String>)> = idx.iter().map(|&j| phrase_fix(&toks[j], &f, j == h)).collect();
+                        if fixes.iter().any(|x| x.0 > 2) {
+                            continue; // no form fits
+                        }
+                        let m = n(f.0);
+                        let ratio = if classes == ["12"] { VALENCY_RATIO_12 } else { VALENCY_RATIO };
+                        if m >= VALENCY_MIN && m >= ratio * (have + 1) && best.as_ref().map_or(true, |b| m > b.0) {
+                            best = Some((m, f, fixes));
+                        }
+                    }
+                }
+                if let Some((_, _, fixes)) = &best {
+                    // a set phrase as written is more common than the fix: laisva valia, įvairia tematika
+                    let seq: Vec<usize> = if after { std::iter::once(i).chain(idx.iter().copied()).collect() } else { idx.iter().copied().chain(std::iter::once(i)).collect() };
+                    let fixed = |j: usize| -> String {
+                        match idx.iter().position(|&x| x == j) {
+                            Some(p) if fixes[p].0 > 0 => lower(&fixes[p].1[0]),
+                            _ => toks[j].lower.clone(),
+                        }
+                    };
+                    let pair = |a: &str, b: &str| g.an.data.pairs.get(&format!("{a} {b}")) as u64;
+                    let as_written: u64 = seq.windows(2).map(|w| pair(&toks[w[0]].lower, &toks[w[1]].lower)).sum();
+                    let as_fixed: u64 = seq.windows(2).map(|w| pair(&fixed(w[0]), &fixed(w[1]))).sum();
+                    if as_written > as_fixed {
+                        best = None;
+                    }
+                }
+                if let Some((_, f, fixes)) = best {
+                    for (&j, (c, fix)) in idx.iter().zip(fixes) {
+                        if c > 0 {
+                            let t = &toks[j];
+                            add(&mut issues, Issue {
+                                start: t.start, end: t.end, word: t.text.clone(), rule: "valency",
+                                message: format!("'{}' takes the {}", v.text, case_name(f.0)),
+                                suggestions: fix,
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         issues.into_values().collect()

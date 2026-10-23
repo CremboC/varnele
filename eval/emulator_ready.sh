@@ -24,7 +24,7 @@ if [ ! -x "$SDK/emulator/emulator" ]; then
     exit 1
 fi
 if ! booted; then
-    nohup "$SDK/emulator/emulator" -avd "$AVD" -no-snapshot -no-audio -no-boot-anim >"${TMPDIR:-/tmp}/varnele-emulator.log" 2>&1 &
+    nohup "$SDK/emulator/emulator" -avd "$AVD" -no-snapshot -no-audio -no-boot-anim -crash-report-mode never >"${TMPDIR:-/tmp}/varnele-emulator.log" 2>&1 &
     i=0
     until booted; do
         i=$((i + 1))

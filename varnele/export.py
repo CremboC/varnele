@@ -25,6 +25,8 @@ Format (little-endian). str = u16 byte length + UTF-8 bytes. Sections in order:
                 frequent words after a pairs or triples head ("PREV ", "A B "; the 100 most
                 frequent words: head "") that start with the beginning ("", or 1-3 letters
                 without diacritics), where 500+ words do (Rust `fst-ranked`; optional like triples)
+  valency       table     "VERB	CLASS	after|before	CASE" -> count (data/valency.tsv,
+                eval/build_valency.py; optional like triples)
 table = u32 byte length + a finite-state transducer (Rust `fst` crate), built by the Rust
 binary's `fst` subcommand: build it first (cargo build --release --manifest-path rust/Cargo.toml).
 """
@@ -151,6 +153,13 @@ def export(path=OUT):
             v, word, a, *b = line.split("\t")
             triples[f"{v} {word}"] = int(a) << 32 | int(b[0]) if not word else int(a)
     w.ranked([("words", word_fst), ("followers", pair_fst), ("followers", w.table(triples.items()))])
+    path_val = ROOT / "data" / "valency.tsv"
+    valency = {}
+    if path_val.exists():
+        for line in path_val.read_text("utf-8").splitlines():
+            *k, n = line.split("	")
+            valency["	".join(k)] = int(n)
+    w.table(valency.items())
 
     path.write_bytes(bytes(w.buf))
     return path, len(w.buf)

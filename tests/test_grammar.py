@@ -123,7 +123,14 @@ FLAGGED = [
     ("Mačiau ta mano didele kavine.", "ta", "object", "tą"),                    # the verb gives the case
     ("Mačiau ta mano didele kavine.", "kavine", "object", "kavinę"),
     ("Mačiau dideli namą.", "dideli", "agreement", "didelį"),
-    ("Kada baigsis visa sita isterija?", "sita", "unknown", "šita"),           # agrees with visa, not šitą                    # number, not case: not didelius
+    ("Kada baigsis visa sita isterija?", "sita", "unknown", "šita"),           # agrees with visa, not šitą
+    # valency: the case the verb takes (data/valency.tsv), for a phrase that agrees with itself
+    ("Visa šita isterija mačiau vakar.", "Visa", "valency", "Visą"),          # nothing nominative before mačiau
+    ("Visa šita isterija mačiau vakar.", "isterija", "valency", "isteriją"),
+    ("Ant stalo guli viena nukritusia sagute.", "sagute", "valency", "sagutė"),   # guli: a subject, not an instrument
+    ("Ant stalo guli viena nukritusia sagute.", "nukritusia", "valency", "nukritusi"),
+    ("Per daug pasitikėdamas, aš padariau klaida.", "klaida", "valency", "klaidą"),
+    ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),                    # number, not case: not didelius
     ("Mačiau didelę ir gražia kavinę.", "gražia", "phrase", "gražią"),       # not kavine
     ("Tie gražūs didelė namai.", "didelė", "phrase", "dideli"),              # gender and number
     ("Specialiais ryškias ženklais.", "ryškias", "phrase", "ryškiais"),
@@ -219,6 +226,13 @@ CORRECT = [
     "Filmai-operos turi pirmiausia didelę edukacinę vertę. Dažniausiai mišrioji sandauga užrašoma. Tam tikru būdu.",
     "Sienos atkurtos tomis pačiomis spalvomis. Reikia atsižvelgti į nuolatinį pirmosios virsmą.",
     "Jis žino visas jo užnugaris yra tie stipenos.",          # jo is no possessive inside a phrase
+    # valency: subjects after the verb, adjuncts, objects already there, set phrases, the clause's subject
+    "Kelią jiems parodė pelėda. Leidinį išleido leidykla „Kadokawa“. Kada baigsis visa šita isterija?",
+    "Jis gyveno su motina. Aktorius debiutuoja kine. Plačiąja prasme apima viską. Albumas pasirodė savaite anksčiau.",
+    "Ją apgynė aukščiausiu įvertinimu. Žmonės ją gaudo drobine paklode. Galima buvo daryti laisva valia.",
+    "Jis rašo įvairia tematika. Imperija ėmė visiškai kontroliuoti Britanija. Pati mačiau. Gausi tautosaka išliko.",
+    "Su šia nuomone sutinka ne visi. Ji baigė Vilniaus pedagoginį institutą. Sumuštinius su mišraine valgiau.",
+    "Kalva – pailga lėkštašlaitė neryškia papėde.",
 ]
 
 

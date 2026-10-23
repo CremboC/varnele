@@ -97,6 +97,9 @@ pub struct Data {
     /// the most frequent words after the pairs' and triples' heads that have many
     /// ([`Counts::ranked_lists`]); empty in a data file without them
     pub ranked: Counts,
+    /// verb valency: "VERB	CLASS	after|before	CASE" -> how often the noun phrase next to the verb
+    /// had that case (eval/build_valency.py); empty in a data file without it
+    pub valency: Counts,
     folded: OnceLock<Folded>,
     entry_stems: OnceLock<Vec<Vec<(u32, u16)>>>,
     stem_prefixes: OnceLock<FxSet<String>>,
@@ -213,6 +216,7 @@ impl Data {
         let pairs = r.counts()?;
         let triples = if r.p < r.b.len() { r.counts()? } else { Counts::empty() };
         let ranked = if r.p < r.b.len() { r.counts()? } else { Counts::empty() };
+        let valency = if r.p < r.b.len() { r.counts()? } else { Counts::empty() };
 
         Ok(Data {
             tags,
@@ -233,6 +237,7 @@ impl Data {
             pairs,
             triples,
             ranked,
+            valency,
             folded: OnceLock::new(),
             entry_stems: OnceLock::new(),
             stem_prefixes: OnceLock::new(),
