@@ -63,8 +63,43 @@ def autocorrect(word, context):
     return word
 
 
-def fix_sentence(sentence):
-    """VarneleSentenceFixer: two passes of safe fixes and commas."""
+def folded(w):
+    return w.lower().translate(FOLD)
+
+
+SOFT_WINDOW = 6     # the last words of the sentence whose diacritics fix_soft may change
+
+
+def fix_soft(sentence, soft):
+    """VarneleSentenceFixer's pass over the words the keyboard itself gave diacritics (autocorrected,
+    not typed that way): Rust's keyboard_soft checks the sentence with them as typed, so the words
+    after them can choose the twin (kad ziema … rimtesne -> žiema, not the more frequent žiemą).
+    soft: their word indices -> the form typed; a word no longer spelled like it (edited) is dropped."""
+    spans = [m.span() for m in re.finditer(r"[^\W\d_]+", sentence)]
+    typed = list(sentence)
+    for k, t in list(soft.items()):
+        if k < len(spans) - SOFT_WINDOW or k == len(spans) - 1:
+            continue      # older words stay; the word just finished has nothing after it yet
+        a, b = spans[k] if k < len(spans) else (0, 0)
+        if b - a == len(t) and folded(sentence[a:b]) == folded(t):
+            typed[a:b] = t
+        else:
+            del soft[k]
+    if not soft:
+        return sentence
+    line = _ask("soft\t" + sentence.replace("\t", " ").replace("\n", " ") + "\t"
+                + "".join(typed).replace("\t", " ").replace("\n", " ")).readline()
+    s = list(sentence)
+    for f in json.loads(line):
+        s[f["start"]:f["end"]] = f["word"]
+    return "".join(s)
+
+
+def fix_sentence(sentence, soft=None):
+    """VarneleSentenceFixer: the keyboard's own diacritics first (fix_soft), then two passes of
+    safe fixes and commas."""
+    if soft:
+        sentence = fix_soft(sentence, soft)
     for _ in range(2):
         s = list(sentence)
         for f in sorted(findings(sentence), key=lambda f: -f["start"]):
@@ -81,21 +116,27 @@ def fix_sentence(sentence):
     return sentence
 
 
-def type_text(text):
+def type_text(text, soft=True):
     """Type the text word by word. Any non-letter (space, no-break space, quote, bracket, colon,
-    dash) ends a word, as on the keyboard: „Del and Sarasas:Lietuvos are words too."""
+    dash) ends a word, as on the keyboard: „Del and Sarasas:Lietuvos are words too.
+    soft: the sentence fixer may change the diacritics autocorrect gave a word (fix_soft)."""
     out = ""
+    words = {}                            # soft words: index -> typed form
     pieces = re.split(r"([^\W\d_]+)", text)      # separator, word, separator, word, ...
     for i, piece in enumerate(pieces):
         if i % 2 == 0:
             out += piece
             continue
-        context = " ".join(re.findall(r"[^\W\d_]+", out)[-3:])
-        out += autocorrect(piece, context)
+        before = re.findall(r"[^\W\d_]+", out)
+        context = " ".join(before[-3:])
+        got = autocorrect(piece, context)
+        if soft and got != piece and len(got) == len(piece) and folded(got) == folded(piece):
+            words[len(before)] = piece
+        out += got
         if i + 1 < len(pieces):           # the separator that finishes the word
             out += pieces[i + 1]
             pieces[i + 1] = ""
-        out = fix_sentence(out)
+        out = fix_sentence(out, words)
     return out.strip()
 
 

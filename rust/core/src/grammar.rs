@@ -213,6 +213,28 @@ fn pronoun_features(w: &str) -> Option<(&'static str, &'static str)> {
     })
 }
 const COORDINATORS: &[&str] = &["ir", "bei", "arba", "ar", "nei"];
+/// Degree adverbs before a predicate adjective (žymiai rimtesnė, kur kas svarbesnės): žymiai and gerokai
+/// are also datives of žymus, gerokas, so the adverb test alone misses them
+const DEGREE_ADVERBS: &[&str] = &["žymiai", "gerokai", "daug", "kiek", "truputį", "visai", "gana", "pakankamai", "nepaprastai", "itin"];
+const DEGREE_PAIRS: &[(&str, &str)] = &[("kur", "kas"), ("šiek", "tiek")];
+/// a clause opened by these has its own predicate, also without a verb (kad žiema žymiai rimtesnė);
+/// after ir/o/bet/a comma the verb may be left out (aš nupirkau raudoną, o sesė žalią)
+const SUBORDINATORS: &[&str] = &["kad", "jog", "nes", "kai", "jei", "jeigu", "kadangi", "nors", "nebent", "kol"];
+/// what ends a clause without a verb: punctuation (not quotes or brackets) or a word starting the next
+/// part; not ir/bei/ar/arba (pirmą ir vienintelį kartą, the verb comes later)
+const CLAUSE_END: &str = ",.;:!?…–—";
+/// verbal prefixes a copula may have: išlieka, pasiliko (not atliko, paliko)
+const COPULA_PREFIXES: &[&str] = &["", "si", "iš", "pasi"];
+fn copula_prefix(prefix: &str) -> bool {
+    let mut vp = prefix;
+    for neg in ["nebe", "tebe", "ne", "te"] {
+        if let Some(r) = vp.strip_prefix(neg) {
+            vp = r;
+            break;
+        }
+    }
+    COPULA_PREFIXES.contains(&vp)
+}
 fn has_diacritics(w: &str) -> bool {
     w.chars().any(|c| "ąčęėįšųūžĄČĘĖĮŠŲŪŽ".contains(c))
 }
@@ -822,6 +844,12 @@ fn could_agree(g: &G, w1: &Word, w2: &Word) -> bool {
 
 impl Grammar {
     pub fn check(&self, an: &Analyzer, text: &str) -> Vec<Issue> {
+        self.check_opts(an, text, false)
+    }
+
+    /// partial: the text may start mid-sentence (the keyboard's last few words, no punctuation), so a
+    /// clause seen without a verb may have one further left.
+    pub fn check_opts(&self, an: &Analyzer, text: &str, partial: bool) -> Vec<Issue> {
         let g = G { an, c: self };
         let chars: Vec<char> = text.chars().collect();
         let spans = word_spans(&chars);
@@ -934,7 +962,12 @@ impl Grammar {
             };
             if let (Some(prep), true) = (prep, nxt_adjacent) {
                 let span = phrase(i, false);
-                let numeral = !span.is_empty() && g.analyses(&toks[span[0]].text).iter().any(|a| a.kind == Kind::Num);
+                let numeral = !span.is_empty()
+                    && (g.analyses(&toks[span[0]].text).iter().any(|a| a.kind == Kind::Num)
+                        || (!toks[span[0]].known // per sesiolika (šešiolika), not iš penkiu
+                            && toks[span[0]].variants(&g).iter().any(|(f, _)| g.analyses(f).iter().any(|a| {
+                                a.kind == Kind::Num && (a.lemma.ends_with("lika") || a.lemma.ends_with("dešimt"))
+                            }))));
                 if !span.is_empty()
                     && toks[*span.last().unwrap()].is_noun(&g)
                     && !numeral
@@ -1659,7 +1692,43 @@ impl Grammar {
         // predicate adjective: ji nedidele -> nedidelė, mergaitė buvo nedidele -> nedidelė
         let is_copula = |t: &Word| {
             COPULA_FORMS.contains(&t.lower.as_str())
-                || g.analyses(&t.text).iter().any(|a| g.tag(a).starts_with("V.") && NOMINATIVE_COPULAS.contains(&a.lemma.as_str()))
+                || g.analyses(&t.text).iter().any(|a| {
+                    g.tag(a).starts_with("V.") && NOMINATIVE_COPULAS.contains(&a.lemma.as_str()) && copula_prefix(&a.prefix)
+                })
+        };
+        // an adverb between the subject and its predicate adjective: labai, žymiai, kur kas
+        let degree = |k: usize| {
+            let t = toks[k].lower.as_str();
+            between(k)
+                || DEGREE_ADVERBS.contains(&t)
+                || (!toks[k].known && DEGREE_ADVERBS.iter().any(|d| fold(d) == fold(t))) // zymiai, typed without diacritics
+                || (k + 1 < toks.len() && DEGREE_PAIRS.contains(&(t, toks[k + 1].lower.as_str())))
+                || (k > 0 && DEGREE_PAIRS.contains(&(toks[k - 1].lower.as_str(), t)))
+        };
+        // the clause of the subject at i has no verb before the word at k, and none was left out:
+        // kad žiema žymiai rimtesnė, Teisės svarbesnės negu …; not aš nupirkau raudoną, o sesė žalią
+        let verbless = |i: usize, k: usize| {
+            let mut j = i;
+            while j > 0 && adjacent[j] && !phrase_stop(&toks[j - 1].lower) {
+                j -= 1;
+            }
+            if (j..=k).any(|m| verb_at(m)) {
+                return false; // also not miestiečiai palaikė
+            }
+            if j > 0 && adjacent[j] && SUBORDINATORS.contains(&toks[j - 1].lower.as_str()) {
+                return true;
+            }
+            if j > 0 && adjacent[j] && COORDINATORS.contains(&toks[j - 1].lower.as_str()) {
+                return false; // a coordinated subject (elgsena ir gyvenimo būdas panašūs) or a left-out verb
+            }
+            if partial {
+                return false; // the sentence may have a verb before the text starts
+            }
+            let mut s = j;
+            while s > 0 && !starts_sentence(s) {
+                s -= 1;
+            }
+            !(s..j).any(|m| verb_at(m))
         };
         let fits = |r: &Reading, feats: &[(Option<&str>, Option<&str>)]| {
             r.pos == Pos::Adj && r.case == "nom"
@@ -1670,14 +1739,18 @@ impl Grammar {
             if !adjacent[i + 1] || (i > 0 && adjacent[i] && COORDINATORS.contains(&toks[i - 1].lower.as_str())) {
                 continue;
             }
+            let mut genitive = false;
             let feats: Vec<(Option<&str>, Option<&str>)> = if let Some((num, gen)) = pronoun_features(&sub.lower) {
                 vec![(Some(num), Some(gen))]
             } else if sub.known && sub.is_noun(&g) && (!first_upper(&sub.text) || starts_sentence(i)) {
+                if g.analyses(&sub.text).iter().any(|a| g.tag(a) == "W" || g.tag(a) == "Adv") {
+                    continue; // labai gudrus: labai is also labas, nom pl
+                }
                 let nouns: Vec<Analysis> = g.analyses(&sub.text).into_iter().filter(|a| g.tag(a).starts_with("N.")).collect();
                 let top = nouns.iter().map(|a| g.lemma_freq(a)).max().unwrap_or(0);
                 let top_nouns: Vec<Analysis> = nouns.into_iter().filter(|a| g.lemma_freq(a) == top).collect();
                 let best = g.readings(&top_nouns);
-                if best.is_empty() || !best.iter().all(|r| ["nom", "voc", "ins"].contains(&r.case)) || !best.iter().any(|r| r.case == "nom") {
+                if best.is_empty() || !best.iter().all(|r| ["nom", "voc", "ins", "gen"].contains(&r.case)) || !best.iter().any(|r| r.case == "nom") {
                     continue;
                 }
                 let mut f: Vec<(Option<&str>, Option<&str>)> = Vec::new();
@@ -1686,44 +1759,102 @@ impl Grammar {
                         f.push((r.number, r.gender));
                     }
                 }
+                // teisės is also a genitive: as a subject only with a copula or adverb before the adjective
+                // (revoliucijos metines, vietovės topografines: a genitive and its noun)
+                genitive = best.iter().any(|r| r.case == "gen");
+                f
+            } else if !sub.known && sub.is_noun(&g) && (!first_upper(&sub.text) || starts_sentence(i)) {
+                // typed without diacritics (or a reverted autocorrection): its nominative twins, ziema -> žiema
+                let fs = fold(&sub.lower);
+                let mut f: Vec<(Option<&str>, Option<&str>)> = Vec::new();
+                for (v, rs) in sub.variants(&g) {
+                    if fold(v) != fs {
+                        continue;
+                    }
+                    for r in rs.iter().filter(|r| r.pos == Pos::Noun && r.case == "nom") {
+                        if !f.contains(&(r.number, r.gender)) {
+                            f.push((r.number, r.gender));
+                        }
+                    }
+                }
+                if f.is_empty() {
+                    continue;
+                }
                 f
             } else {
                 continue;
             };
             let mut k = i + 1;
-            while k + 1 < toks.len() && k <= i + 3 && adjacent[k + 1] && between(k) && !is_copula(&toks[k]) {
+            while k + 1 < toks.len() && k <= i + 3 && adjacent[k + 1] && degree(k) && !is_copula(&toks[k]) {
                 k += 1;
             }
-            if is_copula(&toks[k]) {
+            let copula = is_copula(&toks[k]);
+            let pronoun = ["jis", "ji", "jie"].contains(&sub.lower.as_str());
+            if copula {
                 k += 1;
-                while k + 1 < toks.len() && k <= i + 5 && adjacent[k] && adjacent[k + 1] && between(k) {
+                while k + 1 < toks.len() && k <= i + 5 && adjacent[k] && adjacent[k + 1] && degree(k) {
                     k += 1;
                 }
-            } else if !["jis", "ji", "jie"].contains(&sub.lower.as_str()) {
-                continue; // a noun needs the copula: jos (her) gražios suknelės
+            } else if !pronoun && !verbless(i, k) {
+                continue; // a noun needs the copula or a clause without a verb: jos (her) gražios suknelės
             }
-            if k >= toks.len() || !adjacent[k] || k <= i {
+            if k >= toks.len() || !adjacent[k] || k <= i || (genitive && k == i + 1) {
                 continue;
             }
             let a = &toks[k];
-            let end = k + 1 == toks.len() || !adjacent[k + 1] || phrase_stop(&toks[k + 1].lower);
+            // a comparison after a comparative ends the clause too: mažesni už pagrindinį objektą
+            let than = k + 1 < toks.len() && adjacent[k + 1] && toks[k + 1].lower == "už" && a.is_comparative(&g);
+            if !copula && !pronoun {
+                // without a verb, wait for the clause to end (the keyboard types on: mama didele knyga
+                // nupirko); a degree adverb + comparative is a predicate already (žymiai rimtesne)
+                let tail: String = if k + 1 < toks.len() { gap_of(k + 1) } else { chars[a.end..].iter().collect() };
+                let ends = tail.chars().any(|c| CLAUSE_END.contains(c))
+                    || (k + 1 < toks.len() && adjacent[k + 1] && phrase_stop(&toks[k + 1].lower)
+                        && !["ir", "bei", "ar", "arba"].contains(&toks[k + 1].lower.as_str()));
+                if !(ends || than || (k + 1 == toks.len() && a.is_comparative(&g) && k > i + 1 && degree(k - 1))) {
+                    continue;
+                }
+                // only the case is wrong: not Daugelis sėslūs, Ašmenys labai aštrūs (a noun's other readings)
+                if a.known && !a.own.iter().any(|r| r.pos == Pos::Adj && feats.iter().any(|(n, gd)| {
+                    (r.number.is_none() || n.is_none() || r.number == *n) && (r.gender.is_none() || gd.is_none() || r.gender == *gd)
+                })) {
+                    continue;
+                }
+            }
+            let end = k + 1 == toks.len() || !adjacent[k + 1] || phrase_stop(&toks[k + 1].lower) || than;
             if !end || !a.is_adj(&g) || a.is_participle(&g) || issues.contains_key(&a.start) {
                 continue;
             }
-            if a.known && a.own.iter().any(|r| fits(r, &feats)) {
-                continue;
-            }
-            let fix: Vec<String> = a.variants(&g).iter()
-                .filter(|(_, rs)| rs.iter().any(|r| fits(r, &feats)))
-                .map(|(f, _)| a.cap(f)).collect();
-            if a.known && a.own.is_empty() {
-                continue;
+            let msg = format!("'{} … {}': the predicate adjective agrees with the subject", sub.text, a.text);
+            let (fix, preds): (Vec<String>, Vec<Reading>) = if a.known && a.own.iter().any(|r| fits(r, &feats)) {
+                (Vec::new(), a.own.iter().filter(|r| fits(r, &feats)).cloned().collect())
+            } else {
+                if a.known && a.own.is_empty() {
+                    continue;
+                }
+                (
+                    a.variants(&g).iter().filter(|(_, rs)| rs.iter().any(|r| fits(r, &feats))).map(|(f, _)| a.cap(f)).collect(),
+                    a.variants(&g).iter().flat_map(|(_, rs)| rs.iter().filter(|r| fits(r, &feats)).cloned()).collect(),
+                )
+            };
+            if !sub.known && !preds.is_empty() {
+                // the subject typed without diacritics (or kept as typed by the keyboard) takes the twin
+                // its predicate agrees with: ziema … rimtesnė -> žiema, not the more frequent žiemą
+                let fs = fold(&sub.lower);
+                let subj: Vec<String> = sub.variants(&g).iter()
+                    .filter(|(f, rs)| fold(f) == fs && rs.iter().any(|r| r.pos == Pos::Noun && preds.iter().any(|x| agree(r, x))))
+                    .map(|(f, _)| sub.cap(f)).collect();
+                if !subj.is_empty() {
+                    add(&mut issues, Issue {
+                        start: sub.start, end: sub.end, word: sub.text.clone(), rule: "context",
+                        message: msg.clone(), suggestions: g.ranked(&sub.text, subj),
+                    });
+                }
             }
             if !fix.is_empty() {
                 add(&mut issues, Issue {
                     start: a.start, end: a.end, word: a.text.clone(), rule: if a.known { "agreement" } else { "context" },
-                    message: format!("'{} … {}': the predicate adjective agrees with the subject", sub.text, a.text),
-                    suggestions: fix,
+                    message: msg, suggestions: fix,
                 });
             }
         }
@@ -2137,6 +2268,19 @@ impl Grammar {
             }
         }
 
+        // a noun up to 8 words before the conjunction at k, in this sentence, shares a case with own
+        let coordinated = |k: usize, own: &[Reading]| {
+            let mut m = k as isize - 1;
+            while m >= 0 && m >= k as isize - 8 && !gap_of(m as usize + 1).chars().any(|c| ".!?…\n".contains(c)) {
+                let t = &toks[m as usize];
+                if t.is_noun(&g) && t.pos_readings(&g).iter().any(|x| own.iter().any(|y| x.case == y.case)) {
+                    return true;
+                }
+                m -= 1;
+            }
+            false
+        };
+
         // 9. a noun right before another noun is its genitive modifier: gyventoju skaičius ->
         //    gyventojų, vietoves gyventojai -> vietovės (the -ų/-ės lost their diacritics)
         //    An unknown word (typed without diacritics) gets its genitive candidates first:
@@ -2253,8 +2397,19 @@ impl Grammar {
                     prep_head = true;
                 } else if an_p.iter().any(|a| g.tag(a).starts_with("V.")) && g.mostly_verb(&an_p) {
                     continue; // pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
-                } else if POSSESSIVES.contains(&p.lower.as_str()) || (!an_p.is_empty() && an_p.iter().all(|a| g.tag(a) == "W")) {
-                    continue; // jos pasirodymu danguje, šiuo metu
+                } else if POSSESSIVES.contains(&p.lower.as_str())
+                    || (!an_p.is_empty() && an_p.iter().all(|a| g.tag(a) == "W") && (!phrase_stop(&p.lower) || p.lower == "kaip"))
+                {
+                    continue; // jos pasirodymu danguje, šiuo metu; kaip snaiges (the case of what it is compared to)
+                } else if phrase_stop(&p.lower)
+                    && (w.can_be_verb(&g)
+                        || (COORDINATORS.contains(&p.lower.as_str()) && coordinated(k as usize, &own))
+                        || (own.iter().any(|r| r.case == "ins")
+                            && head.pos_readings(&g).iter().filter(|r| r.pos == Pos::Noun).all(|r| r.case == "gen")))
+                {
+                    // nes rėžiu tiesą (a verb); virtuve bei butu raštininkui, žemę tarp vandenų ir
+                    // žvaigždes danguje (coordinated with a noun in the same case); o trejetu metų
+                    continue;
                 }
                 // after a genitive (or a name) an instrumental is often its head: karo metu,
                 // Vyriausybės potvarkiu, Aifelio dialektu; only a genitive the corpus knows well
@@ -2275,8 +2430,10 @@ impl Grammar {
                 governed = if let Some(cs) = prep_cases(&t.lower) {
                     own.iter().any(|r| cs.contains(&r.case))
                 } else {
+                    // yra ir aukščiausiu kalnu pasaulyje
                     own.iter().any(|r| r.case == "ins")
-                        && g.analyses(&t.text).iter().any(|a| g.tag(a).starts_with("V.") && PREDICATIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)))
+                        && (COPULA_FORMS.contains(&t.lower.as_str())
+                            || g.analyses(&t.text).iter().any(|a| g.tag(a).starts_with("V.") && PREDICATIVE_VERBS.iter().any(|v| a.lemma.ends_with(v))))
                 };
                 j -= 1;
             }

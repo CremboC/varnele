@@ -102,6 +102,20 @@ FLAGGED = [
     ("Ėjo pro nedideles gyvenvietės.", "gyvenvietės", "agreement", "gyvenvietes"),   # pro takes the accusative
     ("Ji nedidele.", "nedidele", "agreement", "nedidelė"),
     ("Mergaitė buvo labai nedidele.", "nedidele", "agreement", "nedidelė"),
+    # a clause without a verb (copula left out), degree adverbs, feminine plural subjects, comparisons
+    ("O čia neprivaloma nepaisant to, kad žiema žymiai rimtesne.", "rimtesne", "agreement", "rimtesnė"),
+    ("O čia neprivaloma nepaisant to, kad ziema žymiai rimtesne ", "rimtesne", "agreement", "rimtesnė"),  # a reverted ziema
+    ("Čia individualios teisės žymiai svarbesnes negu visuomenės saugumas.", "svarbesnes", "agreement", "svarbesnės"),
+    ("Teisės yra svarbesnes.", "svarbesnes", "agreement", "svarbesnės"),
+    ("Žiema buvo kur kas rimtesne.", "rimtesne", "agreement", "rimtesnė"),
+    ("Mama didele.", "didele", "agreement", "didelė"),
+    ("Jie gerokai mažesnį už pagrindinį objektą.", "mažesnį", "agreement", "mažesni"),
+    ("Teisės svarbesnės negu visuomenes saugumas.", "visuomenes", "case", "visuomenės"),   # after a conjunction
+    ("Jis atėjo ir visuomenes saugumas pagerėjo.", "visuomenes", "case", "visuomenės"),
+    # an unknown subject takes the twin its predicate agrees with (the keyboard re-decides its own žiemą)
+    ("Kad ziema žymiai rimtesnė.", "ziema", "unknown", "žiema"),
+    ("Per sesiolika mėnesių aplankė daug šalių.", "sesiolika", "unknown", "šešiolika"),    # a numeral after per
+    ("Vienas iš penkiu vandenynų.", "penkiu", "unknown", "penkių"),
     ("Lempa kabo virs stalo.", "virs", "case", "virš"),               # virs = will become, unless a verb came before
     # keyboard order: the words before were committed (and fixed) before the head was typed
     ("Surengė dalyvaujančiu šalių viršūnių susitikimą.", "dalyvaujančiu", "agreement", "dalyvaujančių"),
@@ -234,6 +248,11 @@ CORRECT = [
     "Jis rašo įvairia tematika. Imperija ėmė visiškai kontroliuoti Britanija. Pati mačiau. Gausi tautosaka išliko.",
     "Su šia nuomone sutinka ne visi. Ji baigė Vilniaus pedagoginį institutą. Sumuštinius su mišraine valgiau.",
     "Kalva – pailga lėkštašlaitė neryškia papėde.",
+    # predicate adjectives: a verb in the clause or left out of it, adverbs and verbs as subjects, prefixed copulas
+    "Aš nupirkau knygą, o sesė žymiai gražesnę. Hobitas labai gudrus. Atlieka tiek barokinę, tiek moderniąją muziką.",
+    "Grupė atliko kiek kitokią, nei jiems įprasta, muziką. Mama didele",
+    # genitive after a conjunction: a verb, coordinated words in the same case
+    "Pastatas su virtuve bei butu raštininkui. Brahma įtvirtina žemę tarp vandenų ir žvaigždes danguje. Nes rėžiu tiesą į akis.",
 ]
 
 

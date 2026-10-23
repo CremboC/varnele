@@ -208,7 +208,7 @@ impl Checker {
         if !context.trim().is_empty() {
             let text = format!("{} {}", context.trim_end(), word);
             let start = clen(&text) - clen(word);
-            if let Some(f) = self.grammar.check(&self.an, &text).into_iter().find(|f| f.start == start) {
+            if let Some(f) = self.grammar.check_opts(&self.an, &text, true).into_iter().find(|f| f.start == start) {
                 if f.rule == "context" && status == WordStatus::Unknown {
                     // unknown word: context decides the order
                     let mut ordered: Vec<(String, f64, f64)> = Vec::new();
@@ -432,6 +432,43 @@ impl Checker {
     /// the next word too when the model gives it [`GHOST_NEXT_P`] or more. None when nothing
     /// completes it or the word as typed is likelier than the completion (tau, not tautos).
     /// `formal` as for [`Self::keyboard_predict`].
+    /// The keyboard's own diacritics, decided again once the words after them are typed (keyboard
+    /// only). `committed` is the sentence as it stands, `typed` the same with each word the keyboard
+    /// gave diacritics (autocorrect, not the user) as it was typed: `kad žiemą žymiai rimtesne` /
+    /// `kad ziema žymiai rimtesne`. Each such word is checked as typed; a word whose twins the grammar
+    /// narrows to ones that leave out its committed spelling takes the first of them (`žiema`: the
+    /// predicate rimtesnė needs a nominative subject). A committed spelling the grammar still allows
+    /// stays (`sąlyginė taika`: sąlygine would agree too). Returns (start, end, replacement), char
+    /// offsets; the two texts must have the same length.
+    pub fn keyboard_soft(&self, committed: &str, typed: &str) -> Vec<(usize, usize, String)> {
+        let c: Vec<char> = committed.chars().collect();
+        let t: Vec<char> = typed.chars().collect();
+        if c.len() != t.len() || c == t {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (a, b) in word_spans(&t) {
+            if c[a..b] == t[a..b] {
+                continue;
+            }
+            // one word as typed at a time: the others keep what they show (pačių įdomiausių nuotykių;
+            // all of them as typed, paciu idomiausiu nuotykiu, is a sentence of unknown words)
+            let word: String = t[a..b].iter().collect();
+            let now: String = c[a..b].iter().collect();
+            let text: String = c[..a].iter().chain(t[a..b].iter()).chain(c[b..].iter()).collect();
+            let issues = self.grammar.check(&self.an, &text);
+            let Some(f) = issues.iter().find(|f| f.start == a && f.end == b && f.rule != "comma") else { continue };
+            let twins: Vec<&String> = f.suggestions.iter()
+                .filter(|s| clen(s) == b - a && fold(&lower(s)) == fold(&lower(&word)))
+                .collect();
+            if twins.is_empty() || twins.iter().any(|s| **s == now) {
+                continue;
+            }
+            out.push((a, b, twins[0].clone()));
+        }
+        out
+    }
+
     pub fn keyboard_ghost(&self, context: &str, typed: &str, formal: bool) -> Option<String> {
         let (word, next) = self.ghost_parts(context, typed, formal)?;
         Some(match next {

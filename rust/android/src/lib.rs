@@ -1,5 +1,5 @@
 //! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative, predictNative, ghostNative,
-//! user*Native (the user's own language model)}
+//! softNative, user*Native (the user's own language model)}
 //! The compiled data file is embedded in the library, so the app ships one .so.
 
 use std::sync::{Mutex, OnceLock};
@@ -167,6 +167,32 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_ghostNative<'l>(
     let typed: String = env.get_string(&typed).map(Into::into).unwrap_or_default();
     let ghost = checker().lock().unwrap().keyboard_ghost(&context, &typed, formal != 0).unwrap_or_default();
     env.new_string(ghost).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// The keyboard's own diacritics decided again (Checker::keyboard_soft): `committed` is the sentence as
+/// it stands, `typed` the same with the words the keyboard gave diacritics as typed. Returns a JSON
+/// array of {start, end, word} (UTF-16 offsets) to put in their place.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_softNative<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    committed: JString<'l>,
+    typed: JString<'l>,
+) -> jstring {
+    let committed: String = env.get_string(&committed).map(Into::into).unwrap_or_default();
+    let typed: String = env.get_string(&typed).map(Into::into).unwrap_or_default();
+    let mut utf16 = Vec::with_capacity(committed.len() + 1);
+    let mut n = 0;
+    for c in committed.chars() {
+        utf16.push(n);
+        n += c.len_utf16();
+    }
+    utf16.push(n);
+    let fixes = checker().lock().unwrap().keyboard_soft(&committed, &typed);
+    let items: Vec<String> = fixes.iter()
+        .map(|(a, b, w)| format!("{{\"start\":{},\"end\":{},\"word\":{}}}", utf16[*a], utf16[*b], varnele::json::string(w)))
+        .collect();
+    env.new_string(format!("[{}]", items.join(","))).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
 /// The user's language model: load its counts from `path` (an app-private file; missing = empty)

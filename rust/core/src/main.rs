@@ -152,6 +152,14 @@ fn main() {
                         }
                         writeln!(out).unwrap();
                     }
+                    "soft" => {
+                        // soft\tCOMMITTED\tTYPED: the keyboard's own diacritics decided again
+                        let fixes = ck.keyboard_soft(parts.get(1).copied().unwrap_or(""), parts.get(2).copied().unwrap_or(""));
+                        let items: Vec<String> = fixes.iter()
+                            .map(|(a, b, w)| format!("{{\"start\":{a},\"end\":{b},\"word\":{}}}", varnele::json::string(w)))
+                            .collect();
+                        writeln!(out, "[{}]", items.join(",")).unwrap();
+                    }
                     "gesture" => {
                         let path = parse_path(parts.get(1).copied().unwrap_or(""));
                         let cap = parts.get(2) == Some(&"1");

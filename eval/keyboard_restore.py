@@ -28,6 +28,7 @@ def main():
     ap.add_argument("--sentences", type=int, default=300)
     ap.add_argument("--show", type=int, default=25)
     ap.add_argument("--corpus", default=str(ROOT / "corpus" / "test"))
+    ap.add_argument("--no-soft", action="store_true", help="the sentence fixer leaves autocorrect's diacritics alone")
     a = ap.parse_args()
 
     ck = Checker()
@@ -41,7 +42,7 @@ def main():
     skipped = 0
     for s in sample:
         stripped = s.translate(STRIP)
-        out = {"checker": restore(ck, stripped, True), "keyboard": type_text(stripped)}
+        out = {"checker": restore(ck, stripped, True), "keyboard": type_text(stripped, soft=not a.no_soft)}
         words = WORD.findall(s)
         got = {n: WORD.findall(r) for n, r in out.items()}
         if any(len(g) != len(words) for g in got.values()):
