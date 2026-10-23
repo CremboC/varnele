@@ -4,7 +4,7 @@
 # limit (macOS has no `timeout`): a dropped wireless link or a locked screen otherwise makes
 # adb install / input / uiautomator wait forever.
 #
-#   eval/phone_ready.sh && adb install -r app.apk
+#   eval/phone_ready.sh && adb -s PHONE install -r app.apk   (PHONE: the non-emulator line of adb devices)
 #
 # Exit 0: ready. Exit 1: not ready, with the reason on stderr (unlock the phone, reconnect).
 
@@ -14,7 +14,8 @@ LIMIT="${PHONE_TIMEOUT:-8}"
 # run with a time limit; prints nothing and fails if the limit is hit
 limited() { perl -e "alarm $LIMIT; exec @ARGV" "$@"; }
 
-devices() { limited "$ADB" devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }'; }
+# the phone, not the emulator (often running too: adb without a serial then refuses every call)
+devices() { limited "$ADB" devices 2>/dev/null | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1 }'; }
 
 if [ -z "$(devices)" ]; then
     # wireless adb dropped (or the adb server restarted): reconnect to an advertised phone
@@ -26,6 +27,7 @@ if [ -z "$(devices)" ]; then
     echo "phone not connected: no adb device (enable wireless debugging, or adb connect HOST:PORT)" >&2
     exit 1
 fi
+export ANDROID_SERIAL="${ANDROID_SERIAL:-$(devices | head -1)}"
 
 state=$(limited "$ADB" shell 'dumpsys power | grep -m1 "mWakefulness="; dumpsys window | grep -m1 -E "isKeyguardShowing|mKeyguardShowing|mShowingLockscreen"' 2>/dev/null)
 if [ -z "$state" ]; then
