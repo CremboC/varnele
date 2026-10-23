@@ -1,4 +1,4 @@
-//! varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W... | kb WORD [CONTEXT...]
+//! varnele [--data PATH] check FILE [--formal] [--no-grammar] | json FILE | words W... | kb WORD [CONTEXT...] [--after TEXT]
 //!         | swipe WORD... | serve | bench | fst (stdin KEY<TAB>VALUE lines -> FST bytes, for the export)
 
 use std::io::Read;
@@ -113,9 +113,11 @@ fn main() {
             eprintln!("load {:?}, check {:?}", load, t.elapsed());
         }
         Some("kb") => {
-            // keyboard view of a word: varnele kb WORD [CONTEXT...]
-            let ctx = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>().join(" ");
-            println!("{}", varnele::json::keyboard_word(&ck.keyboard_word(&args[1], &ctx, !args.iter().any(|a| a == "--no-key-shift"), formal)));
+            // keyboard view of a word: varnele kb WORD [CONTEXT...] [--after TEXT] (the rest of the sentence)
+            let after_at = args.iter().position(|a| a == "--after");
+            let after = after_at.and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
+            let ctx = args[2..after_at.unwrap_or(args.len())].iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>().join(" ");
+            println!("{}", varnele::json::keyboard_word(&ck.keyboard_word_in(&args[1], &ctx, &after, !args.iter().any(|a| a == "--no-key-shift"), formal)));
         }
         Some("swipe") => {
             // decode each word's ideal path: varnele swipe WORD... [--formal]
@@ -129,7 +131,7 @@ fn main() {
         }
         Some("serve") => {
             // one request per stdin line, for evaluations that make thousands of calls:
-            //   kb<TAB>WORD<TAB>CONTEXT  -> one JSON line
+            //   kb<TAB>WORD<TAB>CONTEXT[<TAB>AFTER]  -> one JSON line (AFTER: the rest of the sentence)
             //   json<TAB>TEXT            -> one finding per line, then an empty line
             //   gesture<TAB>X,Y X,Y ...<TAB>CAP(0/1)<TAB>N<TAB>CONTEXT  -> JSON list of N candidates (QWERTY, key widths)
             //   predict<TAB>CONTEXT<TAB>PREFIX<TAB>N  -> JSON list of N next words
@@ -144,8 +146,8 @@ fn main() {
                 let line = line.unwrap();
                 let parts: Vec<&str> = line.split('\t').collect();
                 match parts[0] {
-                    "kb" => writeln!(out, "{}", varnele::json::keyboard_word(
-                        &ck.keyboard_word(parts[1], parts.get(2).copied().unwrap_or(""), true, formal))).unwrap(),
+                    "kb" => writeln!(out, "{}", varnele::json::keyboard_word(&ck.keyboard_word_in(
+                        parts[1], parts.get(2).copied().unwrap_or(""), parts.get(3).copied().unwrap_or(""), true, formal))).unwrap(),
                     "json" => {
                         for f in ck.check_text(parts.get(1).copied().unwrap_or(""), formal, grammar) {
                             writeln!(out, "{}", varnele::json::finding(&f, |i| i)).unwrap();

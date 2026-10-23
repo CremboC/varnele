@@ -271,6 +271,17 @@ class Grammar(unittest.TestCase):
                 got = {k: v for k, v in findings(text).items() if k[1] != "unknown"}
                 self.assertEqual(got, {})
 
+    def test_slips_onto_foreign_letters(self):
+        """One finger slip onto w, q or x is a typo; foreign words stay foreign."""
+        for bad, good in {"ziwma": "žiema", "priwglobscio": "prieglobsčio", "xiūrėti": "žiūrėti"}.items():
+            with self.subTest(word=bad):
+                self.assertEqual(CK.check_word(bad)[0], "unknown")
+                self.assertEqual(CK.check_word(bad)[1][0], good)
+        # seen in the corpus, a name, too short, w not touching d
+        for word in "news wiki Ziwma tax wirba".split():
+            with self.subTest(word=word):
+                self.assertEqual(CK.check_word(word), ("skip", []))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ import sys
 
 from .analyzer import Analyzer
 from .index import Index
-from .phonology import LT_ALPHABET
+from .phonology import LT_ALPHABET, fold
 from .grammar import Grammar, Issue
 from .suggest import Suggester
 
@@ -21,6 +21,10 @@ ABBREV = set((Path(__file__).resolve().parent.parent / "data" / "abbreviations.t
 
 def is_foreign(word):
     return any(c not in LT_LETTERS for c in word.lower())
+
+
+# Letters Lithuanian doesn't use and the keys touching them (staggered rows: w is above a and s, not d)
+SLIP_KEYS = {"w": "qeas", "q": "wa", "x": "zsdc"}
 
 
 def tokens(text):
@@ -51,7 +55,8 @@ class Checker:
                 return "ok", []
             w = w[:-1]
         if is_foreign(w) or (w.isupper() and len(w) > 1):
-            return "skip", []
+            fix = self.slip_fixes(w)
+            return ("unknown", fix) if fix else ("skip", [])
         r = self.an.check(w)
         if r.status != "unknown":
             pass
@@ -71,6 +76,20 @@ class Checker:
             return "unknown", self.sg.suggest(w)
         return "ok", []
 
+
+    def slip_fixes(self, w):
+        """A Lithuanian word with one finger slip onto w, q or x (ziwma -> žiema, xiūrėti ->
+        žiūrėti): the seen words that key's neighbour gives, else []. A foreign word stays
+        foreign: one the corpus has (news, wifi), a name, a word of 3 letters or fewer (tax, wp)."""
+        lw = w.lower()
+        odd = [i for i, c in enumerate(lw) if c not in LT_LETTERS]
+        if w != lw or len(w) < 4 or len(odd) != 1 or lw[odd[0]] not in SLIP_KEYS or lw in self.sg.freq:
+            return []
+        i = odd[0]
+        rest = fold(lw[:i] + lw[i + 1:])
+        return [c for c in self.sg.suggest(w, 20)
+                if len(c) == len(w) and fold(c[i]) in SLIP_KEYS[lw[i]] and fold(c[:i] + c[i + 1:]) == rest
+                and c in self.sg.freq][:5]
 
     def check_text(self, text, formal=False, grammar=True):
         """All findings in a text, in order: misspellings, spoken forms, grammar."""

@@ -130,6 +130,9 @@ fn is_roman(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| "IVXLCDM".contains(c))
 }
 
+/// Letters Lithuanian doesn't use and the keys touching them (staggered rows: w is above a and s, not d).
+const SLIP_KEYS: [(char, &str); 3] = [('w', "qeas"), ('q', "wa"), ('x', "zsdc")];
+
 impl Checker {
     pub fn new(data: Data) -> Checker {
         Checker { an: Analyzer::new(data), grammar: Grammar::default() }
@@ -149,7 +152,8 @@ impl Checker {
             w = stripped;
         }
         if is_foreign(w) || (is_upper(w) && clen(w) > 1) {
-            return (WordStatus::Skip, vec![]);
+            let fix = self.slip_fixes(w);
+            return if fix.is_empty() { (WordStatus::Skip, vec![]) } else { (WordStatus::Unknown, fix) };
         }
         let r = self.an.check(w);
         if r.status == Status::Unknown {
@@ -186,12 +190,52 @@ impl Checker {
         }
     }
 
+    /// A Lithuanian word with one finger slip onto w, q or x (ziwma -> žiema, xiūrėti ->
+    /// žiūrėti): the seen words that key's neighbour gives, else none. A foreign word stays
+    /// foreign: one the corpus has (news, wifi), a name, a word of 3 letters or fewer (tax, wp).
+    fn slip_fixes(&self, w: &str) -> Vec<String> {
+        let lw = lower(w);
+        let chars: Vec<char> = lw.chars().collect();
+        let odd: Vec<usize> = (0..chars.len()).filter(|&i| !LT_ALPHABET.contains(chars[i])).collect();
+        if w != lw || chars.len() < 4 || odd.len() != 1 || self.an.data.freq.get(&lw) > 0 {
+            return vec![];
+        }
+        let i = odd[0];
+        let keys = match SLIP_KEYS.iter().find(|(k, _)| *k == chars[i]) {
+            Some((_, keys)) => *keys,
+            None => return vec![],
+        };
+        let without = |c: &[char]| fold(&c[..i].iter().chain(&c[i + 1..]).collect::<String>());
+        let rest = without(&chars);
+        self.an
+            .suggest(w, 20)
+            .into_iter()
+            .filter(|c| {
+                let cc: Vec<char> = c.chars().collect();
+                cc.len() == chars.len()
+                    && keys.contains(fold(&cc[i].to_string()).as_str())
+                    && without(&cc) == rest
+                    && self.an.data.freq.get(c) > 0
+            })
+            .take(5)
+            .collect()
+    }
+
     /// What a keyboard needs for the word being typed: is it valid, and the ranked
     /// corrections (word, cost, differs-only-in-diacritics). `context` is the text
     /// before the word (a few previous words); grammar rules can use it to fix a
     /// valid word ("prieš pora" -> "porą") or re-rank corrections. `formal`: a spoken form
     /// gets its standard form as a fix (valgyt -> valgyti, rule "formal").
     pub fn keyboard_word(&self, word: &str, context: &str, key_shift: bool, formal: bool) -> KeyboardWord {
+        self.keyboard_word_in(word, context, "", key_shift, formal)
+    }
+
+    /// [`Checker::keyboard_word`] for a word inside a sentence: `after` is the rest of the sentence
+    /// after it (the cursor was put back into the text), so the words after it decide too:
+    /// "kad žiema žymiai rimtesne| negu" -> rimtesnė, "kad ziema| žymiai rimtesne" -> žiema (not the
+    /// more frequent žiemą). `context` should then be the sentence before the word: the rules see a
+    /// whole sentence, not one that ends at the word.
+    pub fn keyboard_word_in(&self, word: &str, context: &str, after: &str, key_shift: bool, formal: bool) -> KeyboardWord {
         let (status, formal_forms) = self.check_word(word);
         let lw = lower(word);
         let fw = fold(&lw);
@@ -205,10 +249,12 @@ impl Checker {
         }
         let mut context_rule = String::new();
         let mut context_fixes: Vec<(String, f64, f64)> = Vec::new();
-        if !context.trim().is_empty() {
-            let text = format!("{} {}", context.trim_end(), word);
-            let start = clen(&text) - clen(word);
-            if let Some(f) = self.grammar.check_opts(&self.an, &text, true).into_iter().find(|f| f.start == start) {
+        let partial = !after.chars().any(char::is_alphabetic);
+        if !context.trim().is_empty() || !partial {
+            let head = if context.trim().is_empty() { String::new() } else { format!("{} ", context.trim_end()) };
+            let start = clen(&head);
+            let text = format!("{head}{word}{after}");
+            if let Some(f) = self.grammar.check_opts(&self.an, &text, partial).into_iter().find(|f| f.start == start) {
                 if f.rule == "context" && status == WordStatus::Unknown {
                     // unknown word: context decides the order
                     let mut ordered: Vec<(String, f64, f64)> = Vec::new();

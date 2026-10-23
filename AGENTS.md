@@ -53,7 +53,7 @@ python3 -m varnele words WORD...                   # analyses + suggestions
 python3 -m varnele export                          # -> data/varnele.bin (needed by Rust/Android); build the Rust
                                                    # binary first: count tables are built by `varnele fst`
 cargo build --release --manifest-path rust/Cargo.toml
-rust/target/release/varnele check FILE | json FILE | words W... | kb WORD [CONTEXT...] | bench
+rust/target/release/varnele check FILE | json FILE | words W... | kb WORD [CONTEXT...] [--after TEXT] | bench
 python3 eval/parity.py                             # Rust must equal Python: 100% identical findings
 python3 eval/restore.py --sentences 300            # strip all diacritics, measure restoration
 python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precision of each comma rule
@@ -63,7 +63,7 @@ python3 eval/build_valency.py [--workers 8]        # case of the phrase next to 
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
 python3 eval/keyboard_restore.py [--no-soft]       # restore.py's 300 sentences typed through the keyboard model
                                                    # (--no-soft: the fixer leaves autocorrect's diacritics alone)
-rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT" / "json\tTEXT" / "learn\tTEXT" /
+rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT[\tAFTER]" / "json\tTEXT" / "learn\tTEXT" /
                                                    # "gesture\tX,Y X,Y…\tCAP\tN\tCONTEXT" / "predict\tCONTEXT\tPREFIX\tN" /
                                                    # "soft\tCOMMITTED\tTYPED" (used by the sims)
 rust/target/release/varnele swipe WORD...         # decode each word's ideal swipe path
@@ -143,6 +143,17 @@ screenshot (`adb -s emulator-5554 exec-out screencap -p > s.png`).
    0.3 once for any number of missing diacritics, so frequency decides (`turetu` →
    `turėtų`, not the rare `turėtu`); restoration 62.9% → 65.8%. A word's diacritic
    variants in grammar are ordered by this cost (`šitą` before `sytą`). Lowercase input penalises capitalised names.
+   **Finger slips onto w, q, x** (`slip_fixes` in `__main__.py` / `checker.rs`, 2026-10-23, owner: `ziwma`
+   got nothing): a word with a letter Lithuanian doesn't use is foreign and skipped, unless it is lowercase,
+   4+ letters, its one such letter is w, q or x, it is not in `freq.tsv` (foreign words seen 10+ times:
+   `news`, `wiki`, `box`), and replacing that letter by a key touching it gives seen words (`SLIP_KEYS`:
+   staggered rows, w touches q e a s, not d; the suggester's `_near` also counts the other diagonal, which
+   made `kawa` → `kada`, `wirba` → `dirba`): `ziwma` → `žiema`, `priwglobsčio` → `prieglobsčio`, `xiūrėti` →
+   `žiūrėti`. On 23.5M words of correct text (test, freq, both dialogue test sets, the dialogue training
+   text, 4 dump files) 35 flags: 3 real typos, the rest rare Latin and foreign words (`natrix`, `vertex`,
+   `senex`, `woke`), ~1.4 per million words; without the guards 502 of the 2,780 such tokens in the test
+   sets alone (`New` → `Nes`, `index` → `indes`). keyboard_restore and parity unchanged. A capitalised word
+   stays foreign (`Ziwma` at a sentence start too: names like `Wiley`, `Narwi` would be flagged).
 8. **Context rules** (`grammar.py` / `grammar.rs`), see list below. Case rules
    only fire when a **diacritic-only** variant satisfies them; re-inflection
    (negation, subject, object) is generated from the word's own entry.
@@ -284,6 +295,21 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   The lexical cost also subtracts 0.3 × log10 of the language model's P(word | context) / P(word).
   Tried and dropped: a per-letter anchor distance (favours short words, 34% top-1), a "don't cut
   past a sharp corner" prune (real corners are often > 1 key from the letter: recall 92 → 74%).
+- **A word inside a sentence** (2026-10-23, owner: going back to `kad ziwma zymiai rimtesne negu siaip`,
+  fixing `ziwma`, then tapping `rimtesne` offered no `rimtesnė`): `InputLogic.setVarneleContext` hands
+  `VarneleDictionary` the text after the word too (`textAfter`, 200 characters, also with the cursor inside
+  a touched word; read from the app once per cursor move or new field and kept while typing, since typing
+  at the cursor doesn't change it: the connection doesn't cache it, and asked on every keystroke it took
+  over a second on a loaded emulator and made HeliBoard mark the connection slow), and when the sentence goes on after it, `Native.check` gets the sentence before the word
+  and the rest of it up to its full stop (Rust `keyboard_word_in`, JNI `word(…, after, …)`, serve `kb`'s 4th
+  field, CLI `kb … --after TEXT`): the grammar sees a whole sentence (not `partial`), so a touched valid word
+  gets the sentence's fix (`rimtesne` → `rimtesnė`) and a word retyped mid-sentence is ranked by the words
+  after it (`ziema` → `žiema`, was the more frequent `žiemą`). A touched word in Lithuanian always asks
+  Varnelė (upstream showed only the word's SuggestionSpans when it had any: autocorrect's, the system spell
+  checker's); the span words come after Varnelė's (`setResumed`). Resumed words never autocorrect
+  (HeliBoard's `isResumed`), and the strip leaves out the typed word there, as upstream does for a touched
+  word without spans. Not covered: a touched word whose sentence already holds the wrong twin (`kad žiemą
+  žymiai rimtesne`), and the sentence fixer still fixes only the text before the cursor.
 - `inputlogic/VarneleSentenceFixer.kt`, hooked at the end of
   `InputLogic.handleSeparatorEvent` and `onPickSuggestionManually` (a picked suggestion
   finishes a word too; the picked word itself is left as chosen): after each finished word, re-check the
@@ -943,3 +969,6 @@ Left deliberately:
 29. predicate adjectives in clauses without a verb, degree adverbs, `teisės` as a subject, unknown subjects
     ranked by their predicate; the genitive-before-noun rule after conjunctions; copulas without other
     prefixes; the keyboard re-decides its own diacritics (`keyboard_soft`, fork `paulius/varnele-soft-words`)
+30. a word inside a sentence is checked with the rest of it (`keyboard_word_in`, JNI `word(…, after, …)`): a
+    touched word gets the sentence's fix (`rimtesne` → `rimtesnė`), a retyped one is ranked by the words after
+    it; finger slips onto w/q/x are typos (`ziwma` → `žiema`)

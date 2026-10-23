@@ -66,7 +66,8 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_check<'l>(
 }
 
 /// The word being typed, for a keyboard: JSON {status, suggestions, contextRule, contextFixes, keyShift}.
-/// `context` is the text before the word (a few previous words), may be empty; `formal`: spoken
+/// `context` is the text before the word (a few previous words), may be empty; `after` the rest of the
+/// sentence when the word is inside one (then `context` is the sentence before it); `formal`: spoken
 /// forms get their standard form as a fix (contextRule "formal").
 #[no_mangle]
 pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
@@ -74,14 +75,16 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_word<'l>(
     _class: JClass<'l>,
     word: JString<'l>,
     context: JString<'l>,
+    after: JString<'l>,
     key_shift: jboolean,
     formal: jboolean,
 ) -> jstring {
     let word: String = env.get_string(&word).map(Into::into).unwrap_or_default();
     let context: String = env.get_string(&context).map(Into::into).unwrap_or_default();
+    let after: String = env.get_string(&after).map(Into::into).unwrap_or_default();
     let json = {
         let ck = checker().lock().unwrap();
-        varnele::json::keyboard_word(&ck.keyboard_word(&word, &context, key_shift != 0, formal != 0))
+        varnele::json::keyboard_word(&ck.keyboard_word_in(&word, &context, &after, key_shift != 0, formal != 0))
     };
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
