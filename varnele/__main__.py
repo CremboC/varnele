@@ -25,6 +25,16 @@ def is_foreign(word):
 
 # Letters Lithuanian doesn't use and the keys touching them (staggered rows: w is above a and s, not d)
 SLIP_KEYS = {"w": "qeas", "q": "wa", "x": "zsdc"}
+# what may stand between a sentence's end and its first word
+OPENERS = " \t\"'„“”«»‘’([-–—"
+
+
+def sentence_start(text, pos):
+    """Only spaces, quotes and brackets between the start of the text or a sentence end and pos."""
+    i = pos
+    while i > 0 and text[i - 1] in OPENERS:
+        i -= 1
+    return i == 0 or text[i - 1] in ".!?…\n"
 
 
 def tokens(text):
@@ -48,14 +58,15 @@ class Checker:
         self.sg = Suggester(self.an)
         self.grammar = Grammar(self.an, self.sg)
 
-    def check_word(self, w):
-        """-> (status, suggestions). status: ok | colloquial | unknown | skip"""
+    def check_word(self, w, sentence_start=False):
+        """-> (status, suggestions). status: ok | colloquial | unknown | skip.
+        sentence_start: a capital may be the keyboard's own (Ziwma is ziwma)."""
         if w.endswith("."):
             if w.lower() in ABBREV or len(w) == 2:   # šv., pvz., initials
                 return "ok", []
             w = w[:-1]
         if is_foreign(w) or (w.isupper() and len(w) > 1):
-            fix = self.slip_fixes(w)
+            fix = self.slip_fixes(w, sentence_start)
             return ("unknown", fix) if fix else ("skip", [])
         r = self.an.check(w)
         if r.status != "unknown":
@@ -77,28 +88,39 @@ class Checker:
         return "ok", []
 
 
-    def slip_fixes(self, w):
-        """A Lithuanian word with one finger slip onto w, q or x (ziwma -> žiema, xiūrėti ->
-        žiūrėti): the seen words that key's neighbour gives, else []. A foreign word stays
-        foreign: one the corpus has (news, wifi), a name, a word of 3 letters or fewer (tax, wp)."""
+    def slip_fixes(self, w, sentence_start=False):
+        """A Lithuanian word with one finger slip onto w, q or x: the seen words it was meant to be,
+        else []. The slip hit that key instead of one touching it (ziwma -> žiema, xiūrėti ->
+        žiūrėti) or as well as a letter next to it that it touches (ziewma -> žiema). A foreign word
+        stays foreign: one the corpus has (news, wifi), a name (a capital other than at a
+        sentence start: Wiley), a word of 3 letters or fewer (tax, wp)."""
+        if sentence_start and w[:1].isupper() and w[1:].islower():
+            # not the capital itself: Westu, Xanderis are names
+            return [] if w[0].lower() in SLIP_KEYS else [c[:1].upper() + c[1:] for c in self.slip_fixes(w.lower())]
         lw = w.lower()
         odd = [i for i, c in enumerate(lw) if c not in LT_LETTERS]
         if w != lw or len(w) < 4 or len(odd) != 1 or lw[odd[0]] not in SLIP_KEYS or lw in self.sg.freq:
             return []
         i = odd[0]
+        keys = SLIP_KEYS[lw[i]]
         rest = fold(lw[:i] + lw[i + 1:])
-        return [c for c in self.sg.suggest(w, 20)
-                if len(c) == len(w) and fold(c[i]) in SLIP_KEYS[lw[i]] and fold(c[:i] + c[i + 1:]) == rest
-                and c in self.sg.freq][:5]
+        extra = any(0 <= j < len(lw) and fold(lw[j]) in keys for j in (i - 1, i + 1))
+
+        def meant(c):
+            if len(c) == len(w):
+                return fold(c[i]) in keys and fold(c[:i] + c[i + 1:]) == rest
+            return extra and len(c) == len(w) - 1 and fold(c) == rest
+        return [c for c in self.sg.suggest(w, 20) if meant(c) and c in self.sg.freq][:5]
 
     def check_text(self, text, formal=False, grammar=True):
         """All findings in a text, in order: misspellings, spoken forms, grammar."""
         found, seen = {}, {}
         for word, pos in tokens(text):
             word = word if word.lower() in ABBREV else word.rstrip(".")
-            if word not in seen:
-                seen[word] = self.check_word(word)
-            st, sugg = seen[word]
+            key = (word, sentence_start(text, pos))
+            if key not in seen:
+                seen[key] = self.check_word(*key)
+            st, sugg = seen[key]
             if st == "unknown" or (st == "colloquial" and formal):
                 found[pos] = Issue(pos, pos + len(word), word, st, "", list(sugg))
         if grammar:

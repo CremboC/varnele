@@ -149,11 +149,18 @@ screenshot (`adb -s emulator-5554 exec-out screencap -p > s.png`).
    `news`, `wiki`, `box`), and replacing that letter by a key touching it gives seen words (`SLIP_KEYS`:
    staggered rows, w touches q e a s, not d; the suggester's `_near` also counts the other diagonal, which
    made `kawa` → `kada`, `wirba` → `dirba`): `ziwma` → `žiema`, `priwglobsčio` → `prieglobsčio`, `xiūrėti` →
-   `žiūrėti`. On 23.5M words of correct text (test, freq, both dialogue test sets, the dialogue training
-   text, 4 dump files) 35 flags: 3 real typos, the rest rare Latin and foreign words (`natrix`, `vertex`,
-   `senex`, `woke`), ~1.4 per million words; without the guards 502 of the 2,780 such tokens in the test
-   sets alone (`New` → `Nes`, `index` → `indes`). keyboard_restore and parity unchanged. A capitalised word
-   stays foreign (`Ziwma` at a sentence start too: names like `Wiley`, `Narwi` would be flagged).
+   `žiūrėti`; or deleting it when it was pressed as well as a letter next to it that it touches (`ziewma` →
+   `žiema`, `dawrbas` → `darbas`; not `zwiema`). A capital counts as the keyboard's own only at a sentence
+   start (`check_word(w, sentence_start)`: `check_text` by what precedes the word, `keyboard_word` when no
+   words of the sentence come before; `Gwrai` → `Gerai`), and not when the capital is the slip itself
+   (`Westu`, `Xanderis`, `Waltas`: names). The keyboard's underline passes the words before the word, else a
+   name inside a sentence (`Narwi`) would count as a sentence start. On 23.5M words of correct text (test,
+   freq, both dialogue test sets, the dialogue training text, 4 dump files) 72 flags, ~3 per million words:
+   4 real typos (`Galėjqi` → `Galėjai`), the rest rare Latin and foreign words (`natrix`, `vertex`, `woke`),
+   names at a sentence start (`Maxas` → `Mažas`, `Brokaw`, 18) and extra-key deletions into short words
+   (`twai` → `tai`, `jaws` → `jas`, ~15). Replacement alone, lowercase only: 35; any capital at a sentence
+   start: 86. Without the guards 502 of the 2,780 such tokens in the test sets alone (`New` → `Nes`,
+   `index` → `indes`). keyboard_restore and parity unchanged.
 8. **Context rules** (`grammar.py` / `grammar.rs`), see list below. Case rules
    only fire when a **diacritic-only** variant satisfies them; re-inflection
    (negation, subject, object) is generated from the word's own entry.
@@ -972,3 +979,4 @@ Left deliberately:
 30. a word inside a sentence is checked with the rest of it (`keyboard_word_in`, JNI `word(…, after, …)`): a
     touched word gets the sentence's fix (`rimtesne` → `rimtesnė`), a retyped one is ranked by the words after
     it; finger slips onto w/q/x are typos (`ziwma` → `žiema`)
+31. w/q/x slips: an extra key press (`ziewma` → `žiema`), a capital at a sentence start (`Gwrai` → `Gerai`)

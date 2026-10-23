@@ -132,6 +132,17 @@ fn is_roman(s: &str) -> bool {
 
 /// Letters Lithuanian doesn't use and the keys touching them (staggered rows: w is above a and s, not d).
 const SLIP_KEYS: [(char, &str); 3] = [('w', "qeas"), ('q', "wa"), ('x', "zsdc")];
+/// What may stand between a sentence's end and its first word.
+const OPENERS: &str = " \t\"'„“”«»‘’([-–—";
+
+/// Only spaces, quotes and brackets between the start of the text or a sentence end and `pos`.
+fn sentence_start(chars: &[char], pos: usize) -> bool {
+    let mut i = pos;
+    while i > 0 && OPENERS.contains(chars[i - 1]) {
+        i -= 1;
+    }
+    i == 0 || ".!?…\n".contains(chars[i - 1])
+}
 
 impl Checker {
     pub fn new(data: Data) -> Checker {
@@ -144,6 +155,11 @@ impl Checker {
 
     /// Status and suggestions for one word.
     pub fn check_word(&self, word: &str) -> (WordStatus, Vec<String>) {
+        self.check_word_at(word, false)
+    }
+
+    /// [`Checker::check_word`]; `sentence_start`: a capital may be the keyboard's own (Ziwma is ziwma).
+    pub fn check_word_at(&self, word: &str, sentence_start: bool) -> (WordStatus, Vec<String>) {
         let mut w = word;
         if let Some(stripped) = w.strip_suffix('.') {
             if self.an.data.abbrev.contains(&lower(w)) || clen(w) == 2 {
@@ -152,7 +168,7 @@ impl Checker {
             w = stripped;
         }
         if is_foreign(w) || (is_upper(w) && clen(w) > 1) {
-            let fix = self.slip_fixes(w);
+            let fix = self.slip_fixes(w, sentence_start);
             return if fix.is_empty() { (WordStatus::Skip, vec![]) } else { (WordStatus::Unknown, fix) };
         }
         let r = self.an.check(w);
@@ -190,10 +206,21 @@ impl Checker {
         }
     }
 
-    /// A Lithuanian word with one finger slip onto w, q or x (ziwma -> žiema, xiūrėti ->
-    /// žiūrėti): the seen words that key's neighbour gives, else none. A foreign word stays
-    /// foreign: one the corpus has (news, wifi), a name, a word of 3 letters or fewer (tax, wp).
-    fn slip_fixes(&self, w: &str) -> Vec<String> {
+    /// A Lithuanian word with one finger slip onto w, q or x: the seen words it was meant to be,
+    /// else none. The slip hit that key instead of one touching it (ziwma -> žiema, xiūrėti ->
+    /// žiūrėti) or as well as a letter next to it that it touches (ziewma -> žiema). A foreign word
+    /// stays foreign: one the corpus has (news, wifi), a name (a capital other than at a
+    /// sentence start: Wiley), a word of 3 letters or fewer (tax, wp).
+    fn slip_fixes(&self, w: &str, sentence_start: bool) -> Vec<String> {
+        let mut cs = w.chars();
+        if sentence_start && cs.next().is_some_and(char::is_uppercase) && cs.as_str() == lower(cs.as_str()) && !cs.as_str().is_empty() {
+            // not the capital itself: Westu, Xanderis are names
+            let first = lower(w).chars().next();
+            if SLIP_KEYS.iter().any(|(k, _)| Some(*k) == first) {
+                return vec![];
+            }
+            return self.slip_fixes(&lower(w), false).iter().map(|c| upper_first(c)).collect();
+        }
         let lw = lower(w);
         let chars: Vec<char> = lw.chars().collect();
         let odd: Vec<usize> = (0..chars.len()).filter(|&i| !LT_ALPHABET.contains(chars[i])).collect();
@@ -207,15 +234,19 @@ impl Checker {
         };
         let without = |c: &[char]| fold(&c[..i].iter().chain(&c[i + 1..]).collect::<String>());
         let rest = without(&chars);
+        let touches = |j: usize| j < chars.len() && keys.contains(fold(&chars[j].to_string()).as_str());
+        let extra = (i > 0 && touches(i - 1)) || touches(i + 1);
         self.an
             .suggest(w, 20)
             .into_iter()
             .filter(|c| {
                 let cc: Vec<char> = c.chars().collect();
-                cc.len() == chars.len()
-                    && keys.contains(fold(&cc[i].to_string()).as_str())
-                    && without(&cc) == rest
-                    && self.an.data.freq.get(c) > 0
+                let meant = if cc.len() == chars.len() {
+                    keys.contains(fold(&cc[i].to_string()).as_str()) && without(&cc) == rest
+                } else {
+                    extra && cc.len() + 1 == chars.len() && fold(c) == rest
+                };
+                meant && self.an.data.freq.get(c) > 0
             })
             .take(5)
             .collect()
@@ -236,7 +267,8 @@ impl Checker {
     /// more frequent žiemą). `context` should then be the sentence before the word: the rules see a
     /// whole sentence, not one that ends at the word.
     pub fn keyboard_word_in(&self, word: &str, context: &str, after: &str, key_shift: bool, formal: bool) -> KeyboardWord {
-        let (status, formal_forms) = self.check_word(word);
+        // no words before it in the sentence: the keyboard may have capitalised it
+        let (status, formal_forms) = self.check_word_at(word, context.trim().is_empty());
         let lw = lower(word);
         let fw = fold(&lw);
         let entry = |w: String, cost: f64| {
@@ -541,14 +573,16 @@ impl Checker {
     /// Offsets are in characters.
     pub fn check_text(&self, text: &str, formal: bool, grammar: bool) -> Vec<Finding> {
         let mut found: BTreeMap<usize, Finding> = BTreeMap::new();
-        let mut seen: BTreeMap<String, (WordStatus, Vec<String>)> = BTreeMap::new();
+        let mut seen: BTreeMap<(String, bool), (WordStatus, Vec<String>)> = BTreeMap::new();
+        let chars: Vec<char> = text.chars().collect();
         for (word, pos) in tokens(text) {
             let word = if self.an.data.abbrev.contains(&lower(&word)) {
                 word
             } else {
                 word.trim_end_matches('.').to_string()
             };
-            let (st, sugg) = seen.entry(word.clone()).or_insert_with(|| self.check_word(&word)).clone();
+            let start = sentence_start(&chars, pos);
+            let (st, sugg) = seen.entry((word.clone(), start)).or_insert_with(|| self.check_word_at(&word, start)).clone();
             if st == WordStatus::Unknown || (st == WordStatus::Colloquial && formal) {
                 let rule = if st == WordStatus::Unknown { "unknown" } else { "colloquial" };
                 found.insert(pos, Finding {
