@@ -312,10 +312,12 @@ type Feats = (&'static str, Option<&'static str>, Option<&'static str>);
 
 // valency: a phrase takes the case its verb takes this many times as often as the one it has, seen
 // at least VALENCY_MIN times (eval/build_valency.py -> data/valency.tsv); after a 1st/2nd person verb,
-// where the phrase can't be its subject, VALENCY_RATIO_12 times
+// where the phrase can't be its subject, VALENCY_RATIO_12 times and VALENCY_MIN_12 (no false alarm in
+// 1.7M words of Wikipedia and dialogue at any value tried)
 const VALENCY_RATIO: u64 = 30;
-const VALENCY_RATIO_12: u64 = 10;
+const VALENCY_RATIO_12: u64 = 5;
 const VALENCY_MIN: u64 = 20;
+const VALENCY_MIN_12: u64 = 10;
 
 #[derive(Default)]
 pub struct Grammar {
@@ -556,6 +558,9 @@ impl<'a> G<'a> {
                 out.push((key, cls));
             }
         }
+        if out.iter().any(|(_, c)| *c == "3") {
+            out.retain(|(_, c)| *c != "12"); // girdi: you hear or he hears; a subject may come
+        }
         out.sort();
         out
     }
@@ -652,6 +657,51 @@ fn phrase_feats(words: &[&Word]) -> Vec<Feats> {
     out
 }
 
+/// (keys, first index) of the verb at i for valency: a verb (verb_keys), or the participle of a compound
+/// past after a finite būti (esu girdėjęs: girdėti, 1st person, from esu; nesu girdėjęs: negated).
+/// No keys: (empty, i).
+fn valency_verb(g: &G, toks: &[Word], adjacent: &[bool], i: usize) -> (Vec<(String, &'static str)>, usize) {
+    let t = &toks[i];
+    let keys = if t.known { g.verb_keys(&t.text) } else { vec![] };
+    if !keys.is_empty() {
+        return (keys, i);
+    }
+    let an = g.analyses(&t.text);
+    if !(i > 0
+        && adjacent[i]
+        && !an.is_empty()
+        && an.iter().all(|a| g.tag(a).starts_with("V.pap.") && g.parts(a).iter().any(|p| p == "nom")))
+    {
+        return (vec![], i);
+    }
+    let aux: Vec<Analysis> = g
+        .analyses(&toks[i - 1].text)
+        .into_iter()
+        .filter(|a| g.finite(a) && ["esa", "nesa", "yra", "nėra", "buvo", "būna", "būti"].contains(&a.lemma.as_str()))
+        .collect();
+    if aux.is_empty() {
+        return (vec![], i);
+    }
+    let neg = aux.iter().any(|a| a.lemma == "nesa" || a.lemma == "nėra" || a.prefix.starts_with("ne"));
+    let mut classes: Vec<&'static str> = aux.iter().map(|a| if g.parts(a)[2] == "3" { "3" } else { "12" }).collect();
+    classes.sort();
+    classes.dedup();
+    let mut out: Vec<(String, &'static str)> = Vec::new();
+    for a in &an {
+        let m = ["nebe", "tebe", "ne", "be", "te"].iter().find(|x| a.prefix.starts_with(**x));
+        let rest = m.map_or(a.prefix.as_str(), |x| &a.prefix[x.len()..]);
+        let refl = g.parts(a).iter().any(|x| x == "refl");
+        let key = format!("{}{}{}{}", if neg { "!" } else { "" }, rest, a.lemma, if refl { "~" } else { "" });
+        for c in &classes {
+            if !out.contains(&(key.clone(), *c)) {
+                out.push((key.clone(), *c));
+            }
+        }
+    }
+    out.sort();
+    (out, i - 1)
+}
+
 /// Indices of the noun phrase right after (adverbs may come between) or right before the verb at
 /// i: modifiers and their noun. None when there is none, or it may belong to something else: a word
 /// before it in the clause (a preposition, a possessive), a noun or adjective after it (a genitive
@@ -664,8 +714,13 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
         let gap = gap.trim();
         !gap.is_empty() && !gap.chars().any(|c| ",.;:!?()".contains(c))
     };
-    // not the emphatic pronoun, listed as a noun: Pati mačiau (I saw it myself)
-    let head = |t: &Word| t.own.iter().any(|r| r.pos == Pos::Noun) && !["pats", "pati", "patys", "pačios"].contains(&t.lower.as_str());
+    // not the emphatic pronoun, listed as a noun: Pati mačiau (I saw it myself); not a capitalised word
+    // read only as a name (Puikiai girdžiu: the village Puikiai, not "perfectly")
+    let head = |t: &Word| {
+        t.own.iter().any(|r| r.pos == Pos::Noun)
+            && !["pats", "pati", "patys", "pačios"].contains(&t.lower.as_str())
+            && !(first_upper(&t.text) && g.analyses(&t.text).iter().all(|a| first_upper(&a.lemma)))
+    };
     let modi = |t: &Word| t.known && !t.own.is_empty() && t.own.iter().all(|r| r.pos == Pos::Adj);
     // an adverb, not a preposition (su, po), a connective or a quantity
     let skip = |t: &Word| {
@@ -693,10 +748,14 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
         if k + 1 < toks.len()
             && (cont(k + 1)
                 || (adjacent[k + 1]
-                    && (head(&toks[k + 1]) || modi(&toks[k + 1]) || ["ir", "bei", "arba"].contains(&toks[k + 1].lower.as_str()))))
+                    && (head(&toks[k + 1])
+                        || modi(&toks[k + 1])
+                        || ["ir", "bei", "arba"].contains(&toks[k + 1].lower.as_str())
+                        || (!toks[k + 1].known && g.variants_of(&toks[k + 1].lower).is_empty()))))
         {
             return None; // baigė Vilniaus pedagoginį institutą: Vilniaus modifies what comes next; tapė tiršta
-                         // akvarele ir aliejumi: the case of both
+                         // akvarele ir aliejumi: the case of both; peržiūrėti komanda gcc: a name or term follows
+                         // (an unknown word with no diacritic twin; orgazma is orgazmą typed without one)
         }
         return valency_lone(g, toks, (start..=k).collect());
     }
@@ -725,6 +784,25 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
 fn valency_lone(g: &G, toks: &[Word], idx: Vec<usize>) -> Option<Vec<usize>> {
     if idx.len() == 1 && g.analyses(&toks[idx[0]].text).iter().any(|a| matches!(g.tag(a), "W" | "Adv")) {
         return None;
+    }
+    if g.analyses(&toks[*idx.last().unwrap()].text).iter().any(|a| {
+        TIME_LEMMAS.contains(&a.lemma.as_str()) || ["prasmė", "būdas", "metas"].contains(&a.lemma.as_str())
+    }) {
+        return None; // savaite anksčiau, plačiąja prasme, tuo metu: adverbials
+    }
+    let t = &toks[*idx.last().unwrap()];
+    if idx.len() == 1 && t.own.iter().any(|r| r.case == "ins") && !t.own.iter().any(|r| r.case == "nom" || r.case == "voc") {
+        // an instrumental as frequent as its nominatives is an adverb: Sovietmečiu, Tarpukariu priklausė
+        // (not pinigu: pinigai; not sesute, also "sister!")
+        let noms: Vec<String> = g
+            .analyses(&t.text)
+            .iter()
+            .filter(|a| { let tg = g.tag(a); tg.starts_with("N.") && tg.ends_with(".ins") })
+            .flat_map(|a| ["sg", "pl"].iter().flat_map(move |n| g.inflect(a, &retag_feats(g.tag(a), "nom", Some(n), None))).collect::<Vec<_>>())
+            .collect();
+        if !noms.is_empty() && g.freq(&t.lower) >= noms.iter().map(|f| g.freq(f)).max().unwrap() {
+            return None;
+        }
     }
     Some(idx)
 }
@@ -2223,12 +2301,12 @@ impl Grammar {
         //     dump: visa šita isterija mačiau -> visą šitą isteriją (mačiau after a nominative: never)
         for i in 0..toks.len() {
             let v = &toks[i];
-            let keys = if v.known { g.verb_keys(&v.text) } else { vec![] };
+            let (keys, first) = valency_verb(&g, &toks, &adjacent, i);
             if keys.is_empty() {
                 continue;
             }
             for after in [true, false] {
-                let Some(idx) = valency_phrase(&g, &toks, &adjacent, i, after, &chars) else { continue };
+                let Some(idx) = valency_phrase(&g, &toks, &adjacent, if after { i } else { first }, after, &chars) else { continue };
                 if idx.iter().any(|&j| issues.contains_key(&toks[j].start)) {
                     continue;
                 }
@@ -2243,16 +2321,13 @@ impl Grammar {
                     continue; // it doesn't agree with itself: the phrase rule's
                 }
                 let pos = if after { "after" } else { "before" };
-                if g.analyses(&head.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()) || ["prasmė", "būdas", "metas"].contains(&a.lemma.as_str())) {
-                    continue; // savaite anksčiau, plačiąja prasme, tuo metu: adverbials
-                }
                 if idx.iter().any(|&j| (clen(&toks[j].text) > 1 && is_upper(&toks[j].text)) || (first_upper(&toks[j].text) && !starts_sentence(j))) {
                     continue; // names and all caps: gyveno San Paule, PABUČIUOK MANE
                 }
                 let classes: Vec<&str> = { let mut c: Vec<&str> = keys.iter().map(|(_, c)| *c).collect(); c.sort(); c.dedup(); c };
                 let has_class = |c: &str| classes.contains(&c);
                 let has_case = |c: &str| typed.iter().any(|f| f.0 == c);
-                if has_case("nom") && has_class("3") && !(after && subject_before(i)) {
+                if has_case("nom") && has_class("3") && !(after && subject_before(first)) {
                     continue; // it may be the verb's subject: išleido leidykla, Kompanija prodiusavo
                 }
                 if has_case("loc") {
@@ -2268,13 +2343,13 @@ impl Grammar {
                 }
                 let other_subject = (lo..=hi).any(|j| {
                     let t = &toks[j];
-                    !idx.contains(&j) && j != i
+                    !idx.contains(&j) && j != i && j != first
                         && (subject_person(&t.lower).is_some() || pronoun_features(&t.lower).is_some()
                             || t.own.iter().any(|r| r.case == "nom" && r.pos == Pos::Noun))
                 });
                 if has_case("nom") && (has_class("inf") || has_class("ger")) && !other_subject
                     && (lo..=hi).any(|j| {
-                        j != i && g.analyses(&toks[j].text).iter().any(|a| {
+                        j != i && j != first && g.analyses(&toks[j].text).iter().any(|a| {
                             (g.finite(a) && g.parts(a)[2] == "3" && !["reikia", "reikėjo", "reikėti"].iter().any(|x| a.lemma.ends_with(x)))
                                 || toks[j].is_participle(&g)
                         })
@@ -2287,7 +2362,7 @@ impl Grammar {
                 // an object already there: apgynė jį aukščiausiu įvertinimu, gaudo ją drobine paklode (jus: also jūs)
                 let other_object = (lo..=hi).any(|j| {
                     let t = &toks[j];
-                    !idx.contains(&j) && j != i
+                    !idx.contains(&j) && j != i && j != first
                         && ((neg_pronoun(&t.lower).is_some() && t.lower != "jus") || (!t.own.is_empty() && t.own.iter().all(|r| r.case == "acc")))
                 });
                 let n = |case: &str| -> u64 {
@@ -2313,7 +2388,8 @@ impl Grammar {
                         }
                         let m = n(f.0);
                         let ratio = if classes == ["12"] { VALENCY_RATIO_12 } else { VALENCY_RATIO };
-                        if m >= VALENCY_MIN && m >= ratio * (have + 1) && best.as_ref().map_or(true, |b| m > b.0) {
+                        let least = if classes == ["12"] { VALENCY_MIN_12 } else { VALENCY_MIN };
+                        if m >= least && m >= ratio * (have + 1) && best.as_ref().map_or(true, |b| m > b.0) {
                             best = Some((m, f, fixes));
                         }
                     }

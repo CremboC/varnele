@@ -156,10 +156,12 @@ PERSON_NAMES = {"1sg": "1st person singular", "2sg": "2nd person singular", "3":
 
 # valency: a phrase takes the case its verb takes this many times as often as the one it has, seen
 # at least VALENCY_MIN times (eval/build_valency.py -> data/valency.tsv); after a 1st/2nd person verb,
-# where the phrase can't be its subject, VALENCY_RATIO_12 times
+# where the phrase can't be its subject, VALENCY_RATIO_12 times and VALENCY_MIN_12 (no false alarm in
+# 1.7M words of Wikipedia and dialogue at any value tried)
 VALENCY_RATIO = 30
-VALENCY_RATIO_12 = 10
+VALENCY_RATIO_12 = 5
 VALENCY_MIN = 20
+VALENCY_MIN_12 = 10
 
 
 def _load_valency():
@@ -443,7 +445,34 @@ class Grammar:
             key = ("!" if m and m.group() in ("ne", "nebe") else "") + rest + a.lemma + ("~" if "refl" in p else "")
             cls = ("12" if p[2] != "3" else "3") if finite(a) else "inf" if p[1] == "inf" else "ger"
             out.add((key, cls))
+        if any(c == "3" for _, c in out):
+            out = {(k, c) for k, c in out if c != "12"}    # girdi: you hear or he hears; a subject may come
         return out
+
+    def valency_verb(self, toks, adjacent, i):
+        """(keys, first index) of the verb at i for valency: a verb (verb_keys), or the participle of a
+        compound past after a finite būti (esu girdėjęs: girdėti, 1st person, from esu; nesu girdėjęs: negated).
+        No keys: ([], i)."""
+        t = toks[i]
+        keys = self.verb_keys(t.text) if t.known else None
+        if keys:
+            return sorted(keys), i
+        an = self.analyses(t.text)
+        if not (i > 0 and adjacent[i] and an and all(a.tag.startswith("V.pap.") and "nom" in a.tag.split(".") for a in an)):
+            return [], i
+        aux = [a for a in self.analyses(toks[i - 1].text)
+               if finite(a) and a.lemma in ("esa", "nesa", "yra", "nėra", "buvo", "būna", "būti")]
+        if not aux:
+            return [], i
+        neg = any(a.lemma in ("nesa", "nėra") or a.prefix.startswith("ne") for a in aux)
+        classes = {"3" if a.tag.split(".")[2] == "3" else "12" for a in aux}
+        out = set()
+        for a in an:
+            m = re.match(r"nebe|tebe|ne|be|te", a.prefix)
+            rest = a.prefix[m.end():] if m else a.prefix
+            key = ("!" if neg else "") + rest + a.lemma + ("~" if "refl" in a.tag.split(".") else "")
+            out |= {(key, c) for c in classes}
+        return sorted(out), i - 1
 
     def valency_phrase(self, toks, adjacent, i, after, text):
         """Indices of the noun phrase right after (adverbs may come between) or right before the
@@ -456,8 +485,10 @@ class Grammar:
             """the gap before token k holds something other than spaces and clause punctuation"""
             gap = text[toks[k - 1].end:toks[k].start].strip()
             return bool(gap) and not any(c in ",.;:!?()" for c in gap)
-        def head(t):          # not the emphatic pronoun, listed as a noun: Pati mačiau (I saw it myself)
-            return any(r.pos == "noun" for r in t.own) and t.lower not in ("pats", "pati", "patys", "pačios")
+        def head(t):          # not the emphatic pronoun, listed as a noun: Pati mačiau (I saw it myself); not a
+            # capitalised word read only as a name (Puikiai girdžiu: the village Puikiai, not "perfectly")
+            return (any(r.pos == "noun" for r in t.own) and t.lower not in ("pats", "pati", "patys", "pačios")
+                    and not (t.text[:1].isupper() and all(a.lemma[:1].isupper() for a in self.analyses(t.text))))
 
         def mod(t):
             return t.known and t.own and all(r.pos == "adj" for r in t.own)
@@ -476,9 +507,11 @@ class Grammar:
             if k >= len(toks) or not adjacent[k] or not toks[k].known or not head(toks[k]):
                 return None
             if k + 1 < len(toks) and (cont(k + 1) or adjacent[k + 1] and (
-                    head(toks[k + 1]) or mod(toks[k + 1]) or toks[k + 1].lower in ("ir", "bei", "arba"))):
+                    head(toks[k + 1]) or mod(toks[k + 1]) or toks[k + 1].lower in ("ir", "bei", "arba")
+                    or not toks[k + 1].known and not self.variants_of(toks[k + 1].lower))):
                 return None   # baigė Vilniaus pedagoginį institutą: Vilniaus modifies what comes next; tapė tiršta
-                              # akvarele ir aliejumi: the case of both
+                              # akvarele ir aliejumi: the case of both; peržiūrėti komanda gcc: a name or term follows
+                              # (an unknown word with no diacritic twin; orgazma is orgazmą typed without one)
             return self._valency_lone(toks, list(range(start, k + 1)))
         h = i - 1
         if h < 0 or not adjacent[i] or not toks[h].known or not head(toks[h]):
@@ -494,6 +527,16 @@ class Grammar:
     def _valency_lone(self, toks, idx):
         if len(idx) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(toks[idx[0]].text)):
             return None
+        if any(a.lemma in TIME_LEMMAS or a.lemma in ("prasmė", "būdas", "metas") for a in self.analyses(toks[idx[-1]].text)):
+            return None       # savaite anksčiau, plačiąja prasme, tuo metu: adverbials
+        t = toks[idx[-1]]
+        if len(idx) == 1 and any(r.case == "ins" for r in t.own) and not any(r.case in ("nom", "voc") for r in t.own):
+            # an instrumental as frequent as its nominatives is an adverb: Sovietmečiu, Tarpukariu priklausė
+            # (not pinigu: pinigai; not sesute, also "sister!")
+            noms = [f for a in self.analyses(t.text) if a.tag.startswith("N.") and a.tag.endswith(".ins")
+                    for num in ("sg", "pl") for f in self.inflect(a, retag(a.tag, case="nom", number=num))]
+            if noms and self.freq.get(t.lower, 0) >= max(self.freq.get(f.lower(), 0) for f in noms):
+                return None
         return idx
 
     def pair(self, a, b):
@@ -1492,9 +1535,9 @@ class Grammar:
         #     diacritics (or a re-inflected modifier) give a case the verb often takes, as counted on the
         #     dump: visa šita isterija mačiau -> visą šitą isteriją (mačiau after a nominative: never)
         for i, v in enumerate(toks):
-            keys = sorted(self.verb_keys(v.text) or []) if v.known else []
+            keys, first = self.valency_verb(toks, adjacent, i)
             for after in (True, False) if keys else ():
-                idx = self.valency_phrase(toks, adjacent, i, after, text)
+                idx = self.valency_phrase(toks, adjacent, i if after else first, after, text)
                 if not idx or any(toks[j].start in issues for j in idx):
                     continue
                 words = [toks[j] for j in idx]
@@ -1505,14 +1548,12 @@ class Grammar:
                 if not typed:
                     continue          # it doesn't agree with itself: the phrase rule's
                 pos = "after" if after else "before"
-                if any(a.lemma in TIME_LEMMAS or a.lemma in ("prasmė", "būdas", "metas") for a in self.analyses(head.text)):
-                    continue          # savaite anksčiau, plačiąja prasme, tuo metu: adverbials
                 if any(len(t.text) > 1 and t.text.isupper() or t.text[:1].isupper() and not starts_sentence(idx[n])
                        for n, t in enumerate(words)):
                     continue          # names and all caps: gyveno San Paule, PABUČIUOK MANE
                 classes = {c for _, c in keys}
                 cases = {f[0] for f in typed}
-                if "nom" in cases and "3" in classes and not (after and subject_before(i)):
+                if "nom" in cases and "3" in classes and not (after and subject_before(first)):
                     continue          # it may be the verb's subject: išleido leidykla, Kompanija prodiusavo
                 if "loc" in cases:
                     continue          # an adjunct: kine debiutuojantis, specialiame inde
@@ -1522,17 +1563,17 @@ class Grammar:
                     lo -= 1
                 while hi + 1 < len(toks) and adjacent[hi + 1] and toks[hi + 1].lower not in CLAUSE_STARTERS:
                     hi += 1
-                other_subject = any(j not in idx and j != i and (toks[j].lower in SUBJECT_PERSON or toks[j].lower in PRONOUN_FEATURES
+                other_subject = any(j not in idx and j != i and j != first and (toks[j].lower in SUBJECT_PERSON or toks[j].lower in PRONOUN_FEATURES
                                                                  or any(r.case == "nom" and r.pos == "noun" for r in toks[j].own))
                                     for j in range(lo, hi + 1))
                 if "nom" in cases and classes & {"inf", "ger"} and not other_subject and any(
                         finite(a) and a.tag.split(".")[2] == "3" and not a.lemma.endswith(("reikia", "reikėjo", "reikėti"))
-                        or toks[j].is_participle for j in range(lo, hi + 1) if j != i for a in self.analyses(toks[j].text)):
+                        or toks[j].is_participle for j in range(lo, hi + 1) if j not in (i, first) for a in self.analyses(toks[j].text)):
                     continue          # the subject of the clause's 3rd person verb or participle: ėmė kontroliuoti
                                       # Britanija, pasiekus medžiaga tampa, tvarkyti surengta visuotinė talka (not: Prašau
                                       # jus patikrinti ta informacija, Reikia pasiekti stovykla)
                 # an object already there: apgynė jį aukščiausiu įvertinimu, gaudo ją drobine paklode (jus: also jūs)
-                other_object = any(j not in idx and j != i and (toks[j].lower in NEG_PRONOUNS and toks[j].lower != "jus" or toks[j].own and all(
+                other_object = any(j not in idx and j != i and j != first and (toks[j].lower in NEG_PRONOUNS and toks[j].lower != "jus" or toks[j].own and all(
                     r.case == "acc" for r in toks[j].own)) for j in range(lo, hi + 1))
 
                 def n(case):
@@ -1553,7 +1594,8 @@ class Grammar:
                             continue      # no form fits
                         m = n(f[0])
                         ratio = VALENCY_RATIO_12 if classes == {"12"} else VALENCY_RATIO
-                        if m >= VALENCY_MIN and m >= ratio * (have + 1) and (best is None or m > best[0]):
+                        least = VALENCY_MIN_12 if classes == {"12"} else VALENCY_MIN
+                        if m >= least and m >= ratio * (have + 1) and (best is None or m > best[0]):
                             best = (m, f, fixes)
                 if best:
                     # a set phrase as written is more common than the fix: laisva valia, įvairia tematika

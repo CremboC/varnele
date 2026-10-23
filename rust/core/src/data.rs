@@ -97,7 +97,7 @@ pub struct Data {
     /// the most frequent words after the pairs' and triples' heads that have many
     /// ([`Counts::ranked_lists`]); empty in a data file without them
     pub ranked: Counts,
-    /// verb valency: "VERB	CLASS	after|before	CASE" -> how often the noun phrase next to the verb
+    /// verb valency: "VERB\tCLASS\tafter|before\tCASE" -> how often the noun phrase next to the verb
     /// had that case (eval/build_valency.py); empty in a data file without it
     pub valency: Counts,
     folded: OnceLock<Folded>,

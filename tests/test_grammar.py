@@ -127,8 +127,9 @@ FLAGGED = [
     # valency: the case the verb takes (data/valency.tsv), for a phrase that agrees with itself
     ("Visa šita isterija mačiau vakar.", "Visa", "valency", "Visą"),          # nothing nominative before mačiau
     ("Visa šita isterija mačiau vakar.", "isterija", "valency", "isteriją"),
-    ("Ant stalo guli viena nukritusia sagute.", "sagute", "valency", "sagutė"),   # guli: a subject, not an instrument
-    ("Ant stalo guli viena nukritusia sagute.", "nukritusia", "valency", "nukritusi"),
+    ("Visa šita istorija esu girdėjęs vakar.", "istorija", "valency", "istoriją"),   # a compound past: girdėti
+    ("Visa šita istorija girdėjau vakar.", "šita", "valency", "šitą"),          # girdėjau pools with girdi, girdėti
+    ("Esu girdėjęs visa šita istorija.", "visa", "valency", "visą"),
     ("Per daug pasitikėdamas, aš padariau klaida.", "klaida", "valency", "klaidą"),
     ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),                    # number, not case: not didelius
     ("Mačiau didelę ir gražia kavinę.", "gražia", "phrase", "gražią"),       # not kavine

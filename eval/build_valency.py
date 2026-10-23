@@ -2,8 +2,10 @@
 (eval/training.py: the Wikipedia dump and the conversational text) -> data/valency.tsv
 (VERB \\t CLASS \\t after|before \\t CASE \\t count; then `python3 -m varnele export`).
 
-A verb is a word that is mostly a verb (not a participle or a copula); its key and class come from
-Grammar.verb_keys, the phrase from Grammar.valency_phrase, the very code the `valency` rule uses.
+A verb is a word that is mostly a verb (not a participle or a copula), or a compound past (esu girdėjęs);
+its key and class come from Grammar.valency_verb, the phrase from Grammar.valency_phrase, the very code
+the `valency` rule uses. Keys are principal parts: pooling a verb's three (girdi, girdėjo, girdėti) was
+tried and lost fixes, its tenses take different adjuncts (gulėjo užmerktomis akimis).
 A phrase is counted when it has exactly one case as written (mačiau gražų namą: acc; mačiau
 jo namą: no phrase; matau gatve: ins). Pairs seen fewer than MIN times are left out.
 
@@ -34,11 +36,11 @@ def count(lines):
         toks = [Word(G, m.group(), m.start(), m.end()) for m in WORD.finditer(line)]
         adjacent = [i > 0 and line[toks[i - 1].end:t.start].strip() == "" for i, t in enumerate(toks)]
         for i, t in enumerate(toks):
-            keys = G.verb_keys(t.text)
+            keys, first = G.valency_verb(toks, adjacent, i)
             if not keys:
                 continue
             for after in (True, False):
-                idx = G.valency_phrase(toks, adjacent, i, after, line)
+                idx = G.valency_phrase(toks, adjacent, i if after else first, after, line)
                 if not idx:
                     continue
                 cases = {f[0] for f in phrase_feats([toks[j] for j in idx])}
