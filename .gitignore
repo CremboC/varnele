@@ -6,3 +6,4 @@ corpus_fetch.log
 eval/out/
 data/varnele.bin
 rust/target/
+demo/

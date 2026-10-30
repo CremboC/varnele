@@ -16,7 +16,17 @@ Keep it current when something changes.
   (ranking by word/lemma frequency).
 - Measure every change: false alarms on real text, plus the restoration and
   keyboard simulations below. Precision matters more than recall.
-- Commit when asked; push to `origin` (github.com/CremboC/varnele) when asked.
+- Commit when asked; push when asked. **Local `main` and `origin/main` (github.com/CremboC/varnele) are one
+  branch and stay on the same commit: "push to main" or "merge to main" means both, never one of them.**
+  - Landing work from a worktree: `git fetch origin`, rebase onto `origin/main`, `git push origin HEAD:main`,
+    then `git -C ~/git/varnele merge --ff-only origin/main` in the same step.
+  - Pushing from `~/git/varnele`: `git fetch origin`, `git merge --ff-only origin/main` first, then push.
+  - Before building, testing or recording from `~/git/varnele`, also `git fetch origin` and fast-forward if
+    `git status -sb` says behind. A keyboard built from a stale checkout fails silently (see Gotchas).
+  - Uncommitted work may be another session's. If it blocks the fast-forward, stash only the files that
+    collide (`git stash push -- FILE`) and pop them after; never reset, and commit only your own hunks.
+  - The fork is the same: `~/git/HeliBoard` `main` and `fork/main` stay on one commit (`origin` there is
+    upstream, pull only). A fork change needing a new Rust signature lands with its varnele commit.
 
 ## Repositories
 
@@ -113,6 +123,12 @@ adb -s emulator-5554 shell am start -n dev.imbrasas.varnele/.MainActivity       
 python3 eval/emulator_type.py "mano drakonas valgo morkas. "                          # type by tapping the keys
 adb -s emulator-5554 logcat -s Varnele:V                                              # what Varnelė did, per word
 ```
+
+Demo videos (`eval/demo_videos.py`, typed in Google Messages by `eval/emulator_touch.py`, which drives the
+emulator console: real-time taps, long presses and swipes, unlike `input tap`): `ROUND=N … setup`, `… record
+SCENE demo`, `… compose SCENE demo` (needs Pillow) -> `demo/final/`. Each ROUND is a fresh chat. The system
+spell checker is switched off for them (the emulator's is Gboard's English one); `forget()` clears what
+rehearsals taught the keyboard, else `Ksbsd` turns up in the strip.
 
 Always pass `-s emulator-5554`, so a connected phone is never touched. The test app's field starts
 with a sample text: tap it (540, 530), `input keyevent 123` moves to the end. Read the field with
@@ -904,6 +920,19 @@ Left deliberately:
 - HeliBoard capitalises sentences only if the text field asks for it
   (TYPE_TEXT_FLAG_CAP_SENTENCES); the test app's field now does.
 - The keyboard fixer's fold keeps `y` (it is a key): i/y changes are never auto-applied.
+- Words with `q`, `w` or `x` are skipped as foreign: no underline, so test the underline with `sirdgv`, not `zzzxq`.
+- Key-shift doesn't autocorrect on the emulator (2026-10-30): `fofrkua` keeps `didelis` first in the strip but
+  stays as typed. Probably HeliBoard's distance weight: every letter differs, so 1 − distance/length = 0
+  whatever KEY_SLIP_SCORE is.
+- **The fork's `Native.kt` and `rust/android/src/lib.rs` must have the same arguments**, and nothing checks
+  that: the fork's `word(…, after, keyShift, formal)` on a Rust side without `after` builds and runs, with
+  the arguments shifted. Found 2026-10-30 from a local `main` 3 commits behind `origin/main`: `formal` took
+  `keyShift`'s value, so every spoken form became standard (`buvom` → `buvome`) with the setting off. If the
+  log shows `colloquial fix=[…]` while formal is off, suspect this first.
+- The system spell checker draws its own underlines, whatever the keyboard knows: with Gboard's (English,
+  the emulator's default) `Paprasčiausiuosiuose vienkiemiuose` is red under Varnelė Klaviatūra too. The fork's
+  own spell checker service is still HeliBoard's, not Varnelė. Testers need to switch the system one off or
+  select the `dev.imbrasas.varnele` app's.
 - Lexicon gaps: loanwords and names (`klipas`, `singlas`); induce stems from a corpus by finding multiple
   forms of a guessed paradigm. Done: spoken `eime` ("let's go", no ending shortening: `SPOKEN_WORDS` in
   analyzer.py/analyzer.rs, colloquial for `eikime`; predictions gave its name reading `Eime`), slang
@@ -980,3 +1009,5 @@ Left deliberately:
     touched word gets the sentence's fix (`rimtesne` → `rimtesnė`), a retyped one is ranked by the words after
     it; finger slips onto w/q/x are typos (`ziwma` → `žiema`)
 31. w/q/x slips: an extra key press (`ziewma` → `žiema`), a capital at a sentence start (`Gwrai` → `Gerai`)
+32. demo videos (eval/demo_videos.py, eval/emulator_touch.py), `kiškiakopūsteliauti`, `kiškiakopūstlapiauti`,
+    local `main` and `origin/main` kept on one commit

@@ -34,3 +34,11 @@ bereikalo
 
 # spoken words frequent in the subtitles that the lexicon lacks
 bičas/D   # "dude": 637 times in the subtitles, vocative biče 1,629
+
+# "to gather wood sorrel": the verbs of the famous longest words (nebeprisikiškiakopūsteliaudavome)
+kiškiakopūsteliauti/TNRSXabcdefghijklmnopqrstuvwx
+kiškiakopūsteliauja/ENRSXabcdefghijklmnopqrstuvwx
+kiškiakopūsteliavo/PNRSXabcdefghijklmnopqrstuvwx
+kiškiakopūstlapiauti/TNRSXabcdefghijklmnopqrstuvwx
+kiškiakopūstlapiauja/ENRSXabcdefghijklmnopqrstuvwx
+kiškiakopūstlapiavo/PNRSXabcdefghijklmnopqrstuvwx
