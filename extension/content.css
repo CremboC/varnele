@@ -1,0 +1,9 @@
+/* Underlines in contenteditable text. Shadow roots get the same rules from content.js. */
+::highlight(varnele-spelling) {
+  text-decoration: underline wavy #d92d20;
+  text-decoration-skip-ink: none;
+}
+::highlight(varnele-grammar) {
+  text-decoration: underline wavy #2563eb;
+  text-decoration-skip-ink: none;
+}

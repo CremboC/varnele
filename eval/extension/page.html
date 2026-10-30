@@ -1,0 +1,21 @@
+<!doctype html><meta charset=utf-8><title>t</title>
+<body style="font:16px Georgia;margin:30px">
+<textarea id=ta rows=4 cols=50 style="font:16px/1.5 Georgia;padding:8px"></textarea><br><br>
+<input id=inp style="width:500px;height:40px;font:15px Arial;padding:0 10px"><br><br>
+<div id=ce contenteditable style="border:1px solid #888;padding:8px;width:500px;min-height:60px"></div><br>
+<div id=host></div><br>
+<textarea id=en rows=2 cols=50></textarea>
+<div id=lexhost></div><br><div id=lexlight></div><div id=log></div>
+<script>
+const root=document.getElementById('host').attachShadow({mode:'open'});
+root.innerHTML='<div id=sce contenteditable style="border:1px solid #888;padding:8px;width:500px;min-height:40px"></div>';
+window.inputs=0;document.addEventListener('input',()=>window.inputs++);
+</script>
+<div id=reactish></div>
+<script>
+// a controlled field, as React does it: the value only changes through its own input handler
+const c=document.createElement('textarea');c.id='ctl';c.cols=50;c.rows=2;document.getElementById('reactish').append(c);
+window.state='';const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;
+c.addEventListener('input',()=>{window.state=c.value;setter.call(c,window.state)});
+</script>
+<script src="/lexical-fields.bundle.js"></script>

@@ -1,21 +1,18 @@
 //! What the desktop app does with the keys typed, whatever the operating system: keeps its own copy
-//! of the text being typed and, when whitespace finishes a word, says how to change that word. The
-//! same decisions as the keyboard (VarneleDictionary.kt), which eval/keyboard_sim.py mirrors.
+//! of the text being typed and, when whitespace finishes a word, says how to change the text. The
+//! decisions are the engine's, the same as on the keyboard: autocorrect, then the sentence fixer.
 
 use std::collections::HashSet;
 
+use varnele::fix::word_context;
 use varnele::text::lower;
-use varnele::{Checker, KeyboardWord, WordStatus};
+use varnele::{Checker, FixOptions, SentenceFixer, WordStatus};
 
-/// context rules whose first fix may change letters, not only diacritics
-const SURE_RULES: [&str; 4] = ["subject", "rare", "formal", "phrase"];
-/// a fix may cost this much ignoring diacritics: one typo
-const MAX_TYPO_COST: f64 = 1.0;
+pub use varnele::Edit;
+
 /// no word is this long, and text is dropped from the front beyond the second limit
 const MAX_TOKEN: usize = 40;
 const MAX_TEXT: usize = 400;
-/// the words of the sentence the grammar sees, as on the keyboard
-const CONTEXT_WORDS: usize = 3;
 /// How far the text can lean to one language. One English word is enough to stop (a wrong fix of
 /// English is worse than a Lithuanian word left as typed); this many Lithuanian words start again.
 const MAX_LEAN: i32 = 2;
@@ -32,13 +29,6 @@ pub enum Key {
     Moved,
     /// a click or another app: the text is not ours any more, but the next word is a word
     Reset,
-}
-
-/// Change the text before the cursor: delete characters, then type some.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Edit {
-    pub delete: usize,
-    pub insert: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,22 +62,10 @@ pub struct Engine {
     doubtful: Option<LastFix>,
     /// words whose fix backspace undid: leave them alone from now on (lowercase)
     kept: HashSet<String>,
+    fixer: SentenceFixer,
     pub formal: bool,
     /// the system's English dictionary; the desktop has one keyboard for every language
     pub english: Option<Box<dyn Fn(&str) -> bool>>,
-}
-
-/// The fix to apply without asking, as VarneleDictionary.getSuggestions marks them.
-pub fn autocorrect(r: &KeyboardWord) -> Option<&str> {
-    if r.status != WordStatus::Unknown {
-        let first = r.context_fixes.first()?;
-        if first.2 == 0.0 || SURE_RULES.contains(&r.context_rule.as_str()) {
-            return Some(&first.0);
-        }
-        return r.context_fixes.iter().find(|c| c.2 == 0.0).map(|c| c.0.as_str());
-    }
-    let top = r.suggestions.first()?;
-    (top.2 <= MAX_TYPO_COST).then_some(top.0.as_str())
 }
 
 /// The change from one word to another, keeping what they share at the start, so an app sees as
@@ -99,7 +77,6 @@ pub fn diff(from: &str, to: &str) -> Edit {
 
 const OPENING: &[char] = &['(', '[', '{', '„', '“', '"', '\'', '«'];
 const CLOSING: &[char] = &['.', ',', ';', ':', '!', '?', ')', ']', '}', '”', '“', '"', '\'', '»', '…'];
-const SENTENCE_ENDS: &[char] = &['.', '!', '?', '…'];
 
 /// The word inside a token (what is between two spaces), with what comes after it, if it is only
 /// letters: `(sakini?` -> `sakini`, `?`; not `www.google.com`, `a1`, `x@y`.
@@ -118,13 +95,19 @@ impl Engine {
     pub fn key(&mut self, ck: &Checker, key: Key) -> Action {
         match key {
             Key::Char(c) if c.is_whitespace() => {
-                let edit = self.finish_word(ck);
+                let before = self.text.clone();
+                if self.finish_word(ck) {
+                    self.fix_sentence(ck);   // the sentence, with its full stop if it has one
+                }
                 self.text.push(c);
                 self.trim();
                 if let Some(l) = &mut self.last {
                     l.tail.push(c);
                 }
-                edit.map_or(Action::Pass, Action::Before)
+                if self.text == format!("{before}{c}") {
+                    return Action::Pass;
+                }
+                Action::Instead(diff(&before, &self.text))
             }
             Key::Char(c) => {
                 self.last = None;
@@ -134,7 +117,11 @@ impl Engine {
             }
             Key::Backspace => self.backspace(),
             Key::Enter => {
-                let edit = self.finish_word(ck);
+                let before = self.text.clone();
+                if self.finish_word(ck) {
+                    self.fix_sentence(ck);
+                }
+                let edit = (self.text != before).then(|| diff(&before, &self.text));
                 self.reset();
                 edit.map_or(Action::Pass, Action::Before)
             }
@@ -170,6 +157,7 @@ impl Engine {
         self.dirty = false;
         self.last = None;
         self.doubtful = None;
+        self.fixer = SentenceFixer::default();
     }
 
     fn trim(&mut self) {
@@ -184,6 +172,7 @@ impl Engine {
             self.doubtful = None;
             // right after a fix: the word goes back as typed, what followed it stays
             self.kept.insert(lower(&l.typed));
+            self.fixer.undone();
             let end = format!("{}{}", l.fixed, l.tail);
             if let Some(before) = self.text.strip_suffix(end.as_str()) {
                 self.text = format!("{before}{}{}", l.typed, l.tail);
@@ -197,61 +186,68 @@ impl Engine {
         Action::Pass
     }
 
-    /// The fix of the word before the cursor, now finished.
-    fn finish_word(&mut self, ck: &Checker) -> Option<Edit> {
+    /// The word before the cursor is finished: fix it. Whether the sentence fixer may look at the
+    /// text now: not inside English, or when the word is not a word, was not all seen or was taken back.
+    fn finish_word(&mut self, ck: &Checker) -> bool {
         self.last = None;
         let doubtful = self.doubtful.take();
         let dirty = std::mem::take(&mut self.dirty);
         let start = self.text.char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8());
         let (before, token) = self.text.split_at(start);
-        let (word, tail) = word_of(token)?;
-        let r = ck.keyboard_word(word, &context(before), false, self.formal);
+        let Some((word, tail)) = word_of(token) else { return false };
+        let r = ck.keyboard_word(word, &word_context(before), false, self.formal);
         // English and valid (man, to) or a word short of its diacritics (is, as) says nothing
         let english = word.is_ascii() && self.english.as_ref().is_some_and(|f| f(word));
         let lithuanian = matches!(r.status, WordStatus::Ok | WordStatus::Colloquial)
             || r.suggestions.first().is_some_and(|s| s.2 == 0.0);
         if english && !lithuanian {
             self.lean = (self.lean.max(0) + 1).min(MAX_LEAN);
-            return doubtful.and_then(|d| self.take_back(d, start));
+            if let Some(d) = doubtful {
+                self.take_back(d, start);
+            }
+            return false;
         }
         if lithuanian && !english {
             self.lean = (self.lean - 1).max(-MAX_LEAN);
         }
-        if self.lean > 0 || (english && !lithuanian) || dirty || self.kept.contains(&lower(word)) {
-            return None;
+        if self.lean > 0 || dirty || self.kept.contains(&lower(word)) {
+            return false;
         }
-        let fix = autocorrect(&r).filter(|f| *f != word)?.to_string();
-        let d = diff(word, &fix);
-        let edit = Edit { delete: d.delete + tail.chars().count(), insert: d.insert + tail };
+        let Some(fix) = r.autocorrection().filter(|f| *f != word).map(str::to_string) else { return true };
         let last = LastFix { typed: word.to_string(), fixed: fix.clone(), tail: tail.to_string() };
         let head = &self.text[..self.text.len() - word.len() - tail.len()];
-        self.text = format!("{head}{fix}{tail}");
+        let at_word = format!("{head}{fix}");
+        self.fixer.autocorrected(&at_word, 0, word, &fix);
+        self.text = format!("{at_word}{tail}");
         if english {
             self.doubtful = Some(LastFix { typed: last.typed.clone(), fixed: last.fixed.clone(), tail: last.tail.clone() });
         }
         self.last = Some(last);
-        Some(edit)
+        true
+    }
+
+    /// The sentence fixer on the text so far, unless it changes a word the user took back.
+    fn fix_sentence(&mut self, ck: &Checker) {
+        let o = FixOptions { picked: false, earlier: true, commas: true, formal: self.formal };
+        let Some(e) = self.fixer.apply(ck, &self.text, 0, o) else { return };
+        let kept: String = self.text.chars().take(self.text.chars().count() - e.delete).collect();
+        let fixed = format!("{kept}{}", e.insert);
+        let taken_back = |t: &str| t.split(|c: char| !c.is_alphabetic()).filter(|w| self.kept.contains(&lower(w))).count();
+        if taken_back(&fixed) == taken_back(&self.text) {
+            self.text = fixed;
+        }
     }
 
     /// The word before the one that starts at `start` goes back as typed: it was English after all.
-    fn take_back(&mut self, d: LastFix, start: usize) -> Option<Edit> {
+    fn take_back(&mut self, d: LastFix, start: usize) {
         let (before, token) = self.text.split_at(start);
         let spaces = before.chars().rev().take_while(|c| c.is_whitespace()).count();
         let rest: String = before.chars().skip(before.chars().count() - spaces).collect();
-        let head = before.strip_suffix(rest.as_str())?.strip_suffix(d.tail.as_str())?.strip_suffix(d.fixed.as_str())?;
-        let diff = diff(&d.fixed, &d.typed);
-        let after = format!("{}{rest}{token}", d.tail);
-        let edit = Edit { delete: diff.delete + after.chars().count(), insert: diff.insert + &after };
-        self.text = format!("{head}{}{after}", d.typed);
-        Some(edit)
+        let Some(head) = before.strip_suffix(rest.as_str())
+            .and_then(|b| b.strip_suffix(d.tail.as_str()))
+            .and_then(|b| b.strip_suffix(d.fixed.as_str())) else { return };
+        self.text = format!("{head}{}{}{rest}{token}", d.typed, d.tail);
     }
-}
-
-/// The last words of the sentence, for the grammar.
-fn context(before: &str) -> String {
-    let sentence = before.rfind(SENTENCE_ENDS).map_or(before, |i| &before[i..]);
-    let words: Vec<&str> = sentence.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty()).collect();
-    words[words.len().saturating_sub(CONTEXT_WORDS)..].join(" ")
 }
 
 /// Type `text` through the engine, as if into an empty field; what the field ends up holding.
@@ -300,6 +296,32 @@ mod tests {
     }
 
     #[test]
+    fn later_words_fix_earlier_ones() {
+        assert_eq!(typed("tačiau visą tai ateis "), "tačiau visa tai ateis ");
+        assert_eq!(typed("kodel nepataiso visu zodziu kuriu as rasau? "), "kodėl nepataiso visų žodžių, kurių aš rašau? ");
+    }
+
+    #[test]
+    fn an_undone_word_stays_when_the_sentence_is_fixed() {
+        let ck = checker().lock().unwrap();
+        let mut e = Engine::new();
+        for c in "maciau ".chars() {
+            e.key(&ck, Key::Char(c));
+        }
+        e.key(&ck, Key::Backspace);
+        let mut field = "maciau ".to_string();
+        for c in "tai ".chars() {
+            if let Action::Before(x) | Action::Instead(x) = e.key(&ck, Key::Char(c)) {
+                field.truncate(field.chars().count() - x.delete);
+                field += &x.insert;
+                continue;
+            }
+            field.push(c);
+        }
+        assert_eq!(field, "maciau tai ");
+    }
+
+    #[test]
     fn keeps_punctuation_around_the_word() {
         assert_eq!(typed("(del sakini?) "), "(dėl sakinį?) ");
     }
@@ -327,7 +349,7 @@ mod tests {
         for c in "maciau".chars() {
             assert_eq!(e.key(&ck, Key::Char(c)), Action::Pass);
         }
-        assert_eq!(e.key(&ck, Key::Char(' ')), Action::Before(Edit { delete: 4, insert: "čiau".into() }));
+        assert_eq!(e.key(&ck, Key::Char(' ')), Action::Instead(Edit { delete: 4, insert: "čiau ".into() }));
         assert_eq!(e.key(&ck, Key::Backspace), Action::Instead(Edit { delete: 5, insert: "ciau ".into() }));
         for c in "maciau".chars() {
             e.key(&ck, Key::Char(c));
@@ -358,7 +380,7 @@ mod tests {
         for c in "maciau".chars() {
             e.key(&ck, Key::Char(c));
         }
-        assert!(matches!(e.key(&ck, Key::Char(' ')), Action::Before(_)));
+        assert!(matches!(e.key(&ck, Key::Char(' ')), Action::Instead(_)));
     }
 
     #[test]

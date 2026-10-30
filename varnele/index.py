@@ -44,6 +44,7 @@ class Index:
         self.sigs = sigs            # [ {suffix: (tag, ...)} ]
         self.blacklist = blacklist
         self._folded = None
+        self._stem_prefixes = None
         self._entry_stems = None
 
     @classmethod
@@ -131,6 +132,41 @@ class Index:
                 fsigs.append(m)
             self._folded = (fstems, fsigs)
         return self._folded
+
+    def stem_prefixes(self):
+        """Every beginning of a folded stem, for walking the stems letter by letter."""
+        if self._stem_prefixes is None:
+            self._stem_prefixes = {st[:i] for st in self.folded()[0] for i in range(1, len(st) + 1)}
+        return self._stem_prefixes
+
+    def neighbour_forms(self, typed, options):
+        """Unprefixed forms where every letter is the typed letter or one of options(typed letter)
+        (its neighbours on the keyboard): fofrkua -> didelis. typed is folded."""
+        fstems, fsigs = self.folded()
+        prefixes = self.stem_prefixes()
+        opts = [options(c) for c in typed]
+        out = set()
+        budget = 200_000     # search steps: bounds the worst case on a phone
+
+        def walk(pos, cur):
+            nonlocal budget
+            if budget == 0:
+                return
+            budget -= 1
+            rest = opts[pos:]
+            for st, hits in fstems.get(cur, ()):
+                for sid, _ in hits:
+                    for fsuf, sufs in fsigs[sid].items():
+                        if len(fsuf) == len(rest) and all(c in o for c, o in zip(fsuf, rest)):
+                            out.update(st + suf for suf in sufs)
+            if pos == len(opts):
+                return
+            for c in opts[pos]:
+                if cur + c in prefixes:
+                    walk(pos + 1, cur + c)
+
+        walk(0, "")
+        return out
 
     def lookup_folded(self, fword):
         """All real unprefixed forms whose folded spelling equals fword."""

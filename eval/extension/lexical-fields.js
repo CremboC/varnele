@@ -1,0 +1,15 @@
+import { createEditor } from 'lexical';
+import { registerPlainText } from '@lexical/plain-text';
+const host = document.getElementById('lexhost');
+const root = host.attachShadow({ mode: 'open' });
+root.innerHTML = '<div id=lex contenteditable style="border:1px solid #888;padding:8px;width:500px;min-height:40px"></div>';
+const editor = createEditor({ namespace: 't', onError: e => { throw e; } });
+editor.setRootElement(root.getElementById('lex'));
+registerPlainText(editor);
+const lh2 = document.getElementById('lexlight');
+lh2.innerHTML = '<div id=lex2 contenteditable style="border:1px solid #888;padding:8px;width:500px;min-height:40px"></div>';
+const editor2 = createEditor({ namespace: 't2', onError: e => { throw e; } });
+editor2.setRootElement(document.getElementById('lex2'));
+registerPlainText(editor2);
+window.lexical2 = () => editor2.getEditorState().read(() => editor2.getEditorState()._nodeMap.get('root').getTextContent());
+window.lexical = () => editor.getEditorState().read(() => editor.getEditorState()._nodeMap.get('root').getTextContent());

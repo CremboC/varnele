@@ -13,6 +13,10 @@ def findings(text):
 
 # (sentence, word, rule, expected first suggestion)
 FLAGGED = [
+    ("Ateisiu veliau, gerai?", "veliau", "rare", "vėliau"),             # a verb seen 79 times, the twin 48,849
+    ("Parašiau nauja sakini vakar.", "sakini", "rare", "sakinį"),       # never seen
+    ("Vakar mačiau jo masina kieme.", "masina", "rare", "mašiną"),      # the words around it choose the case
+    ("Vakar jis gavi laišką.", "gavi", "rare", "gavo"),                 # short, never seen, one key from a common word
     ("Viskas veikia net jeigu rašau prastai.", "net", "comma", ", net"),
     ("Manau, kad šita žmogų reikia aptarti.", "šita", "agreement", "šitą"),   # žmogų is not a genitive here
     ("Ir aš matau dar viena klaida.", "viena", "object", "vieną"),            # transitive verb, skips "dar"
@@ -303,6 +307,21 @@ class Grammar(unittest.TestCase):
         # a capital at a sentence start may be the keyboard's own, unless it is the slip itself (a name)
         got = [(f.start, f.suggestions[0]) for f in CK.check_text("Ziwma buvo šalta. Westu ir Ziwma.")]
         self.assertEqual(got, [(0, "Žiema")])
+
+
+class RareWords(unittest.TestCase):
+    def test_a_typed_diacritic_and_a_name_stay(self):
+        for text in ("Ji yra dantistė.", "Kalbėjau su Ukmerge kartą.", "Mačiau Eduarda vakar.", "Skaitė apie vašu tautą."):
+            with self.subTest(text=text):
+                self.assertFalse([f for f in CK.check_text(text) if f.rule == "rare"])
+
+    def test_grammar_undecided_shows_the_twins(self):
+        got = [f.suggestions for f in CK.check_text("Masina stovi kieme.") if f.rule == "rare"]
+        self.assertEqual(sorted(got[0][:2]), ["Mašina", "Mašiną"])
+
+    def test_key_shift_when_nothing_is_close(self):
+        self.assertEqual(CK.check_word("fofrkua")[1][0], "didelis")
+        self.assertIn("labas", CK.check_word("ksbsd")[1])
 
 
 if __name__ == "__main__":

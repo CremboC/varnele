@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@lexical/plain-text": "0.53.0",
+    "esbuild": "*",
+    "lexical": "0.53.0",
+    "playwright": "*"
+  }
+}

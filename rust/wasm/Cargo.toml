@@ -1,0 +1,13 @@
+[package]
+name = "varnele-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly bridge for the browser extension (data embedded, no bindings generator)"
+license = "BSD-3-Clause"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+varnele = { path = "../core" }

@@ -7,7 +7,7 @@ use crate::data::Data;
 use crate::grammar::{adds_diacritics, Fit, Grammar, Issue};
 use crate::text::*;
 
-/// A seen word's diacritic twin must be this many times as frequent to replace it (keyboard only).
+/// A seen word's diacritic twin must be this many times as frequent to replace it.
 const RARE_TWIN_RATIO: u32 = 10;
 
 pub type Finding = Issue;
@@ -147,6 +147,27 @@ fn sentence_start(chars: &[char], pos: usize) -> bool {
     i == 0 || ".!?…\n".contains(chars[i - 1])
 }
 
+/// The rest of the sentence from `pos`, with its full stop.
+fn sentence_after(chars: &[char], pos: usize) -> String {
+    let mut i = pos;
+    while i < chars.len() && !".!?…\n".contains(chars[i]) {
+        i += 1;
+    }
+    chars[pos..(i + 1).min(chars.len())].iter().collect()
+}
+
+/// The sentence up to `pos`; empty when `pos` starts it.
+fn sentence_before(chars: &[char], pos: usize) -> String {
+    if sentence_start(chars, pos) {
+        return String::new();
+    }
+    let mut i = pos;
+    while i > 0 && !".!?…\n".contains(chars[i - 1]) {
+        i -= 1;
+    }
+    chars[i..pos].iter().collect()
+}
+
 impl Checker {
     pub fn new(data: Data) -> Checker {
         Checker { an: Analyzer::new(data), grammar: Grammar::default() }
@@ -163,16 +184,37 @@ impl Checker {
 
     /// [`Checker::check_word`]; `sentence_start`: a capital may be the keyboard's own (Ziwma is ziwma).
     pub fn check_word_at(&self, word: &str, sentence_start: bool) -> (WordStatus, Vec<String>) {
+        let (status, found) = self.status_at(word, sentence_start);
+        match found {
+            Some(f) => (status, f),
+            None => (status, self.with_key_shift(word, self.an.suggest(word.strip_suffix('.').unwrap_or(word), 5))),
+        }
+    }
+
+    /// Nothing within a typo: maybe the hand was one key off (fofrkua -> didelis).
+    fn with_key_shift(&self, word: &str, mut suggestions: Vec<String>) -> Vec<String> {
+        let fw = fold(&lower(word));
+        if suggestions.iter().all(|s| crate::suggest::cost(&fw, &fold(&lower(s))) > 1.0) {
+            let mut v = self.an.key_shift(word, 3);
+            v.append(&mut suggestions);
+            v.truncate(5);
+            return v;
+        }
+        suggestions
+    }
+
+    /// A word's status, and what goes with it; None: an unknown word whose suggestions are still to find.
+    fn status_at(&self, word: &str, sentence_start: bool) -> (WordStatus, Option<Vec<String>>) {
         let mut w = word;
         if let Some(stripped) = w.strip_suffix('.') {
             if self.an.data.abbrev.contains(&lower(w)) || clen(w) == 2 {
-                return (WordStatus::Ok, vec![]);
+                return (WordStatus::Ok, Some(vec![]));
             }
             w = stripped;
         }
         if is_foreign(w) || (is_upper(w) && clen(w) > 1) {
             let fix = self.slip_fixes(w, sentence_start);
-            return if fix.is_empty() { (WordStatus::Skip, vec![]) } else { (WordStatus::Unknown, fix) };
+            return if fix.is_empty() { (WordStatus::Skip, Some(vec![])) } else { (WordStatus::Unknown, Some(fix)) };
         }
         let r = self.an.check(w);
         if r.status == Status::Unknown {
@@ -187,25 +229,25 @@ impl Checker {
                     .collect();
                 fix.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then_with(|| a.1.cmp(&b.1)));
                 return if fix.is_empty() {
-                    (WordStatus::Skip, vec![])
+                    (WordStatus::Skip, Some(vec![]))
                 } else {
-                    (WordStatus::Unknown, fix.into_iter().map(|x| x.1).collect())
+                    (WordStatus::Unknown, Some(fix.into_iter().map(|x| x.1).collect()))
                 };
             }
             if w.contains('-') || w.contains('‑') {
                 let parts: Vec<&str> = w.split(['-', '‑']).filter(|p| !p.is_empty()).collect();
                 if parts.len() == 2 && is_roman(parts[0]) {
-                    return (WordStatus::Ok, vec![]);
+                    return (WordStatus::Ok, Some(vec![]));
                 }
                 if parts.iter().all(|p| is_foreign(p) || self.an.check(p).status != Status::Unknown) {
-                    return (WordStatus::Ok, vec![]);
+                    return (WordStatus::Ok, Some(vec![]));
                 }
             }
         }
         match r.status {
-            Status::Colloquial => (WordStatus::Colloquial, r.formal),
-            Status::Unknown => (WordStatus::Unknown, self.an.suggest(w, 5)),
-            _ => (WordStatus::Ok, vec![]),
+            Status::Colloquial => (WordStatus::Colloquial, Some(r.formal)),
+            Status::Unknown => (WordStatus::Unknown, None),
+            _ => (WordStatus::Ok, Some(vec![])),
         }
     }
 
@@ -271,7 +313,8 @@ impl Checker {
     /// whole sentence, not one that ends at the word.
     pub fn keyboard_word_in(&self, word: &str, context: &str, after: &str, key_shift: bool, formal: bool) -> KeyboardWord {
         // no words before it in the sentence: the keyboard may have capitalised it
-        let (status, formal_forms) = self.check_word_at(word, context.trim().is_empty());
+        let (status, found) = self.status_at(word, context.trim().is_empty());
+        let formal_forms = found.clone().unwrap_or_default();
         let lw = lower(word);
         let fw = fold(&lw);
         let entry = |w: String, cost: f64| {
@@ -315,9 +358,9 @@ impl Checker {
             context_fixes = formal_forms.into_iter().map(|w| entry(w, 0.0)).collect();
         }
         // A valid but rare form whose diacritic twin is common was almost certainly typed
-        // without diacritics: sakini (rare verb form) -> sakinį, veliau -> vėliau. Keyboard only.
+        // without diacritics: sakini (rare verb form) -> sakinį, veliau -> vėliau.
         if status == WordStatus::Ok && context_fixes.is_empty() {
-            if let Some(twin) = self.common_twin(word, context) {
+            if let Some(twin) = self.common_twins(word, context, after).into_iter().next() {
                 context_rule = "rare".into();
                 context_fixes.push(entry(twin, 0.0));
             }
@@ -354,7 +397,8 @@ impl Checker {
         let d = &self.an.data;
         let lw = lower(word);
         let chars: Vec<char> = lw.chars().collect();
-        if chars.len() < 2 || chars.len() > 4 || !first_lower(word) || d.freq.get(&lw) > 0 {
+        // a typed diacritic is no slip (vašu, not vadu)
+        if chars.len() < 2 || chars.len() > 4 || !first_lower(word) || d.freq.get(&lw) > 0 || chars.iter().any(|c| "ąčęėįšųūž".contains(*c)) {
             return None;
         }
         if self.an.analyze(word).iter().any(|a| d.lemma_freq.get(&lower(&a.lemma)) > 0) {
@@ -379,9 +423,10 @@ impl Checker {
     /// frequency corpus (neither the form nor its lemma) and the twin's lemma is; or when the
     /// twin's form alone is seen RARE_TWIN_RATIO times as often as the word's form and all of its
     /// lemma (veliau, of a verb seen 79 times: vėliau 48,849; not ligoje, lanke: a common lemma).
-    /// Twins in different cases (mašina, mašiną): the words before choose, else the more frequent.
+    /// Twins in different cases (mašina, mašiną): the words around it choose, else the more frequent.
     /// `context`: with no words before it in the sentence, a capital may be the keyboard's own.
-    fn common_twin(&self, word: &str, context: &str) -> Option<String> {
+    /// `after`: the rest of the sentence, if known.
+    fn common_twins(&self, word: &str, context: &str, after: &str) -> Vec<String> {
         const CASE_PARTS: &[&str] = &["nom", "gen", "dat", "acc", "ins", "loc", "voc"];
         let d = &self.an.data;
         let lemma_freq = |w: &str| {
@@ -392,13 +437,13 @@ impl Checker {
         let seen = d.freq.get(&lw).max(lemma_freq(word)).max(lemma_freq(&lw));
         let lowercase = first_lower(word);
         let start = context.trim().is_empty();
-        if seen > 0 && !lowercase && !start {
-            return None; // a name inside a sentence
+        if !lowercase && !start {
+            return vec![]; // a name inside a sentence
         }
         let mut twins: Vec<(u32, String)> = self.an
             .folded_forms(&fold(&lw))
             .into_iter()
-            .filter(|c| *c != lw && (!lowercase || first_lower(c)) && !self.an.analyze_exact(c).is_empty())
+            .filter(|c| *c != lw && first_lower(c) && !self.an.analyze_exact(c).is_empty())
             // a twin that can only be a vocative (sakiny, "O sentence!") or a participle
             // (tęstuoju for testuoju) is rarely meant
             .filter(|c| {
@@ -412,20 +457,21 @@ impl Checker {
                 let f = d.freq.get(&lower(&c));
                 (if seen > 0 { f } else { lemma_freq(&c) + f }, c)
             })
-            // with a seen word only diacritics added, not i/y: y is its own key (lig šiol, not lyg)
-            .filter(|(score, c)| if seen > 0 {
-                *score >= RARE_TWIN_RATIO * seen && adds_diacritics(&lw, &lower(c))
-            } else {
-                *score >= 3
-            })
+            // only diacritics added: a typed one is meant (dantistė, not dantiste), and y is its own
+            // key (lig šiol, not lyg)
+            .filter(|(score, c)| adds_diacritics(&lw, &lower(c)) && if seen > 0 { *score >= RARE_TWIN_RATIO * seen } else { *score >= 3 })
             .collect();
         twins.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let around = !start || !after.trim().is_empty();
         let issues = |c: &str| {
-            let text = format!("{} {c}", context.trim_end());
-            self.grammar.check_opts(&self.an, &text, true).iter().filter(|f| f.rule != "comma").count()
+            let text = format!("{} {c}{after}", context.trim_end());
+            self.grammar.check_opts(&self.an, text.trim_start(), after.trim().is_empty()).iter().filter(|f| f.rule != "comma").count()
         };
-        let best = if start || twins.len() < 2 { twins.first() } else { twins.iter().min_by_key(|(_, c)| issues(c)) };
-        best.map(|(_, c)| cap_like(word, c))
+        let judged = around && twins.len() > 1;
+        let mut ranked: Vec<(usize, String)> = twins.into_iter().map(|(_, c)| (if judged { issues(&c) } else { 0 }, c)).collect();
+        ranked.sort_by_key(|r| r.0); // a tie stays in order of frequency
+        let best = ranked.first().map_or(0, |r| r.0);
+        ranked.into_iter().filter(|r| r.0 == best).take(3).map(|(_, c)| cap_like(word, &c)).collect()
     }
 
     /// The keyboard's next words (or completions of `prefix`, typed with or without diacritics)
@@ -593,6 +639,7 @@ impl Checker {
     pub fn check_text(&self, text: &str, formal: bool, grammar: bool) -> Vec<Finding> {
         let mut found: BTreeMap<usize, Finding> = BTreeMap::new();
         let mut seen: BTreeMap<(String, bool), (WordStatus, Vec<String>)> = BTreeMap::new();
+        let mut valid: Vec<(String, usize)> = Vec::new();
         let chars: Vec<char> = text.chars().collect();
         for (word, pos) in tokens(text) {
             let word = if self.an.data.abbrev.contains(&lower(&word)) {
@@ -612,6 +659,8 @@ impl Checker {
                     message: String::new(),
                     suggestions: sugg,
                 });
+            } else if st == WordStatus::Ok {
+                valid.push((word, pos));
             }
         }
         if grammar {
@@ -626,6 +675,20 @@ impl Checker {
                     }
                 } else {
                     found.entry(g.start).or_insert(g);
+                }
+            }
+            for (word, pos) in valid {
+                if found.contains_key(&pos) {
+                    continue;
+                }
+                let end = pos + clen(&word);
+                let mut fixes = self.common_twins(&word, &sentence_before(&chars, pos), &sentence_after(&chars, end));
+                if fixes.is_empty() {
+                    fixes.extend(self.common_neighbour(&word));
+                }
+                if let Some(first) = fixes.first() {
+                    let message = format!("usually '{first}'");
+                    found.insert(pos, Finding { start: pos, end, word, rule: "rare", message, suggestions: fixes });
                 }
             }
         }

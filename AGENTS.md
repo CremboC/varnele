@@ -41,8 +41,10 @@ Layout of this repo:
 varnele/        Python: lexicon loading, paradigms, analyzer, suggestions, grammar rules, export
 rust/core       Rust runtime: same behaviour, loads data/varnele.bin   (crate "varnele")
 rust/android    JNI bridge (cdylib libvarnele_android.so, data embedded via include_bytes!)
+rust/wasm       WebAssembly bridge for the extension (data embedded, no bindings generator)
 rust/desktop    Desktop autocorrect in every text field: engine.rs (any OS), mac.rs + mac_selftest.rs, mac/ (bundle)
 android/        Stand-alone app: system spell checker service + test screen
+extension/      Chrome extension: Varnelė's underlines in every text field (rust/wasm is its bridge)
 eval/           evaluate.py (vs Hunspell), restore.py, parity.py, keyboard_sim.py, corpus fetch/freq,
                 extract_wiki.py + training.py (dump text), build_ngrams.py, swipe_sim.py, predict_sim.py,
                 clean_conv.py + extract_conv.py (conversational text: cleaning, test sets, text to count)
@@ -74,12 +76,13 @@ python3 eval/build_valency.py [--workers 8]        # case of the phrase next to 
 rust/desktop/mac/bundle.sh [--reset]               # build ~/Applications/Varnele.app (macOS menu-bar app)
 rust/target/release/varnele-desktop --sim "text"   # type text through the desktop engine (stdin too; --no-english)
 cargo test --release -p varnele-desktop --manifest-path rust/Cargo.toml
-python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
+python3 eval/keyboard_sim.py "kodel nepataiso ..." # type through the engine's keyboard decisions, word by word
 python3 eval/keyboard_restore.py [--no-soft]       # restore.py's 300 sentences typed through the keyboard model
                                                    # (--no-soft: the fixer leaves autocorrect's diacritics alone)
 rust/target/release/varnele serve                  # stdin requests "kb\tWORD\tCONTEXT[\tAFTER]" / "json\tTEXT" / "learn\tTEXT" /
                                                    # "gesture\tX,Y X,Y…\tCAP\tN\tCONTEXT" / "predict\tCONTEXT\tPREFIX\tN" /
-                                                   # "soft\tCOMMITTED\tTYPED" (used by the sims)
+                                                   # "fixreset" / "fixed\tBEFORE\tTYPED\tCOMMITTED" /
+                                                   # "fix\tBEFORE\tPICKED" (the sentence fixer; used by the sims)
 rust/target/release/varnele swipe WORD...         # decode each word's ideal swipe path
 python3 eval/swipe_sim.py [--noise 0.3] [--cut 0.4] # restore.py's 300 sentences swiped through the gesture decoder + keyboard model
 python3 eval/extract_wiki.py                       # corpus/wiki/ltwiki-latest-pages-articles.xml.bz2 -> corpus/wiki/text
@@ -138,6 +141,19 @@ Always pass `-s emulator-5554`, so a connected phone is never touched. The test 
 with a sample text: tap it (540, 530), `input keyevent 123` moves to the end. Read the field with
 `uiautomator dump` (its EditText `text=`), the strip from `predict …` / `ghost …` lines in the log or a
 screenshot (`adb -s emulator-5554 exec-out screencap -p > s.png`).
+
+## One engine
+
+**Every rule and every decision about language lives in the Rust core, and every rule that changes or
+marks text in `check_text` also in Python; apps hand it what was typed and apply what it says** (owner,
+2026-10-30). Keyboard, Mac app, extension and `eval/keyboard_sim.py` all call `rust/core/src/fix.rs`:
+`KeyboardWord::autocorrection`, `fix_level` / `suggestion_level`, `confident_fix` (what may change
+without asking), `SentenceFixer` (the word just finished, earlier words, commas, the app's own diacritics),
+`word_context`, `Tally` (is this text Lithuanian). A new rule or threshold in Kotlin, JavaScript or a sim is a
+bug. What stays in an app: HeliBoard's score compensation (`score`, `KEY_SLIP_SCORE`: its normalisation, not a
+language decision), settings, UI, reading and writing the field, and the Mac's English guard (`lean`: it needs
+the system dictionary; the extension has none and asks `Tally`). Rust-only with no Python twin, because
+`check_text` doesn't use them: gesture decoding, the language model, predictions, `keyboard_soft`.
 
 ## Architecture and key decisions
 
@@ -250,13 +266,18 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     letter including diacritics (`zodzou` → `žodžių` = 4 edits / 6 letters):
     score = target × 1e6 / (1 − levenshtein/len), target 1.0 for diacritic-only,
     0.9 − 0.4·typoCost for one typo, 0.05 otherwise; scores kept strictly decreasing.
-  - **rare twin** (Rust `keyboard_word`, keyboard only): a valid word whose form and
-    lemma never occur in the frequency corpus, with a diacritic-only twin whose
-    lemma does, gets the twin as a context fix (`sakini` → `sakinį`). A capitalised word counts its
-    lowercase readings too (`Kuriu` is the name Kurys, but also `kuriu`, so it is not → `Kurių`). A twin that is only
+  - **rare twin** (`common_twin`, `common_neighbour` in Python and Rust; `check_text` gives rule `rare`, a
+    blue suggestion, `keyboard_word` a context fix): a valid word whose form and
+    lemma never occur in the frequency corpus, with a twin that only adds diacritics and whose
+    lemma does (`sakini` → `sakinį`). A capitalised word counts its
+    lowercase readings too (`Kuriu` is the name Kurys, but also `kuriu`, so it is not → `Kurių`), a capital
+    inside a sentence is a name and stays, a twin is never a name (`Eduarda`). A twin that is only
     a participle or a vocative is never kept (`testuoju` no longer → `tęstuoju`). The rule
-    also covers never-seen 2–4 letter words one neighbouring key from a word seen 50+
-    times (`verai` → `gerai`, not the name `Verai`); keyboard-only `kak` → `kai`.
+    also covers never-seen 2–4 letter words without diacritics one neighbouring key from a word seen 50+
+    times (`gavi` → `gavo`, `duik` → `duok`; not `vašu`; `kak` no longer qualifies: the subtitles hold it). A typed diacritic is meant:
+    before 2026-10-30 a twin could also take one away, and the keyboard changed a correct `dantistė` to
+    `dantiste`. **key-shift** too is in `check_text` now, as suggestions, for an unknown word with nothing
+    within a typo.
     A **seen** word gets the twin too when the twin's form is seen `RARE_TWIN_RATIO` (10) times as often
     as the word's form and its whole lemma, by added diacritics only, not i/y (`veliau`, of a verb seen
     79 times, → `vėliau` 48,849; also `viska`, `musu`, `sis`, `buk`, `rupi`; not `ligoje`, `lanke`,
@@ -282,7 +303,7 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     (`einam` → `einame`), so no colloquial form is ever suggested. Unknown words never got
     spoken suggestions (the suggester only proposes dictionary forms). CLI: `--formal` on
     `kb`, `swipe` and `serve`.
-  - **key-shift** (setting `varnele_key_shift`, default on, Varnelė screen):
+  - **key-shift** (setting `varnele_key_shift`, default on, Varnelė screen; `suggest.py`/`suggest.rs`):
     if the word is unknown and no correction is within one typo, search words where
     every letter is the typed key or a neighbour (`fofrkua` → `didelis`, `ksbsd` →
     `labas`); DFS over a folded stem-prefix set with a 200k-step budget, ranked by
@@ -345,7 +366,8 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   (HeliBoard's `isResumed`), and the strip leaves out the typed word there, as upstream does for a touched
   word without spans. Not covered: a touched word whose sentence already holds the wrong twin (`kad žiemą
   žymiai rimtesne`), and the sentence fixer still fixes only the text before the cursor.
-- `inputlogic/VarneleSentenceFixer.kt`, hooked at the end of
+- **The sentence fixer** (`SentenceFixer` in `rust/core/src/fix.rs`; `inputlogic/VarneleSentenceFixer.kt` only
+  hands it the text before the cursor and applies the edit), hooked at the end of
   `InputLogic.handleSeparatorEvent` and `onPickSuggestionManually` (a picked suggestion
   finishes a word too; the picked word itself is left as chosen): after each finished word, re-check the
   current sentence and apply **only** diacritic-only grammar fixes, the phrase rule's re-inflections
@@ -357,10 +379,9 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   **The keyboard's own diacritics are not trusted like typed ones** (2026-10-23, owner: `kad ziema zymiai
   rimtesne` got `žiemą`, the 5× more frequent twin, and then no `rimtesnė`): the fixer remembers, per
   sentence, each word autocorrect or its own last-word fix changed only by diacritics (word index → the
-  form typed; `InputLogic.commitCurrentAutoCorrection` → `rememberAutocorrection`, a backspace undo →
-  `forgetLastAutocorrection`, an edited word is forgotten), and with "fix earlier words" on, before its
-  passes, hands Rust `keyboard_soft(sentence, sentence with those words as typed)` (JNI `softNative`,
-  serve `soft`): each of them among the last 6 words, not the one just finished, is checked as typed with
+  form typed; `InputLogic.commitCurrentAutoCorrection` → `rememberAutocorrection` → JNI `fixRememberNative`, a
+  backspace undo → `fixUndoneNative`, an edited word is forgotten), and with "fix earlier words" on, before its
+  passes, calls `keyboard_soft(sentence, sentence with those words as typed)`: each of them among the last 6 words, not the one just finished, is checked as typed with
   the others as they stand (all of them as typed made `pačių idomiausiu nuotykių` a sentence of unknown
   words), and takes the grammar's first twin only when the twins it allows leave out its current spelling
   (`salygine taika` allows `sąlyginė` and `sąlygine`: the autocorrected `sąlyginė` stays). `kad žiemą
@@ -481,11 +502,11 @@ that ask, no autocorrect in Chrome or Electron) and an input method (a new input
 
 - `engine.rs`, no OS in it, for Windows too: keeps the sentence typed so far (its own copy; nothing reads
   the field), and when whitespace, enter or tab finishes a token, fixes the word in it (`(sakini?` keeps
-  its punctuation; a token with anything but letters inside is left alone: `www.x.lt`, `a1`). The same
-  decision as the keyboard (`autocorrect`, as in keyboard_sim.py), with `keyboard_word` on the last 3 words
-  of the sentence, key-shift off. Backspace right after a fix restores the word, keeps the space, and
-  leaves that word alone until the app quits. Not yet: the sentence fixer (earlier words, commas),
-  predictions, the user model, underlines.
+  its punctuation; a token with anything but letters inside is left alone: `www.x.lt`, `a1`), then runs the
+  sentence fixer on the text so far (earlier words, commas, the app's own diacritics: `visą tai ateis` →
+  `visa`, `sakė, kad`): the engine's decisions, as on the keyboard, key-shift off. Backspace right after a fix
+  restores the word, keeps the space, and leaves that word alone until the app quits; an edit that would change
+  such a word is dropped. Not yet: predictions, the user model, underlines.
 - Other languages, since the desktop has one keyboard for all of them (owner: English stays exactly as
   typed): **only on the Lithuanian layout** (menu: "On every keyboard layout"), and an **English guard**.
   A word only English (the system dictionary, `NSSpellChecker`, 0.08 ms a word; Windows has `ISpellChecker`)
@@ -526,6 +547,31 @@ that ask, no autocorrect in Chrome or Electron) and an input method (a new input
   underlines come from the system's spelling language or its own `en-GB`. Next way in: a browser extension
   (the core as WebAssembly, its own underlines, the whole field to read and change).
 
+## Browser extension
+
+`extension/build.sh` builds `extension/varnele.wasm` (17.8 MB, git-ignored; `rustup target add
+wasm32-unknown-unknown` once), then chrome://extensions → Developer mode → Load unpacked → `extension/`.
+No store listing yet. Test: `eval/extension/test.mjs` (its header says how). Why an extension: macOS 26's
+`NSSpellChecker` never reaches a third-party spell server, and Chrome only offers its own dictionaries.
+
+- `background.js`: the service worker holds the checker for all tabs; Chrome stops it when idle (60 MB
+  freed) and it loads again at the next check. Page to result, no debugger attached (Mac): first check
+  146 ms, warm 3 ms, after 40 s idle 178 ms. With a debugger the first check takes ~1 s (Playwright).
+- `content.js`: checks a field's paragraphs (cached by text) 250 ms after typing stops. Contenteditable:
+  CSS Highlight API, ranges over a text rebuilt with a line per block; the page's DOM is not touched, shadow
+  roots get the stylesheet adopted. Textarea and input: a transparent copy of the text in a closed
+  shadow root over the page, only while the field has the focus (so no drift, nothing over dropdowns; an
+  unfocused one shows no underlines). The word being typed isn't marked.
+- A fix goes through `execCommand("insertText")` with the word selected, so undo works and the page's
+  own code sees an ordinary edit: a controlled field and Lexical (Reddit's editor), also in a shadow root.
+- **Language** (`Tally` in `fix.rs`, through the worker): a line counts as Lithuanian when 70%+ of its words are
+  known or short only of diacritics (names don't count); 3+ words, or one with Lithuanian letters. A paragraph of
+  5+ words decides itself, a shorter one goes with the field. Lithuanian: Chrome's spellcheck goes off for that field (`spellcheck=false`,
+  its marks go too), Varnelė's on. Otherwise Chrome's stay. Subtitle lines kept 97.3–97.8% (stripped of
+  diacritics too), English lines let through 1.1–2.3% (at 60%: 5.6–6.3%).
+- Not covered: Google Docs (canvas); English words inside Lithuanian text are marked red. Autocorrect
+  stays with the Mac app; the extension only marks and offers.
+
 ## Release builds and Google Play (keyboard)
 
 - CI: `.github/workflows/varnele-release.yml` in the fork, on push to `main` and manual
@@ -553,6 +599,17 @@ that ask, no autocorrect in Chrome or Electron) and an input method (a new input
   bundleNouserlib`; the APK installs as `dev.imbrasas.varnele.keyboard` next to `.debug`.
 
 ## Latest numbers
+
+- **One engine** (2026-10-30, owner: rules belong in the engine). `rare` and key-shift in `check_text`, Python
+  and Rust, parity 100% (7,682 findings). Correct text (test / freq / subtitles / Tatoeba): 20 / 87 / 219 / 48 flags
+  → 20 / 88 / 224 / 48, the 6 new ones `viska`, `Viska`, `musų`, `bučiau`, `užplusta` (real errors), `papalis`. The
+  first version flagged 56: names and twins that took a typed diacritic away. restore.py Wikipedia / subtitles
+  / Tatoeba 70.2 / 71.8 / 77.9 → 71.9 / 73.7 / 79.3%, whole sentences 30.3 / 42.0 / 54.0 → 32.3 / 45.7 / 55.3%, 0
+  changed. keyboard_restore.py 76.3 / 76.9 / 83.2 → 75.7 / 76.8 / 83.2% with those guards (Wikipedia's are names,
+  stripped: the guards are what stops the keyboard changing correct ones), whole sentences 39.0 / 49.0 / 61.7 →
+  38.3 / 49.0 / 61.7%. Running the real fixer in the sim instead of its old copy: 75.8 / 76.6 / 83.1%, whole
+  sentences 38.3 / 49.0 / 62.0%, the same correct words changed: the copy lacked the last-word fix and sentence
+  ends (`ji emiau` → `ėmė`, the subject rule on the word just finished, is what the keyboard really does).
 
 - Wikipedia (150 articles, 65k words): 20 context flags, **all real errors**
   (16 commas incl. `nariu, pasiekusiu tokį aukštą postą`, `kylanti grėsme`, `prastos kokybes`, `daugybę metu`,
@@ -944,6 +1001,8 @@ Left deliberately:
   an address, not a wrong verb.
 - Only the word after the greeting is checked (`Laba diena Jonai` gets no comma).
 
+- Rare twins in different cases when the grammar doesn't decide (`Masina stovi kieme`): `check_text` offers them
+  all, the keyboard takes the more frequent (`Mašiną`). Left: frequency, not the verb, picks the case there.
 - **Statistics for diacritic twins: tried 2026-10-21, not shipped.** A class-bigram model
   (POS+case labels, top function words lexicalised, one EM step) trained on corpus/freq.
   Choosing between same-lemma twins that only add diacritics: at a 100:1 likelihood ratio
@@ -1111,3 +1170,6 @@ Left deliberately:
 34. an unknown word after a pronoun: a verb of that person only near the best suggestion (`ji pries` → `prieš`)
 35. desktop autocorrect, macOS prototype (`rust/desktop`): an event tap watches the keys, `engine.rs` fixes each
     finished word, only on the Lithuanian layout, an English guard, a self-test; a spell server doesn't work
+36. Chrome extension: the core as WebAssembly, underlines and a card of suggestions in every text field
+37. one engine: `rare` and key-shift in `check_text`, autocorrect and the sentence fixer in `fix.rs` (the fork, the Mac
+    app and the sim call it, the Mac gets earlier words and commas), a typed diacritic stays, the language tally

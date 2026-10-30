@@ -40,10 +40,11 @@ pub fn findings(fs: &[Finding], offset: impl Fn(usize) -> usize + Copy) -> Strin
 
 /// A [`KeyboardWord`](crate::checker::KeyboardWord) as JSON.
 pub fn keyboard_word(k: &crate::checker::KeyboardWord) -> String {
-    let list = |v: &[(String, f64, f64)]| {
+    let list = |v: &[(String, f64, f64)], level: &dyn Fn(usize) -> u8| {
         v.iter()
-            .map(|(w, c, fc)| {
-                format!("{{\"w\":{},\"cost\":{:.4},\"fcost\":{:.4},\"diacritic\":{}}}", string(w), c, fc, *fc == 0.0)
+            .enumerate()
+            .map(|(i, (w, c, fc))| {
+                format!("{{\"w\":{},\"cost\":{:.4},\"fcost\":{:.4},\"diacritic\":{},\"level\":{}}}", string(w), c, fc, *fc == 0.0, level(i))
             })
             .collect::<Vec<_>>()
             .join(",")
@@ -55,12 +56,13 @@ pub fn keyboard_word(k: &crate::checker::KeyboardWord) -> String {
         crate::WordStatus::Skip => "skip",
     };
     format!(
-        "{{\"status\":\"{}\",\"suggestions\":[{}],\"contextRule\":{},\"contextFixes\":[{}],\"keyShift\":{}}}",
+        "{{\"status\":\"{}\",\"suggestions\":[{}],\"contextRule\":{},\"contextFixes\":[{}],\"keyShift\":{},\"autocorrect\":{}}}",
         status,
-        list(&k.suggestions),
+        list(&k.suggestions, &|i| k.suggestion_level(i)),
         string(&k.context_rule),
-        list(&k.context_fixes),
-        k.key_shift
+        list(&k.context_fixes, &|i| k.fix_level(i)),
+        k.key_shift,
+        string(k.autocorrection().unwrap_or(""))
     )
 }
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "android", "desktop"]
+members = ["core", "android", "desktop", "wasm"]
 resolver = "2"
 
 [profile.release]

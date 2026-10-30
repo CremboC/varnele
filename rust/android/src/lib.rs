@@ -1,16 +1,17 @@
 //! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative, predictNative, ghostNative,
-//! softNative, user*Native (the user's own language model)}
+//! fix*Native, user*Native (the user's own language model)}
 //! The compiled data file is embedded in the library, so the app ships one .so.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use jni::objects::{JClass, JFloatArray, JString};
 use jni::sys::{jboolean, jint, jstring};
 use jni::JNIEnv;
-use varnele::Checker;
+use varnele::{Checker, SentenceFixer};
 
 static DATA: &[u8] = include_bytes!("../../../data/varnele.bin");
 static CHECKER: OnceLock<Mutex<Checker>> = OnceLock::new();
+static FIXER: LazyLock<Mutex<SentenceFixer>> = LazyLock::new(Default::default);
 
 /// where the user model is saved (set by userLoadNative)
 static USER_PATH: Mutex<String> = Mutex::new(String::new());
@@ -172,30 +173,58 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_ghostNative<'l>(
     env.new_string(ghost).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-/// The keyboard's own diacritics decided again (Checker::keyboard_soft): `committed` is the sentence as
-/// it stands, `typed` the same with the words the keyboard gave diacritics as typed. Returns a JSON
-/// array of {start, end, word} (UTF-16 offsets) to put in their place.
+/// Autocorrect committed `committed` for `typed`: the sentence fixer may change its diacritics later.
+/// `before` is the text before the cursor, `base` where it starts in the field.
 #[no_mangle]
-pub extern "system" fn Java_dev_imbrasas_varnele_Native_softNative<'l>(
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_fixRememberNative<'l>(
     mut env: JNIEnv<'l>,
     _class: JClass<'l>,
-    committed: JString<'l>,
+    before: JString<'l>,
+    base: jint,
     typed: JString<'l>,
-) -> jstring {
-    let committed: String = env.get_string(&committed).map(Into::into).unwrap_or_default();
+    committed: JString<'l>,
+) {
+    let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
     let typed: String = env.get_string(&typed).map(Into::into).unwrap_or_default();
-    let mut utf16 = Vec::with_capacity(committed.len() + 1);
-    let mut n = 0;
-    for c in committed.chars() {
-        utf16.push(n);
-        n += c.len_utf16();
-    }
-    utf16.push(n);
-    let fixes = checker().lock().unwrap().keyboard_soft(&committed, &typed);
-    let items: Vec<String> = fixes.iter()
-        .map(|(a, b, w)| format!("{{\"start\":{},\"end\":{},\"word\":{}}}", utf16[*a], utf16[*b], varnele::json::string(w)))
-        .collect();
-    env.new_string(format!("[{}]", items.join(","))).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+    let committed: String = env.get_string(&committed).map(Into::into).unwrap_or_default();
+    FIXER.lock().unwrap().autocorrected(&before, base.max(0) as usize, &typed, &committed);
+}
+
+/// The last autocorrection was undone: its word stays as typed.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_fixUndoneNative(_env: JNIEnv, _class: JClass) {
+    FIXER.lock().unwrap().undone();
+}
+
+/// The sentence fixer on the text before the cursor (`base`: where it starts in the field). Returns
+/// {"delete", "insert"}: UTF-16 units to delete before the cursor and the text to put there.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_fixNative<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    before: JString<'l>,
+    base: jint,
+    picked: jboolean,
+    earlier: jboolean,
+    commas: jboolean,
+    formal: jboolean,
+) -> jstring {
+    let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
+    let o = varnele::FixOptions { picked: picked != 0, earlier: earlier != 0, commas: commas != 0, formal: formal != 0 };
+    let edit = {
+        let ck = checker().lock().unwrap();
+        FIXER.lock().unwrap().apply(&ck, &before, base.max(0) as usize, o)
+    };
+    let (delete, insert) = match edit {
+        Some(e) => {
+            let chars: Vec<char> = before.chars().collect();
+            (chars[chars.len() - e.delete..].iter().map(|c| c.len_utf16()).sum::<usize>(), e.insert)
+        }
+        None => (0, String::new()),
+    };
+    let json = format!("{{\"delete\":{delete},\"insert\":{}}}", varnele::json::string(&insert));
+    env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
 /// The user's language model: load its counts from `path` (an app-private file; missing = empty)

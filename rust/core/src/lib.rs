@@ -16,6 +16,7 @@ pub mod checker;
 pub mod counts;
 pub mod data;
 pub mod derivation;
+pub mod fix;
 pub mod fx;
 pub mod gesture;
 pub mod grammar;
@@ -26,3 +27,4 @@ pub mod text;
 pub mod user;
 
 pub use checker::{Checker, Finding, KeyboardWord, WordStatus};
+pub use fix::{Edit, FixOptions, SentenceFixer, Tally};

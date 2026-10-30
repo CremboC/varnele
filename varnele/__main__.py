@@ -9,7 +9,7 @@ from .analyzer import Analyzer
 from .index import Index
 from .phonology import LT_ALPHABET, fold
 from .grammar import Grammar, Issue
-from .suggest import Suggester
+from .suggest import Suggester, _cost, _diacritic_cost, key_and_neighbours
 
 TOKEN = re.compile(r"[^\W\d_]+(?:[-‑][^\W\d_]+)*")
 URL = re.compile(r"\S+\.(?:lt|com|org|net|eu|gov|edu|info)\b\S*|\S+@\S+|https?://\S+")
@@ -25,6 +25,9 @@ def is_foreign(word):
 
 # Letters Lithuanian doesn't use and the keys touching them (staggered rows: w is above a and s, not d)
 SLIP_KEYS = {"w": "qeas", "q": "wa", "x": "zsdc"}
+# A seen word's diacritic twin must be this many times as frequent to replace it
+RARE_TWIN_RATIO = 10
+CASE_PARTS = {"nom", "gen", "dat", "acc", "ins", "loc", "voc"}
 # what may stand between a sentence's end and its first word
 OPENERS = " \t\"'„“”«»‘’([-–—"
 
@@ -35,6 +38,29 @@ def sentence_start(text, pos):
     while i > 0 and text[i - 1] in OPENERS:
         i -= 1
     return i == 0 or text[i - 1] in ".!?…\n"
+
+
+def sentence_before(text, pos):
+    """The sentence up to pos; empty when pos starts it."""
+    if sentence_start(text, pos):
+        return ""
+    i = pos
+    while i > 0 and text[i - 1] not in ".!?…\n":
+        i -= 1
+    return text[i:pos]
+
+
+def sentence_after(text, pos):
+    """The rest of the sentence from pos, with its full stop."""
+    i = pos
+    while i < len(text) and text[i] not in ".!?…\n":
+        i += 1
+    return text[pos:i + 1]
+
+
+def adds_diacritics(w, f):
+    """f is w with diacritics added, nothing else (not i/y: y is its own key)."""
+    return len(w) == len(f) and all(a == b or (b in "ąčęėįšųūž" and fold(b) == a) for a, b in zip(w, f))
 
 
 def tokens(text):
@@ -84,8 +110,78 @@ class Checker:
         if r.status == "colloquial":
             return "colloquial", r.formal
         if r.status == "unknown":
-            return "unknown", self.sg.suggest(w)
+            return "unknown", self.with_key_shift(w, self.sg.suggest(w))
         return "ok", []
+
+    def with_key_shift(self, w, suggestions):
+        """Nothing within a typo: maybe the hand was one key off (fofrkua -> didelis)."""
+        fw = fold(w.lower())
+        if all(_cost(fw, fold(s.lower())) > 1.0 for s in suggestions):
+            return (self.sg.key_shift(w, 3) + suggestions)[:5]
+        return suggestions
+
+    def lemma_seen(self, w):
+        return max((self.sg.lemma_freq.get(a.lemma.lower(), 0) for a in self.an.analyze(w)), default=0)
+
+    def common_twins(self, word, context, after=""):
+        """Diacritic-only twins of a valid word, the likeliest first, when the word itself is never seen in the frequency
+        corpus (neither the form nor its lemma) and the twin's lemma is; or when the twin's form alone
+        is seen RARE_TWIN_RATIO times as often as the word's form and all of its lemma (veliau, of a
+        verb seen 79 times: vėliau 48,849; not ligoje, lanke: a common lemma). Twins in different
+        cases (mašina, mašiną): the words around it choose, else the more frequent. context: with
+        no words before it in the sentence, a capital may be the keyboard's own. after: the rest of
+        the sentence, if known."""
+        freq = self.sg.freq
+        lw = word.lower()
+        # a capitalised word is also its lowercase self: Kuriu is the name Kurys, but also kuriu (I create)
+        seen = max(freq.get(lw, 0), self.lemma_seen(word), self.lemma_seen(lw))
+        lowercase = word[:1].islower()
+        start = not context.strip()
+        if not lowercase and not start:
+            return []       # a name inside a sentence
+        twins = []
+        for c in self.an.folded_forms(fold(lw)):
+            an = self.an._analyze_exact(c)
+            if c == lw or not c[:1].islower() or not an:
+                continue
+            # a twin that can only be a vocative (sakiny, "O sentence!") or a participle
+            # (tęstuoju for testuoju) is rarely meant
+            if not any(not a.tag.endswith(".voc") and not (a.tag.startswith("V.") and CASE_PARTS & set(a.tag.split(".")))
+                       for a in an):
+                continue
+            f = freq.get(c.lower(), 0)
+            score = f if seen else self.lemma_seen(c) + f
+            # only diacritics added: a typed one is meant (dantistė, not dantiste), and y is its own
+            # key (lig šiol, not lyg)
+            if adds_diacritics(lw, c.lower()) and score >= (RARE_TWIN_RATIO * seen if seen else 3):
+                twins.append((-score, c))
+        twins.sort()
+
+        def issues(c):
+            text = f"{context.rstrip()} {c}{after}".lstrip()
+            return sum(f.rule != "comma" for f in self.grammar.check(text, partial=not after.strip()))
+        judged = (context.strip() or after.strip()) and len(twins) > 1
+        ranked = sorted(((issues(c) if judged else 0, c) for _, c in twins), key=lambda r: r[0])   # a tie stays by frequency
+        cap = word[:1].isupper()
+        return [c[0].upper() + c[1:] if cap else c for n, c in ranked if n == ranked[0][0]][:3]
+
+    def common_neighbour(self, word):
+        """The most frequent word (seen at least 50 times) that differs from a short (2-4 letters),
+        never seen valid word in one letter typed with a neighbouring key: kak -> kai."""
+        lw = word.lower()
+        # a typed diacritic is no slip (vašu, not vadu)
+        if not 2 <= len(lw) <= 4 or not word[:1].islower() or self.sg.freq.get(lw, 0) > 0 or set(lw) & set("ąčęėįšųūž"):
+            return None
+        if any(self.sg.lemma_freq.get(a.lemma.lower(), 0) > 0 for a in self.an.analyze(word)):
+            return None
+        best = None
+        for i, c in enumerate(lw):
+            for k in key_and_neighbours(c)[1:]:
+                cand = lw[:i] + k + lw[i + 1:]
+                f = self.sg.freq.get(cand, 0)
+                if f >= 50 and (best is None or f > best[0]) and self.an._analyze_exact(cand):
+                    best = (f, cand)
+        return best[1] if best else None
 
 
     def slip_fixes(self, w, sentence_start=False):
@@ -114,7 +210,7 @@ class Checker:
 
     def check_text(self, text, formal=False, grammar=True):
         """All findings in a text, in order: misspellings, spoken forms, grammar."""
-        found, seen = {}, {}
+        found, seen, valid = {}, {}, []
         for word, pos in tokens(text):
             word = word if word.lower() in ABBREV else word.rstrip(".")
             key = (word, sentence_start(text, pos))
@@ -123,6 +219,8 @@ class Checker:
             st, sugg = seen[key]
             if st == "unknown" or (st == "colloquial" and formal):
                 found[pos] = Issue(pos, pos + len(word), word, st, "", list(sugg))
+            elif st == "ok":
+                valid.append((word, pos))
         if grammar:
             for g in self.grammar.check(text):
                 if g.rule == "context":
@@ -134,6 +232,14 @@ class Checker:
                         f.message = g.message
                 elif g.start not in found:
                     found[g.start] = g
+            for word, pos in valid:
+                if pos not in found:
+                    end = pos + len(word)
+                    fixes = self.common_twins(word, sentence_before(text, pos), sentence_after(text, end))
+                    if not fixes and (near := self.common_neighbour(word)):
+                        fixes = [near]
+                    if fixes:
+                        found[pos] = Issue(pos, end, word, "rare", f"usually '{fixes[0]}'", fixes)
         return [found[k] for k in sorted(found)]
 
 
@@ -170,10 +276,10 @@ def main(argv=None):
     text = sys.stdin.read() if a.file == "-" else open(a.file, encoding="utf-8").read()
     labels = {"unknown": "ERR ", "colloquial": "SPOKEN", "case": "GRAM", "agreement": "GRAM",
               "quantity": "GRAM", "comma": "COMMA",
-              "negation": "GRAM", "subject": "GRAM", "object": "GRAM", "relative": "GRAM"}
+              "negation": "GRAM", "subject": "GRAM", "object": "GRAM", "relative": "GRAM", "rare": "RARE"}
     for f in ck.check_text(text, formal=a.formal, grammar=not a.no_grammar):
         line = text.count("\n", 0, f.start) + 1
-        out = f"{line}:{labels[f.rule]} {f.word}" + (f" -> {', '.join(f.suggestions)}" if f.suggestions else "")
+        out = f"{line}:{labels.get(f.rule, "GRAM")} {f.word}" + (f" -> {', '.join(f.suggestions)}" if f.suggestions else "")
         print(out + (f"   ({f.message})" if f.message else ""))
 
 

@@ -27,6 +27,11 @@ def _near(a, b):
     return bool(pa and pb) and abs(pa[0] - pb[0]) <= 1 and abs(pa[1] - pb[1]) <= 1
 
 
+def key_and_neighbours(c):
+    """The typed letter and its neighbouring keys, within the (folded) Lithuanian alphabet."""
+    return [c] + [k for k in FOLDED_ALPHABET if k != c and _near(c, k)]
+
+
 def _cost(a, b):
     """Damerau-Levenshtein with cheap same-class substitutions."""
     n, m = len(a), len(b)
@@ -104,6 +109,23 @@ class Suggester:
         if fold(cand.lower()) == fold(word):
             return 0.1 + 0.5 * _diacritic_cost(word, cand.lower()) - bonus
         return _cost(word, cand.lower()) - bonus
+
+    def key_shift(self, word, n):
+        """Words typed with the hand shifted: every letter may be a neighbouring key
+        (fofrkua -> didelis). Common words first (a whole-word slip is only worth fixing into a
+        likely word), then fewer shifted keys."""
+        typed = fold(word.lower())
+        if not 3 <= len(typed) <= 16:
+            return []
+        ranked = []
+        for c in self.idx.neighbour_forms(typed, key_and_neighbours):
+            an = self.an._analyze_exact(c)
+            if c[:1].islower() and an:
+                lf = max(self.lemma_freq.get(a.lemma.lower(), 0) for a in an)
+                shifted = sum(a != b for a, b in zip(fold(c), typed))
+                ranked.append((-(lf + self.freq.get(c, 0)), shifted, c))
+        cap = word[:1].isupper()
+        return [c[0].upper() + c[1:] if cap else c for _, _, c in sorted(ranked)[:n]]
 
     def _folded_forms(self, fw):
         return self.an.folded_forms(fw)

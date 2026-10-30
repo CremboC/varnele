@@ -7,3 +7,6 @@ eval/out/
 data/varnele.bin
 rust/target/
 demo/
+
+# browser extension: built by extension/build.sh
+extension/varnele.wasm

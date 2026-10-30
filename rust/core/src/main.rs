@@ -139,13 +139,29 @@ fn main() {
             //   learn<TAB>TEXT  -> "ok": the user wrote TEXT (turns the user model on); forget -> "ok": empty it
             //   ghostnext<TAB>CONTEXT<TAB>TYPED  -> {"w", "next", "p"}: the ghost's word and its likeliest next
             //                                     word, whatever P (predict_sim.py --ghost weighs thresholds)
+            //   fixreset / fixed<TAB>BEFORE<TAB>TYPED<TAB>COMMITTED / fix<TAB>BEFORE<TAB>PICKED: the sentence fixer
             let layout = Layout::qwerty();
+            let mut fixer = varnele::SentenceFixer::default();
             use std::io::{BufRead, Write};
             let mut out = std::io::stdout().lock();
             for line in std::io::stdin().lock().lines() {
                 let line = line.unwrap();
                 let parts: Vec<&str> = line.split('\t').collect();
                 match parts[0] {
+                    "fixreset" => {
+                        fixer = varnele::SentenceFixer::default();
+                        writeln!(out).unwrap();
+                    }
+                    "fixed" => {
+                        fixer.autocorrected(parts[1], 0, parts[2], parts[3]);
+                        writeln!(out).unwrap();
+                    }
+                    "fix" => {
+                        let o = varnele::FixOptions { picked: parts.get(2) == Some(&"1"), earlier: true, commas: true, formal };
+                        let e = fixer.apply(&ck, parts[1], 0, o);
+                        let (delete, insert) = e.map_or((0, String::new()), |e| (e.delete, e.insert));
+                        writeln!(out, "{{\"delete\":{delete},\"insert\":{}}}", varnele::json::string(&insert)).unwrap();
+                    }
                     "kb" => writeln!(out, "{}", varnele::json::keyboard_word(&ck.keyboard_word_in(
                         parts[1], parts.get(2).copied().unwrap_or(""), parts.get(3).copied().unwrap_or(""), true, formal))).unwrap(),
                     "json" => {
