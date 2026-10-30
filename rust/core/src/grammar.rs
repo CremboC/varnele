@@ -284,6 +284,9 @@ struct Reading {
     participle: bool,
 }
 
+const ACC_SG: Reading = Reading { pos: Pos::Noun, case: "acc", number: Some("sg"), gender: None, participle: false }; // what visą agrees with
+const DAT_SG_F: Reading = Reading { pos: Pos::Noun, case: "dat", number: Some("sg"), gender: Some("f"), participle: false }; // what tai agrees with as the dative of ta
+
 fn agree(a: &Reading, b: &Reading) -> bool {
     fn same(x: Option<&str>, y: Option<&str>) -> bool {
         x.is_none() || y.is_none() || x == y
@@ -325,7 +328,7 @@ fn retag_feats(tag: &str, case: &str, number: Option<&str>, gender: Option<&str>
 }
 
 /// f is w with diacritics added, none of w's own changed: ta -> tą, not kavinę -> kavine.
-fn adds_diacritics(w: &str, f: &str) -> bool {
+pub(crate) fn adds_diacritics(w: &str, f: &str) -> bool {
     let (a, b): (Vec<char>, Vec<char>) = (w.chars().collect(), f.chars().collect());
     a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| x == y || ("ąčęėįšųūž".contains(*y) && fold_char(*y) == *x))
 }
@@ -949,8 +952,41 @@ impl Grammar {
             ["ir", "bei", "arba"].contains(&nx.lower.as_str()) && (i + 2 == toks.len() || adjacent[i + 2] && verb_at(i + 2))
         };
 
+        // visą tai at i is the neuter visa tai: tai is not the dative of ta (visą tai mergaitei) and not a
+        // mistyped tą (visą tai laiką, an error of its own). The keyboard types on: at the end of the text
+        // wait for the next word.
+        let goes_on = |k: usize| chars[toks[k].end..].iter().any(|c| !c.is_whitespace());
+        let neuter_tai = |i: usize| {
+            let k = i + 2;
+            if k == toks.len() || !adjacent[k] {
+                return k < toks.len() || goes_on(k - 1);
+            }
+            if !toks[k].known {
+                return false;
+            }
+            let span = phrase(i + 1, true);
+            let Some(&last) = span.last() else { return true };
+            let head = &toks[last];
+            if !head.is_noun(&g) {
+                return last + 1 < toks.len() || goes_on(last);
+            }
+            let mut forms = head.pos_readings(&g);
+            if !head.can_be_verb(&g) {
+                forms.extend(head.variants(&g).iter().flat_map(|(_, rs)| rs.iter().cloned()));
+            }
+            !forms.iter().any(|r| r.pos == Pos::Noun && (agree(r, &ACC_SG) || agree(r, &DAT_SG_F)))
+        };
+
         for (i, w) in toks.iter().enumerate() {
             let nxt_adjacent = i + 1 < toks.len() && adjacent[i + 1];
+            // 0. visą tai -> visa tai: the neuter visa doesn't decline (padariau visa tai)
+            if w.lower == "visą" && !is_upper(&w.text) && nxt_adjacent && toks[i + 1].text == "tai" && neuter_tai(i) {
+                add(&mut issues, Issue {
+                    start: w.start, end: w.end, word: w.text.clone(), rule: "agreement",
+                    message: "in 'visa tai' the neuter 'visa' does not decline".to_string(),
+                    suggestions: vec![w.cap("visa")],
+                });
+            }
             // 1. prepositions (also recognised without diacritics: pries, is, i, uz)
             let prep: Option<&str> = if prep_cases(&w.lower).is_some() {
                 PREP_LIST.iter().find(|p| **p == w.lower).copied()

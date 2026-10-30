@@ -4,8 +4,11 @@ use std::collections::BTreeMap;
 
 use crate::analyzer::{Analyzer, Status};
 use crate::data::Data;
-use crate::grammar::{Fit, Grammar, Issue};
+use crate::grammar::{adds_diacritics, Fit, Grammar, Issue};
 use crate::text::*;
+
+/// A seen word's diacritic twin must be this many times as frequent to replace it (keyboard only).
+const RARE_TWIN_RATIO: u32 = 10;
 
 pub type Finding = Issue;
 
@@ -312,10 +315,9 @@ impl Checker {
             context_fixes = formal_forms.into_iter().map(|w| entry(w, 0.0)).collect();
         }
         // A valid but rare form whose diacritic twin is common was almost certainly typed
-        // without diacritics: sakini (rare verb form) -> sakinį. Keyboard only; frequencies
-        // come from the small corpus, so the bar is "never seen" vs "seen".
+        // without diacritics: sakini (rare verb form) -> sakinį, veliau -> vėliau. Keyboard only.
         if status == WordStatus::Ok && context_fixes.is_empty() {
-            if let Some(twin) = self.common_twin(word) {
+            if let Some(twin) = self.common_twin(word, context) {
                 context_rule = "rare".into();
                 context_fixes.push(entry(twin, 0.0));
             }
@@ -374,8 +376,12 @@ impl Checker {
     }
 
     /// Diacritic-only twin of a valid word when the word itself is never seen in the
-    /// frequency corpus (neither the form nor its lemma) and the twin's lemma is.
-    fn common_twin(&self, word: &str) -> Option<String> {
+    /// frequency corpus (neither the form nor its lemma) and the twin's lemma is; or when the
+    /// twin's form alone is seen RARE_TWIN_RATIO times as often as the word's form and all of its
+    /// lemma (veliau, of a verb seen 79 times: vėliau 48,849; not ligoje, lanke: a common lemma).
+    /// Twins in different cases (mašina, mašiną): the words before choose, else the more frequent.
+    /// `context`: with no words before it in the sentence, a capital may be the keyboard's own.
+    fn common_twin(&self, word: &str, context: &str) -> Option<String> {
         const CASE_PARTS: &[&str] = &["nom", "gen", "dat", "acc", "ins", "loc", "voc"];
         let d = &self.an.data;
         let lemma_freq = |w: &str| {
@@ -383,11 +389,13 @@ impl Checker {
         };
         let lw = lower(word);
         // a capitalised word is also its lowercase self: Kuriu is the name Kurys, but also kuriu (I create)
-        if d.freq.get(&lw) > 0 || lemma_freq(word) > 0 || lemma_freq(&lw) > 0 {
-            return None;
-        }
+        let seen = d.freq.get(&lw).max(lemma_freq(word)).max(lemma_freq(&lw));
         let lowercase = first_lower(word);
-        self.an
+        let start = context.trim().is_empty();
+        if seen > 0 && !lowercase && !start {
+            return None; // a name inside a sentence
+        }
+        let mut twins: Vec<(u32, String)> = self.an
             .folded_forms(&fold(&lw))
             .into_iter()
             .filter(|c| *c != lw && (!lowercase || first_lower(c)) && !self.an.analyze_exact(c).is_empty())
@@ -402,11 +410,22 @@ impl Checker {
             })
             .map(|c| {
                 let f = d.freq.get(&lower(&c));
-                (lemma_freq(&c) + f, c)
+                (if seen > 0 { f } else { lemma_freq(&c) + f }, c)
             })
-            .filter(|(score, _)| *score >= 3)
-            .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)))
-            .map(|(_, c)| cap_like(word, &c))
+            // with a seen word only diacritics added, not i/y: y is its own key (lig šiol, not lyg)
+            .filter(|(score, c)| if seen > 0 {
+                *score >= RARE_TWIN_RATIO * seen && adds_diacritics(&lw, &lower(c))
+            } else {
+                *score >= 3
+            })
+            .collect();
+        twins.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let issues = |c: &str| {
+            let text = format!("{} {c}", context.trim_end());
+            self.grammar.check_opts(&self.an, &text, true).iter().filter(|f| f.rule != "comma").count()
+        };
+        let best = if start || twins.len() < 2 { twins.first() } else { twins.iter().min_by_key(|(_, c)| issues(c)) };
+        best.map(|(_, c)| cap_like(word, c))
     }
 
     /// The keyboard's next words (or completions of `prefix`, typed with or without diacritics)

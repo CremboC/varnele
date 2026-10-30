@@ -151,6 +151,14 @@ FLAGGED = [
     ("Specialiais ryškias ženklais.", "ryškias", "phrase", "ryškiais"),
     ("Nors V. Topalovas turėjo šiokia tokią kompensaciją, jo pozicija atrodė gera.", "šiokia", "phrase", "šiokią"),
     ("Šamanizmas – tam tikrų religinės praktikų, pabrėžiančių ryšius.", "religinės", "phrase", "religinių"),
+    # the neuter visa tai doesn't decline
+    ("Tačiau visą tai ateis vėliau.", "visą", "agreement", "visa"),
+    ("Visą tai buvo kvailystė.", "Visą", "agreement", "Visa"),
+    ("Padariau visą tai.", "visą", "agreement", "visa"),
+    ("Ką tu žinai apie visą tai?", "visą", "agreement", "visa"),
+    ("Visą tai jau padarė kiti.", "Visą", "agreement", "Visa"),
+    ("Visą tai gražiai padarė.", "Visą", "agreement", "Visa"),                # gražiai isn't a dative here
+    ("Visą tai kelia nerimą.", "Visą", "agreement", "Visa"),                  # kelia, a verb: not kelią
 ]
 
 CORRECT = [
@@ -253,6 +261,12 @@ CORRECT = [
     "Grupė atliko kiek kitokią, nei jiems įprasta, muziką. Mama didele",
     # genitive after a conjunction: a verb, coordinated words in the same case
     "Pastatas su virtuve bei butu raštininkui. Brahma įtvirtina žemę tarp vandenų ir žvaigždes danguje. Nes rėžiu tiesą į akis.",
+    # visa tai: correct as it is in any case; tai as the dative of ta, a mistyped tą, the next word not typed yet
+    "Padariau visa tai. Kalbėjome apie visa tai. Už visa tai sumokėjau.",
+    "Atidaviau visą tai mergaitei. Atidaviau visą tai mažai mergaitei.",
+    "Dirbau visą tai laiką. Dirbau visą tai laika.",
+    "Tačiau visą tai",
+    "Atidaviau visą tai mažai",
 ]
 
 

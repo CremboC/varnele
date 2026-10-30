@@ -361,6 +361,10 @@ def _could_agree_own(w1, w2):
     return any(_agree(a, b) for a in w1.own for b in w2.own)
 
 
+ACC_SG = Reading("noun", "acc", "sg")           # what visą agrees with
+DAT_SG_F = Reading("noun", "dat", "sg", "f")    # what tai agrees with as the dative of ta
+
+
 def _agree(r1, r2):
     def same(a, b):
         return not a or not b or a == b
@@ -666,8 +670,29 @@ class Grammar:
             # kuria ir parduoda; at the end of the text wait for the next word (the keyboard types on)
             return nx.lower in ("ir", "bei", "arba") and (i + 2 == len(toks) or adjacent[i + 2] and verb_at(i + 2))
 
+        def neuter_tai(i):
+            """visą tai at i is the neuter visa tai: tai is not the dative of ta (visą tai mergaitei) and not
+            a mistyped tą (visą tai laiką, an error of its own). The keyboard types on: at the end of the
+            text wait for the next word."""
+            k = i + 2
+            if k == len(toks) or not adjacent[k]:
+                return k < len(toks) or bool(text[toks[k - 1].end:].strip())
+            if not toks[k].known:
+                return False
+            span = phrase(i + 1, True)
+            if not span:
+                return True
+            head = span[-1]
+            if not head.is_noun:
+                return head is not toks[-1] or bool(text[head.end:].strip())
+            forms = head.pos_readings() if head.can_be_verb else head.pos_readings() + [r for _, rs in head.variants for r in rs]
+            return not any(r.pos == "noun" and (_agree(r, ACC_SG) or _agree(r, DAT_SG_F)) for r in forms)
+
         for i, w in enumerate(toks):
             nxt_adjacent = i + 1 < len(toks) and adjacent[i + 1]
+            # 0. visą tai -> visa tai: the neuter visa doesn't decline (padariau visa tai)
+            if w.lower == "visą" and not w.text.isupper() and nxt_adjacent and toks[i + 1].text == "tai" and neuter_tai(i):
+                add(Issue(w.start, w.end, w.text, "agreement", "in 'visa tai' the neuter 'visa' does not decline", [w.cap("visa")]))
             # 1. prepositions (also recognised without diacritics: pries, is, i, uz)
             prep = w.lower if w.lower in PREPOSITIONS else (
                 PREP_BY_FOLD.get(fold(w.lower)) if not w.known else None)
