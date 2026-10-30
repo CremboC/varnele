@@ -41,6 +41,7 @@ Layout of this repo:
 varnele/        Python: lexicon loading, paradigms, analyzer, suggestions, grammar rules, export
 rust/core       Rust runtime: same behaviour, loads data/varnele.bin   (crate "varnele")
 rust/android    JNI bridge (cdylib libvarnele_android.so, data embedded via include_bytes!)
+rust/desktop    Desktop autocorrect in every text field: engine.rs (any OS), mac.rs + mac_selftest.rs, mac/ (bundle)
 android/        Stand-alone app: system spell checker service + test screen
 eval/           evaluate.py (vs Hunspell), restore.py, parity.py, keyboard_sim.py, corpus fetch/freq,
                 extract_wiki.py + training.py (dump text), build_ngrams.py, swipe_sim.py, predict_sim.py,
@@ -70,6 +71,9 @@ python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precisi
 python3 eval/agreement.py [DIR...] [--max N] [--show] # break one word of agreeing modifier+modifier+noun phrases, count fixes
 python3 eval/build_valency.py [--workers 8]        # case of the phrase next to each verb, on the training text -> data/valency.tsv
                                                    # (~80 s; then export). restore.py also applies the valency rule's fixes
+rust/desktop/mac/bundle.sh [--reset]               # build ~/Applications/Varnele.app (macOS menu-bar app)
+rust/target/release/varnele-desktop --sim "text"   # type text through the desktop engine (stdin too; --no-english)
+cargo test --release -p varnele-desktop --manifest-path rust/Cargo.toml
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # simulate the HeliBoard fork word by word
 python3 eval/keyboard_restore.py [--no-soft]       # restore.py's 300 sentences typed through the keyboard model
                                                    # (--no-soft: the fixer leaves autocorrect's diacritics alone)
@@ -468,6 +472,59 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   lists, +0.27 MB (16.5 → 16.8 MB). Then **valency** (optional the same way): `"VERB\tCLASS\tafter|before\tCASE"`
   → count, 40k rows seen 3+ times, +0.4 MB (17.2 MB). `Data::followers` reads a list when there is one and enough of it
   passes the caller's filter, else lists the table (`Counts::top_folded`: a bounded top n, no string per key).
+
+## Desktop app (macOS prototype, `rust/desktop`)
+
+Autocorrect in every text field, no input method: the app watches the keys and types its fixes, like
+Espanso; Grammarly and LanguageTool work the same way. Chosen over the spell-checker services (only apps
+that ask, no autocorrect in Chrome or Electron) and an input method (a new input source, weeks of work).
+
+- `engine.rs`, no OS in it, for Windows too: keeps the sentence typed so far (its own copy; nothing reads
+  the field), and when whitespace, enter or tab finishes a token, fixes the word in it (`(sakini?` keeps
+  its punctuation; a token with anything but letters inside is left alone: `www.x.lt`, `a1`). The same
+  decision as the keyboard (`autocorrect`, as in keyboard_sim.py), with `keyboard_word` on the last 3 words
+  of the sentence, key-shift off. Backspace right after a fix restores the word, keeps the space, and
+  leaves that word alone until the app quits. Not yet: the sentence fixer (earlier words, commas),
+  predictions, the user model, underlines.
+- Other languages, since the desktop has one keyboard for all of them (owner: English stays exactly as
+  typed): **only on the Lithuanian layout** (menu: "On every keyboard layout"), and an **English guard**.
+  A word only English (the system dictionary, `NSSpellChecker`, 0.08 ms a word; Windows has `ISpellChecker`)
+  stops the fixing at once (`lean` > 0, up to `MAX_LEAN` 2); a word only Lithuanian (valid, or short of its
+  diacritics only) moves it back by 1; a word that is both says nothing; another app resets it. A word
+  that is both and got fixed (`is` -> `iš`, needed for Lithuanian typed without diacritics) is taken back
+  if the next word is only English (`is this` stays). On English prose (README, AGENTS.md, 5,186 words)
+  words changed 25.9% -> 0.1%; on 2,570 stripped subtitle lines 1.2% of the words differ from no guard,
+  mostly foreign names kept.
+- `mac.rs`: a `CGEventTap` on the main thread (Accessibility permission, asked for at start, a timer waits
+  for it). A tap holds the keys behind it, and `CGEventTapPostEvent` puts backspaces and text ahead of them,
+  so typing on can't overtake a fix. Only the differing end of a word is retyped (`diff`). Another app, a
+  click: forget the text. Arrows, shortcuts, dead keys, backspacing past the start: the next word is left
+  alone too (the cursor may be inside a word). A click doesn't do that (a click into an empty field is
+  more common), so a word finished after clicking into the middle of one is treated as whole. Secure
+  input (password fields) delivers no keys. Off by default in terminals and code editors (`APPS_OFF`).
+  ⌃⌥V switches it off and on. Settings in `~/Library/Application Support/Varnele/settings`. No text is
+  stored or logged.
+- `--selftest FILE` types into a window of its own with posted keys, through the real tap. Run it with
+  `open -n -a ~/Applications/Varnele.app --args --selftest FILE` (so it is the app that has the permission),
+  then `open -a ~/Applications/Varnele.app`: macOS doesn't let it take the focus from the front app, and it
+  waits for that. The window takes the keyboard for a few seconds; the engine carries over between its
+  cases, unlike `--sim`'s lines. Each line of FILE holds the text and the edits the app typed. Run on
+  2026-10-30 (the installed build still swaps `t` and `y` in its key table, fixed in the source: rebuilding
+  means granting the permission again): all fixes, the backspace undo and a fix taken back by the next word
+  as in `--sim`. Mid-word typos: `yhe` -> `The` is a one-key slip onto a name, not an English problem.
+- **Ad-hoc signed** (no signing identity on the Mac): macOS ties the Accessibility grant to the build, so
+  every rebuild needs `bundle.sh --reset` and a new grant. Sharing it needs a $99/year Developer ID and
+  notarization.
+- Windows: same `engine.rs`, a `WH_KEYBOARD_LL` hook, `SendInput`, `ISpellChecker`.
+- **Underlines in Chrome: a spell server doesn't work** (tried 2026-10-30, macOS 26, code removed). An
+  `NSSpellServer` service in `~/Library/Services` registers (`pbs -dump` lists it, its port is
+  `lt_LT (Varnele)_OpenStep`), but `NSSpellChecker`, which Chrome goes through, never reaches it:
+  `availableLanguages` holds only Apple's, `setLanguage` turns `lt_LT` and `lt_LT (Varnele)` into `lt`,
+  answered by AppleSpell (`maciau` -> `maliau`), a code Apple lacks (`ltg`) is refused, and neither
+  `NSPreferredSpellServerVendors` nor `NSPreferredSpellServerLanguage` changed that. Not tried: a Developer
+  ID signature, a fresh login. macOS has its own Lithuanian (`lt`, knows `visiškai`, `žodžius`); Chrome's
+  underlines come from the system's spelling language or its own `en-GB`. Next way in: a browser extension
+  (the core as WebAssembly, its own underlines, the whole field to read and change).
 
 ## Release builds and Google Play (keyboard)
 
@@ -1052,3 +1109,5 @@ Left deliberately:
 33. the neuter `visa tai`; a seen word takes a diacritic twin 10× as frequent as its form and lemma (`veliau`
     → `vėliau`), twins chosen by the words before
 34. an unknown word after a pronoun: a verb of that person only near the best suggestion (`ji pries` → `prieš`)
+35. desktop autocorrect, macOS prototype (`rust/desktop`): an event tap watches the keys, `engine.rs` fixes each
+    finished word, only on the Lithuanian layout, an English guard, a self-test; a spell server doesn't work

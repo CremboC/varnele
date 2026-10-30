@@ -1,0 +1,18 @@
+[package]
+name = "varnele-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Autocorrect for every text field on the desktop: watches the keys typed, fixes each finished word"
+license = "BSD-3-Clause"
+
+[[bin]]
+name = "varnele-desktop"
+path = "src/main.rs"
+
+[dependencies]
+varnele = { path = "../core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
