@@ -343,6 +343,8 @@ const VALENCY_RATIO: u64 = 30;
 const VALENCY_RATIO_12: u64 = 5;
 const VALENCY_MIN: u64 = 20;
 const VALENCY_MIN_12: u64 = 10;
+// a rule may put the candidate it prefers first only within this much of the suggester's best cost
+const CONTEXT_GAP: f64 = 0.2;
 
 #[derive(Default)]
 pub struct Grammar {
@@ -350,7 +352,7 @@ pub struct Grammar {
     readings: RefCell<FxMap<String, Vec<Reading>>>,
     variants: RefCell<FxMap<String, Vec<String>>>,
     known: RefCell<FxMap<String, bool>>,
-    suggestions: RefCell<FxMap<String, Vec<String>>>,
+    suggestions: RefCell<FxMap<String, Vec<(String, f64)>>>,
 }
 
 struct G<'a> {
@@ -446,14 +448,26 @@ impl<'a> G<'a> {
         v
     }
 
-    /// Typo corrections of an unknown word, lower case (candidates for context rules).
-    fn suggestions_of(&self, w: &str) -> Vec<String> {
+    /// Typo corrections of an unknown word with their cost, lower case, best first.
+    fn scored_suggestions(&self, w: &str) -> Vec<(String, f64)> {
         if let Some(v) = self.c.suggestions.borrow().get(w) {
             return v.clone();
         }
-        let v: Vec<String> = self.an.suggest(w, 5).iter().map(|s| lower(s)).collect();
+        let v: Vec<(String, f64)> = self.an.suggest_scored(w, 5).into_iter().map(|(s, c)| (lower(&s), c)).collect();
         self.c.suggestions.borrow_mut().insert(w.to_string(), v.clone());
         v
+    }
+
+    /// Typo corrections of an unknown word, lower case (candidates for context rules).
+    fn suggestions_of(&self, w: &str) -> Vec<String> {
+        self.scored_suggestions(w).into_iter().map(|(s, _)| s).collect()
+    }
+
+    /// f is a suggestion for w, not far behind the first: ji pries -> not priės, a rare verb form.
+    fn near_best(&self, w: &str, f: &str) -> bool {
+        let scored = self.scored_suggestions(w);
+        let l = lower(f);
+        scored.iter().any(|(s, c)| *s == l && c - scored[0].1 <= CONTEXT_GAP)
     }
 
     /// Candidates of an unknown word that the context allows, in the suggester's order
@@ -1690,11 +1704,13 @@ impl Grammar {
             }
             if !v.known {
                 // an unknown word: candidates that are verbs of that person first
-                // (jis ziuri -> žiūri "looks", not žiuri "jury")
+                // (jis ziuri -> žiūri "looks", not žiuri "jury"), but no rare form over a likely word
+                // (ji pries -> prieš, not priės; jis buves -> buvęs, not būvės)
                 let fix: Vec<String> = v.variants(&g).iter()
                     .filter(|(f, _)| g.analyses(f).iter().any(|a| g.finite(a) && g.parts(a)[2] == want))
                     .map(|(f, _)| v.cap(f)).collect();
-                if !fix.is_empty() {
+                let fix = g.ranked(&v.text, fix);
+                if !fix.is_empty() && g.near_best(&v.text, &fix[0]) {
                     add(&mut issues, Issue {
                         start: v.start, end: v.end, word: v.text.clone(), rule: "context",
                         message: format!("'{}' needs the {} form of the verb", pron.text, person_name(want)),

@@ -176,6 +176,8 @@ VALENCY_RATIO = 30
 VALENCY_RATIO_12 = 5
 VALENCY_MIN = 20
 VALENCY_MIN_12 = 10
+# a rule may put the candidate it prefers first only within this much of the suggester's best cost
+CONTEXT_GAP = 0.2
 
 
 def _load_valency():
@@ -573,13 +575,22 @@ class Grammar:
             self._read[w] = readings(self.an.analyze(w))
         return self._read[w]
 
-    def suggestions_of(self, w):
-        """Typo corrections of an unknown word, lower case (candidates for context rules)."""
+    def scored_suggestions(self, w):
+        """Typo corrections of an unknown word with their cost, lower case, best first."""
         if self.sg is None:
             return []
         if w not in self._sugg:
-            self._sugg[w] = [s.lower() for s in self.sg.suggest(w)]
+            self._sugg[w] = [(s.lower(), c) for s, c in self.sg.suggest_scored(w)]
         return self._sugg[w]
+
+    def suggestions_of(self, w):
+        """Typo corrections of an unknown word, lower case (candidates for context rules)."""
+        return [s for s, _ in self.scored_suggestions(w)]
+
+    def near_best(self, w, f):
+        """f is a suggestion for w, not far behind the first: ji pries -> not priės, a rare verb form."""
+        scored = self.scored_suggestions(w)
+        return any(s == f.lower() and c - scored[0][1] <= CONTEXT_GAP for s, c in scored)
 
     def ranked(self, w, forms):
         """Candidates of an unknown word that the context allows, in the suggester's order
@@ -1134,10 +1145,11 @@ class Grammar:
                 continue
             if not v.known:
                 # an unknown word: candidates that are verbs of that person first
-                # (jis ziuri -> žiūri "looks", not žiuri "jury")
-                fix = [v.cap(f) for f, _ in v.variants
-                       if any(finite(a) and a.tag.split(".")[2] == want for a in self.analyses(f))]
-                if fix:
+                # (jis ziuri -> žiūri "looks", not žiuri "jury"), but no rare form over a likely word
+                # (ji pries -> prieš, not priės; jis buves -> buvęs, not būvės)
+                fix = self.ranked(v.text, [v.cap(f) for f, _ in v.variants
+                                           if any(finite(a) and a.tag.split(".")[2] == want for a in self.analyses(f))])
+                if fix and self.near_best(v.text, fix[0]):
                     add(Issue(v.start, v.end, v.text, "context",
                               f"'{pron.text}' needs the {PERSON_NAMES[want]} form of the verb", fix))
                 continue

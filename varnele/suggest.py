@@ -109,6 +109,10 @@ class Suggester:
         return self.an.folded_forms(fw)
 
     def suggest(self, word, n=5):
+        return [c for c, _ in self.suggest_scored(word, n)]
+
+    def suggest_scored(self, word, n=5):
+        """Suggestions with their ranking cost (lower is better)."""
         lower = word.lower()
         cands = set()
         fw = fold(lower)
@@ -137,5 +141,5 @@ class Suggester:
             if c[:1].isupper() and word[:1].islower():
                 sc += 0.5 if c.lower() == lower else 0.3
             return sc
-        ranked = sorted(good, key=lambda c: (score(c), c))
-        return [c[0].upper() + c[1:] if cap else c for c in ranked[:n]]
+        ranked = sorted((score(c), c) for c in good)
+        return [(c[0].upper() + c[1:] if cap else c, sc) for sc, c in ranked[:n]]

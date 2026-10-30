@@ -41,6 +41,10 @@ FLAGGED = [
     ("Kuriu tai kas reikalinga.", "kas", "comma", ", kas"),          # relative clause after tai
     ("Darau viską ką galiu.", "ką", "comma", ", ką"),
     ("Kodėl jis ziuri?", "ziuri", "unknown", "žiūri"),               # a verb after jis, not žiuri (jury)
+    ("Jis elgesi gerai.", "elgesi", "unknown", "elgėsi"),            # the verb, though elgesį ranks first alone
+    ("Jis grazino knygą.", "grazino", "unknown", "grąžino"),         # verbs in the suggester's order, not gražino
+    ("Mačiau ji pries porą dienų.", "pries", "unknown", "prieš"),    # no rare verb form (priės) over a likely word
+    ("Jis buves mokytojas.", "buves", "unknown", "buvęs"),           # nor over a participle (būvės)
     ("Parašyk koki nors sakinį.", "koki", "case", "kokį"),          # indefinite pronoun before nors
     ("Per 10 metu daug pasikeitė.", "metu", "quantity", "metų"),    # number ending in 0 or 11-19
     ("Kainavo 15 euru.", "euru", "quantity", "eurų"),
