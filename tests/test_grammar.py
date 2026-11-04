@@ -185,6 +185,10 @@ CORRECT = [
     "Visi dalyvauja savo noru.",             # a possessive is stepped over only for a phrase with no case
     "Nekalbėk mano vardu.",
     "Žinau kur tavo mašina.",
+    "Žinau kur mašina.",                     # an indirect question, not an object
+    "Ar žinai kieno ta mašina?",
+    "Turėtum didžiuotis tėčiu.",             # didžiuotis is a verb (data/extra.txt), not an adverb
+    "Aš didžiuojuosi tavimi.",
     "Grįšiu, ir net jei vėluosiu, paskambinsiu.",
     "Einu gatve namo.",                       # motion verb: instrumental is right
     "Mačiau ką tik atėjusį žmogų.",

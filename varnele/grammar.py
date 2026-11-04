@@ -522,9 +522,11 @@ class Grammar:
             return t.known and t.own and all(r.pos == "adj" for r in t.own)
 
         def skip(t):
-            # an adverb, not a preposition (su, po), a connective or a quantity
+            # an adverb, not a preposition (su, po), a connective, a question word (žinau kur mašina: an indirect
+            # question, not an object) or a quantity
             return (self.adverb(t.text) and t.lower not in PREPOSITIONS and t.lower != "po"
-                    and t.lower not in CLAUSE_STARTERS and t.lower not in NO_COMMA_AFTER and not t.is_quantity())
+                    and t.lower not in CLAUSE_STARTERS and t.lower not in NO_COMMA_AFTER
+                    and t.lower not in INTERROGATIVES and not t.is_quantity())
         if after:
             k, skipped = i + 1, 0
             while k < len(toks) and adjacent[k] and skipped < 2 and skip(toks[k]):

@@ -634,7 +634,14 @@ No store listing yet. Test: `eval/extension/test.mjs` (its header says how). Why
   unchanged, also 1.6M words of the dump; every 4th subtitle line of the training text (4.5M words) 19 new flags, all
   real (`Paimsi truputi`, `prarasi savo ženkleli`, `Pradėsime rugsėji`). restore.py, keyboard_restore.py unchanged,
   parity 100%. Left: `Palauk kūdiki` → `kūdikį` (an address; `palaukti` takes accusative durations, never seen without
-  a comma in 18M words), `Žinau kur mašina` (older: the phrase steps over `kur`), `didžiuotis` read only as an adverb.
+  a comma in 18M words; nothing in the data tells `kūdiki` from `numeri`, `truputi`: only animacy would).
+  Then: a phrase no longer steps over a question word (`Žinau kur mašina`, `Ar žinai kieno ta mašina`, `supranti kodėl
+  man gėda`: indirect questions), `didžiuotis` is a verb (data/extra.txt; ispell-lt had only bare `didžiuotis/R`,
+  `didžiuojasi/R`, `didžiavosi/O`, so `didžiuojuosi`, 739 times in the subtitles, was unknown and `Turėtum didžiuotis
+  tėčiu` → `tėčių`), and data/valency.tsv rebuilt with the phrase finder that steps over possessives (903k → 954k
+  counts, 35.7k → 36.8k rows: `turi savo namą` now counts). On the 4.5M-word subtitle sample, against the first
+  commit: 4 false alarms and 414 unknown `didžiuo-` forms gone, 2 real fixes lost (`Noriu puse iš anksto`, `Palauk
+  truputėli`), 2 new (`pasakė kvailyste`, a comma); correct text, restore.py, keyboard_restore.py unchanged, parity 100%.
 - **One engine** (2026-10-30, owner: rules belong in the engine). `rare` and key-shift in `check_text`, Python
   and Rust, parity 100% (7,682 findings). Correct text (test / freq / subtitles / Tatoeba): 20 / 87 / 219 / 48 flags
   → 20 / 88 / 224 / 48, the 6 new ones `viska`, `Viska`, `musų`, `bučiau`, `užplusta` (real errors), `papalis`. The
@@ -1134,7 +1141,8 @@ Left deliberately:
   capitalised predictions shown, 29 are words the subtitles write lowercase, English (`Oh`, `You`, `Of`,
   `Ho`, as written in the context) and `Bičas`. Frequent lowercase subtitle words still unknown:
   `nesijaudink` (822), `nesijaudinu`: ispell-lt has `jaudinti/TRNX`, no `S`, so ne+si is refused (R + N
-  without S may be a general gap); `didžiuojuosi` (560, didžiuotis listed only as `didžiuojasi/R`);
+  without S may be a general gap); `didžiuojuosi` done (2026-11-04, data/extra.txt: other verbs listed in ispell-lt only
+  as bare `word/R` entries may lack a paradigm the same way);
   spoken vocatives `drauguži`, `brolau`, `berniuk`, `mergyt`, `vyruti`, `brangute`; `bliamba`, `vistiek`, `nėr`.
 - Keyboard: completions for half-typed words (now we show corrections);
   speed up unknown-word suggestions (6–17 ms on phone); interplay of the

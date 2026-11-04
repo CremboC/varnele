@@ -769,13 +769,15 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
             && !(first_upper(&t.text) && g.analyses(&t.text).iter().all(|a| first_upper(&a.lemma)))
     };
     let modi = |t: &Word| t.known && !t.own.is_empty() && t.own.iter().all(|r| r.pos == Pos::Adj);
-    // an adverb, not a preposition (su, po), a connective or a quantity
+    // an adverb, not a preposition (su, po), a connective, a question word (žinau kur mašina: an indirect
+    // question, not an object) or a quantity
     let skip = |t: &Word| {
         g.adverb(&t.text)
             && prep_cases(&t.lower).is_none()
             && t.lower != "po"
             && !CLAUSE_STARTERS.contains(&t.lower.as_str())
             && !KURIS.contains(&t.lower.as_str())
+            && !INTERROGATIVES.contains(&t.lower.as_str())
             && !NO_COMMA_AFTER.contains(&t.lower.as_str())
             && !t.is_quantity(g)
     };
