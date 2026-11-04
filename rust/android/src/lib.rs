@@ -1,15 +1,17 @@
 //! JNI bridge: dev.imbrasas.varnele.Native.{warmUp, check, word, gestureNative, predictNative, ghostNative,
 //! fix*Native, user*Native (the user's own language model)}
-//! The compiled data file is embedded in the library, so the app ships one .so.
+//! The compiled data file (data/varnele.bin) ships once as an uncompressed asset, not in the library
+//! (which Play would carry once per CPU type); the app memory-maps it and hands it over with dataNative.
 
 use std::sync::{LazyLock, Mutex, OnceLock};
 
-use jni::objects::{JClass, JFloatArray, JString};
+use jni::objects::{JByteBuffer, JClass, JFloatArray, JString};
 use jni::sys::{jboolean, jint, jstring};
 use jni::JNIEnv;
 use varnele::{Checker, SentenceFixer};
 
-static DATA: &[u8] = include_bytes!("../../../data/varnele.bin");
+/// The data file, mapped by the app (set once by dataNative, before anything else is called)
+static DATA: OnceLock<&'static [u8]> = OnceLock::new();
 static CHECKER: OnceLock<Mutex<Checker>> = OnceLock::new();
 static FIXER: LazyLock<Mutex<SentenceFixer>> = LazyLock::new(Default::default);
 
@@ -17,7 +19,21 @@ static FIXER: LazyLock<Mutex<SentenceFixer>> = LazyLock::new(Default::default);
 static USER_PATH: Mutex<String> = Mutex::new(String::new());
 
 fn checker() -> &'static Mutex<Checker> {
-    CHECKER.get_or_init(|| Mutex::new(Checker::from_bytes(DATA).expect("embedded data file is valid")))
+    CHECKER.get_or_init(|| {
+        let data = DATA.get().expect("dataNative was called first");
+        Mutex::new(Checker::from_bytes(data).expect("the data file is valid"))
+    })
+}
+
+/// The data file: a direct buffer (the asset memory-mapped) that the app keeps for the life of the
+/// process. Only the first call counts.
+#[no_mangle]
+pub extern "system" fn Java_dev_imbrasas_varnele_Native_dataNative(env: JNIEnv, _class: JClass, data: JByteBuffer) {
+    let (Ok(p), Ok(n)) = (env.get_direct_buffer_address(&data), env.get_direct_buffer_capacity(&data)) else {
+        return;
+    };
+    // SAFETY: the app holds the buffer, so the mapping stays valid and unchanged while the process lives
+    let _ = DATA.set(unsafe { std::slice::from_raw_parts(p, n) });
 }
 
 /// Load the data (takes a moment the first time) so the first check is fast.

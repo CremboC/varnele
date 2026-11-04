@@ -74,6 +74,7 @@ class MainActivity : Activity() {
             insets
         }
 
+        Native.init(this)
         val warm = measureNanoTime { Native.warmUp() }
 
         fun run(note: String = "") {

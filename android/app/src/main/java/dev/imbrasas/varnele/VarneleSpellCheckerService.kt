@@ -13,6 +13,11 @@ import android.view.textservice.TextInfo
  */
 class VarneleSpellCheckerService : SpellCheckerService() {
 
+    override fun onCreate() {
+        super.onCreate()
+        Native.init(this)
+    }
+
     override fun createSession(): Session = VarneleSession()
 
     private class VarneleSession : Session() {

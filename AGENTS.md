@@ -40,7 +40,7 @@ Layout of this repo:
 ```
 varnele/        Python: lexicon loading, paradigms, analyzer, suggestions, grammar rules, export
 rust/core       Rust runtime: same behaviour, loads data/varnele.bin   (crate "varnele")
-rust/android    JNI bridge (cdylib libvarnele_android.so, data embedded via include_bytes!)
+rust/android    JNI bridge (cdylib libvarnele_android.so; data/varnele.bin ships as an uncompressed asset, mapped by Native.init)
 rust/wasm       WebAssembly bridge for the extension (data embedded, no bindings generator)
 rust/desktop    Desktop autocorrect in every text field: engine.rs (any OS), mac.rs + mac_selftest.rs, mac/ (bundle)
 android/        Stand-alone app: system spell checker service + test screen
@@ -1078,6 +1078,11 @@ Left deliberately:
 - Key-shift doesn't autocorrect on the emulator (2026-10-30): `fofrkua` keeps `didelis` first in the strip but
   stays as typed. Probably HeliBoard's distance weight: every letter differs, so 1 − distance/length = 0
   whatever KEY_SLIP_SCORE is.
+- **The data file is an asset, not part of the library** (2026-11-03): both apps copy `data/varnele.bin` into
+  `assets/` uncompressed (`noCompress += "bin"`), `Native.init(context)` memory-maps it and hands it to
+  `dataNative` before anything else (the keyboard: `App.onCreate`); without it `Native.available` is false.
+  Embedded with `include_bytes!` it was in each of the 4 ABI libraries and their symbol files: the Play bundle
+  went from 104 to 40 MB, the library from 18 to 1.2 MB. A compressed asset can't be mapped (`openFd` throws).
 - **The fork's `Native.kt` and `rust/android/src/lib.rs` must have the same arguments**, and nothing checks
   that: the fork's `word(…, after, keyShift, formal)` on a Rust side without `after` builds and runs, with
   the arguments shifted. Found 2026-10-30 from a local `main` 3 commits behind `origin/main`: `formal` took

@@ -24,6 +24,11 @@ android {
             isMinifyEnabled = false
         }
     }
+    // the data file is read in place (memory-mapped), so it must not be compressed in the APK
+    androidResources {
+        noCompress += "bin"
+    }
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("varnele-assets").get().asFile)
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -60,4 +65,11 @@ val cargoBuild by tasks.registering(Exec::class) {
     )
 }
 
-tasks.named("preBuild") { dependsOn(cargoBuild) }
+val copyData by tasks.registering(Copy::class) {
+    description = "Ship data/varnele.bin as an asset (once, not inside the library for every CPU type)"
+    dependsOn(exportData)
+    from(File(repo, "data/varnele.bin"))
+    into(layout.buildDirectory.dir("varnele-assets"))
+}
+
+tasks.named("preBuild") { dependsOn(cargoBuild, copyData) }
