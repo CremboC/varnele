@@ -113,6 +113,8 @@ const GENITIVE_VERBS: &[&str] = &[
 ];
 const VERB_PREFIXES: &[&str] = &["ap", "at", "į", "iš", "nu", "pa", "par", "per", "pra", "pri", "su", "už", "api", "ati"];
 const POSSESSIVES: &[&str] = &["mano", "tavo", "savo", "jo", "jos", "jų", "mūsų", "jūsų"];
+// possessives a phrase steps over (not jo, jos, jų: also the pronouns' genitives, žino visas jo užnugaris)
+const SPAN_POSSESSIVES: &[&str] = &["mano", "tavo", "savo", "mūsų", "jūsų"];
 
 /// A number ending in 0 or 11-19 right before the word (gap "… 10 "): it takes the genitive plural.
 fn gen_number(gap: &str) -> Option<String> {
@@ -339,6 +341,12 @@ type Feats = (&'static str, Option<&'static str>, Option<&'static str>);
 // at least VALENCY_MIN times (eval/build_valency.py -> data/valency.tsv); after a 1st/2nd person verb,
 // where the phrase can't be its subject, VALENCY_RATIO_12 times and VALENCY_MIN_12 (no false alarm in
 // 1.7M words of Wikipedia and dialogue at any value tried)
+/// A seen word's diacritic twin must be this many times as frequent to replace it.
+pub(crate) const RARE_TWIN_RATIO: u32 = 10;
+/// the cases a verb's phrase has when it is not its object
+const NOT_OBJECT_CASES: &[&str] = &["nom", "dat", "ins", "loc"];
+/// data/freq.tsv keeps forms seen this many times or more (eval/build_freq.py).
+const FREQ_MIN: u32 = 10;
 const VALENCY_RATIO: u64 = 30;
 const VALENCY_RATIO_12: u64 = 5;
 const VALENCY_MIN: u64 = 20;
@@ -777,8 +785,16 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
             k += 1;
             skipped += 1;
         }
-        let start = k;
-        while k < toks.len() && adjacent[k] && toks[k].known && !head(&toks[k]) && modi(&toks[k]) {
+        // its modifiers; a possessive between them is no part of the case (duok tavo numeri: tavo stays)
+        let mut idx = Vec::new();
+        while k < toks.len()
+            && adjacent[k]
+            && toks[k].known
+            && (SPAN_POSSESSIVES.contains(&toks[k].lower.as_str()) || !head(&toks[k]) && modi(&toks[k]))
+        {
+            if !SPAN_POSSESSIVES.contains(&toks[k].lower.as_str()) {
+                idx.push(k);
+            }
             k += 1;
         }
         if k >= toks.len() || !adjacent[k] || !toks[k].known || !head(&toks[k]) {
@@ -796,7 +812,8 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
                          // akvarele ir aliejumi: the case of both; peržiūrėti komanda gcc: a name or term follows
                          // (an unknown word with no diacritic twin; orgazma is orgazmą typed without one)
         }
-        return valency_lone(g, toks, (start..=k).collect());
+        idx.push(k);
+        return valency_lone(g, toks, idx);
     }
     if i == 0 || !adjacent[i] || !toks[i - 1].known || !head(&toks[i - 1]) {
         return None;
@@ -818,6 +835,27 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
         }
     }
     valency_lone(g, toks, ((k + 1) as usize..=h).collect())
+}
+
+/// A noun that can only be a vocative, written RARE_TWIN_RATIO times less often than its diacritic twin: no
+/// address but the twin typed without its diacritics (dydi never seen, dydį 2,721 times; not tėti 10,747 against
+/// tėtį 880, not ligoni, unseen, against ligonį 70: a form unseen may have been written 9 times), so it has no
+/// case as written and its verb gives it one (padidinti įprasta dydi -> įprastą dydį).
+fn lost_case(g: &G, t: &Word) -> bool {
+    let an = g.analyses(&t.text);
+    if an.is_empty() || !an.iter().all(|a| { let tg = g.tag(a); tg.starts_with("N.") && tg.ends_with(".voc") }) {
+        return false;
+    }
+    let seen = g.freq(&t.lower);
+    // a twin that is a noun in some case (šuneli against šunelį 43, not the vocative sūneli 660)
+    let twin = t
+        .variants(g)
+        .iter()
+        .filter(|(_, rs)| rs.iter().any(|r| r.pos == Pos::Noun && r.case != "voc"))
+        .map(|(f, _)| g.freq(f))
+        .max()
+        .unwrap_or(0);
+    twin >= RARE_TWIN_RATIO * seen.max(FREQ_MIN)
 }
 
 fn valency_lone(g: &G, toks: &[Word], idx: Vec<usize>) -> Option<Vec<usize>> {
@@ -886,7 +924,7 @@ impl Grammar {
             while j < toks.len() && adjacent[j] {
                 let w = &toks[j];
                 if !span.is_empty()
-                    && ["mano", "tavo", "savo", "mūsų", "jūsų"].contains(&w.lower.as_str())
+                    && SPAN_POSSESSIVES.contains(&w.lower.as_str())
                     && j + 1 < toks.len()
                     && adjacent[j + 1]
                 {
@@ -2526,8 +2564,28 @@ impl Grammar {
                 let h = *idx.last().unwrap();
                 let head = &toks[h];
                 let typed = phrase_feats(&words);
-                if typed.is_empty() {
-                    continue; // it doesn't agree with itself: the phrase rule's
+                // it doesn't agree with itself: the phrase rule's. Unless its noun has no case as written (lost_case),
+                // its modifiers agree with each other and can't be verbs other than participles (turėjo uždusinti
+                // kūdiki: not uždūsintį), and the verb is no genitive noun that may be the phrase's own modifier in
+                // an address (Pakrančių apsaugos sraigtasparni, laimės kūdiki: protection, luck)
+                let lost = typed.is_empty();
+                if !lost && after && (i + 1..h).any(|j| SPAN_POSSESSIVES.contains(&toks[j].lower.as_str())) {
+                    // a possessive is stepped over only for a phrase with no case (tavo numeri): dalyvauja savo
+                    // noru, nekalbėk mano vardu, žinau kur tavo mašina
+                    continue;
+                }
+                if lost
+                    && !(lost_case(&g, head)
+                        && !(after && v.can_be(&g, "gen") && v.is_noun(&g))
+                        && words[..words.len() - 1].windows(2).all(|p| could_agree_own(p[0], p[1]))
+                        && !words[..words.len() - 1].iter().any(|x| {
+                            g.analyses(&x.text).iter().any(|a| {
+                                let tg = g.tag(a);
+                                tg.starts_with("V.") && !tg.split('.').nth(1).is_some_and(|p| p.starts_with('p'))
+                            })
+                        }))
+                {
+                    continue;
                 }
                 let pos = if after { "after" } else { "before" };
                 if idx.iter().any(|&j| (clen(&toks[j].text) > 1 && is_upper(&toks[j].text)) || (first_upper(&toks[j].text) && !starts_sentence(j))) {
@@ -2577,7 +2635,7 @@ impl Grammar {
                 let n = |case: &str| -> u64 {
                     keys.iter().map(|(k, c)| g.an.data.valency.get(&format!("{k}\t{c}\t{pos}\t{case}")) as u64).sum()
                 };
-                let have = typed.iter().map(|f| n(f.0)).max().unwrap();
+                let have = typed.iter().map(|f| n(f.0)).max().unwrap_or(0);
                 let mut best: Option<(u64, Feats, Vec<(u32, Vec<String>)>)> = None;
                 for (_, rs) in head.variants(&g) {
                     for r in rs {
@@ -2592,11 +2650,21 @@ impl Grammar {
                             continue;
                         }
                         let fixes: Vec<(u32, Vec<String>)> = idx.iter().map(|&j| phrase_fix(&toks[j], &f, j == h)).collect();
-                        if fixes.iter().any(|x| x.0 > 2) {
-                            continue; // no form fits
+                        if fixes.iter().any(|x| x.0 > if lost { 1 } else { 2 }) {
+                            // no form fits; with no case as written, only lost diacritics (nupirkti automobili,
+                            // mažame nameli, tavo numeri: not nupirktą, mažą, tavą)
+                            continue;
                         }
                         let m = n(f.0);
-                        let ratio = if classes == ["12"] { VALENCY_RATIO_12 } else { VALENCY_RATIO };
+                        let mut ratio = if classes == ["12"] { VALENCY_RATIO_12 } else { VALENCY_RATIO };
+                        let mut have = have;
+                        if lost {
+                            // no case to compare with: the verb's most frequent case that is no object (ateik šuneli:
+                            // ateiti takes the accusative 28 times, the dative 14; turite skėti: turėti 7,164, the
+                            // locative 1,222; a genitive is an object too: turite laiko)
+                            have = NOT_OBJECT_CASES.iter().map(|c| n(c)).max().unwrap_or(0);
+                            ratio = VALENCY_RATIO_12;
+                        }
                         let least = if classes == ["12"] { VALENCY_MIN_12 } else { VALENCY_MIN };
                         if m >= least && m >= ratio * (have + 1) && best.as_ref().map_or(true, |b| m > b.0) {
                             best = Some((m, f, fixes));

@@ -4,11 +4,9 @@ use std::collections::BTreeMap;
 
 use crate::analyzer::{Analyzer, Status};
 use crate::data::Data;
-use crate::grammar::{adds_diacritics, Fit, Grammar, Issue};
+use crate::grammar::{adds_diacritics, Fit, Grammar, Issue, RARE_TWIN_RATIO};
 use crate::text::*;
 
-/// A seen word's diacritic twin must be this many times as frequent to replace it.
-const RARE_TWIN_RATIO: u32 = 10;
 
 pub type Finding = Issue;
 

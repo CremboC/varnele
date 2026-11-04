@@ -153,7 +153,12 @@ FLAGGED = [
     ("Visa šita istorija girdėjau vakar.", "šita", "valency", "šitą"),          # girdėjau pools with girdi, girdėti
     ("Esu girdėjęs visa šita istorija.", "visa", "valency", "visą"),
     ("Per daug pasitikėdamas, aš padariau klaida.", "klaida", "valency", "klaidą"),
-    ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),                    # number, not case: not didelius
+    ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),
+    ("Galbūt reikia padidinti įprasta dydi?", "įprasta", "valency", "įprastą"),  # dydi is only a vocative: no case
+    ("Galbūt reikia padidinti įprasta dydi?", "dydi", "valency", "dydį"),
+    ("Noriu nupirkti automobili.", "automobili", "valency", "automobilį"),  # nupirkti stays: no modifier
+    ("Ar turite skėti?", "skėti", "valency", "skėtį"),                  # a genitive is an object too: turite laiko
+    ("Duok man tavo numeri.", "numeri", "valency", "numerį"),           # over the possessive                    # number, not case: not didelius
     ("Mačiau didelę ir gražia kavinę.", "gražia", "phrase", "gražią"),       # not kavine
     ("Tie gražūs didelė namai.", "didelė", "phrase", "dideli"),              # gender and number
     ("Specialiais ryškias ženklais.", "ryškias", "phrase", "ryškiais"),
@@ -170,6 +175,16 @@ FLAGGED = [
 ]
 
 CORRECT = [
+    "Palauk senoli.",                        # an address: senoli is seen as often as senolį
+    "Pakrančių apsaugos sraigtasparni, girdite mane?",   # apsaugos modifies the address
+    "Ateik šuneli.",                         # ateiti takes no case often enough to make šuneli an object
+    "Imk šuneli.",                           # šuneli is seen more than šunelį (sūneli is no twin with a case)
+    "Ko tu nori meiluži?",                   # norėti mostly takes the genitive
+    "Padėk man ligoni.",                     # ligoni unseen, ligonį only 70 times
+    "Gyvenu mažame nameli.",                 # mažame would have to be re-inflected
+    "Visi dalyvauja savo noru.",             # a possessive is stepped over only for a phrase with no case
+    "Nekalbėk mano vardu.",
+    "Žinau kur tavo mašina.",
     "Grįšiu, ir net jei vėluosiu, paskambinsiu.",
     "Einu gatve namo.",                       # motion verb: instrumental is right
     "Mačiau ką tik atėjusį žmogų.",

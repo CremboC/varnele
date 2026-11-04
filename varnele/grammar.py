@@ -82,6 +82,8 @@ GENITIVE_VERBS = ("laukti", "laukia", "laukė", "ieškoti", "ieško", "ieškojo"
                   "siekti", "siekia", "siekė", "reikėti", "reikia", "reikėjo", "vengti", "vengia", "vengė")
 VERB_PREFIXES = {"ap", "at", "į", "iš", "nu", "pa", "par", "per", "pra", "pri", "su", "už", "api", "ati"}
 POSSESSIVES = {"mano", "tavo", "savo", "jo", "jos", "jų", "mūsų", "jūsų"}
+# possessives a phrase steps over (not jo, jos, jų: also the pronouns' genitives, žino visas jo užnugaris)
+SPAN_POSSESSIVES = ("mano", "tavo", "savo", "mūsų", "jūsų")
 # A number ending in 0 or 11-19 takes the genitive plural: 10 metų, 15 eurų (not 2,5 or the ordinal 10.)
 GEN_NUMBER = re.compile(r"(?:^|[\s(–—-])(\d+)\s+$")
 TIME_WORDS = {"visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "ištisas"}
@@ -176,6 +178,12 @@ VALENCY_RATIO = 30
 VALENCY_RATIO_12 = 5
 VALENCY_MIN = 20
 VALENCY_MIN_12 = 10
+# A seen word's diacritic twin must be this many times as frequent to replace it
+RARE_TWIN_RATIO = 10
+# the cases a verb's phrase has when it is not its object
+NOT_OBJECT_CASES = ("nom", "dat", "ins", "loc")
+# data/freq.tsv keeps forms seen this many times or more (eval/build_freq.py)
+FREQ_MIN = 10
 # a rule may put the candidate it prefers first only within this much of the suggester's best cost
 CONTEXT_GAP = 0.2
 
@@ -521,8 +529,12 @@ class Grammar:
             k, skipped = i + 1, 0
             while k < len(toks) and adjacent[k] and skipped < 2 and skip(toks[k]):
                 k, skipped = k + 1, skipped + 1
-            start = k
-            while k < len(toks) and adjacent[k] and toks[k].known and not head(toks[k]) and mod(toks[k]):
+            # its modifiers; a possessive between them is no part of the case (duok tavo numeri: tavo stays)
+            idx = []
+            while k < len(toks) and adjacent[k] and toks[k].known and (
+                    toks[k].lower in SPAN_POSSESSIVES or not head(toks[k]) and mod(toks[k])):
+                if toks[k].lower not in SPAN_POSSESSIVES:
+                    idx.append(k)
                 k += 1
             if k >= len(toks) or not adjacent[k] or not toks[k].known or not head(toks[k]):
                 return None
@@ -532,7 +544,7 @@ class Grammar:
                 return None   # baigė Vilniaus pedagoginį institutą: Vilniaus modifies what comes next; tapė tiršta
                               # akvarele ir aliejumi: the case of both; peržiūrėti komanda gcc: a name or term follows
                               # (an unknown word with no diacritic twin; orgazma is orgazmą typed without one)
-            return self._valency_lone(toks, list(range(start, k + 1)))
+            return self._valency_lone(toks, idx + [k])
         h = i - 1
         if h < 0 or not adjacent[i] or not toks[h].known or not head(toks[h]):
             return None
@@ -543,6 +555,20 @@ class Grammar:
                        and toks[k].lower not in ("ir", "bei", "arba")):
             return None       # it starts the clause (not: Su šia nuomone sutinka, savo didybe rodo, per dvi savaites privalo)
         return self._valency_lone(toks, list(range(k + 1, h + 1)))
+
+    def lost_case(self, t):
+        """A noun that can only be a vocative, written RARE_TWIN_RATIO times less often than its diacritic twin:
+        no address but the twin typed without its diacritics (dydi never seen, dydį 2,721 times; not tėti 10,747
+        against tėtį 880, not ligoni, unseen, against ligonį 70: a form unseen may have been written 9 times), so
+        it has no case as written and its verb gives it one (padidinti įprasta dydi -> įprastą dydį)."""
+        a = self.analyses(t.text)
+        if not a or not all(x.tag.startswith("N.") and x.tag.endswith(".voc") for x in a):
+            return False
+        seen = self.freq.get(t.lower, 0)
+        # a twin that is a noun in some case (šuneli against šunelį 43, not the vocative sūneli 660)
+        twin = max((self.freq.get(f.lower(), 0) for f, rs in t.variants
+                    if any(r.pos == "noun" and r.case != "voc" for r in rs)), default=0)
+        return twin >= RARE_TWIN_RATIO * max(seen, FREQ_MIN)
 
     def _valency_lone(self, toks, idx):
         if len(idx) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(toks[idx[0]].text)):
@@ -625,7 +651,7 @@ class Grammar:
             span, j = [], i + 1
             while j < len(toks) and adjacent[j]:
                 w = toks[j]
-                if span and w.lower in ("mano", "tavo", "savo", "mūsų", "jūsų") and j + 1 < len(toks) and adjacent[j + 1]:
+                if span and w.lower in SPAN_POSSESSIVES and j + 1 < len(toks) and adjacent[j + 1]:
                     j += 1
                     continue      # tą mano didelę kavinę (not jo: žino visas jo užnugaris yra ...)
                 if span and not _could_agree(span[-1], w):
@@ -1679,8 +1705,19 @@ class Grammar:
                     continue          # an adjective of the phrase, not a verb: Gausi tautosaka (abundant)
                 head = words[-1]
                 typed = phrase_feats(words)
-                if not typed:
-                    continue          # it doesn't agree with itself: the phrase rule's
+                # it doesn't agree with itself: the phrase rule's. Unless its noun has no case as written (lost_case),
+                # its modifiers agree with each other and can't be verbs other than participles (turėjo uždusinti
+                # kūdiki: not uždūsintį), and the verb is no genitive noun that may be the phrase's own modifier in
+                # an address (Pakrančių apsaugos sraigtasparni, laimės kūdiki: protection, luck)
+                lost = not typed
+                if typed and after and any(toks[j].lower in SPAN_POSSESSIVES for j in range(i + 1, idx[-1])):
+                    continue          # a possessive is stepped over only for a phrase with no case (tavo numeri):
+                                      # dalyvauja savo noru, nekalbėk mano vardu, žinau kur tavo mašina
+                if lost and not (self.lost_case(head) and not (after and v.can_be("gen") and v.is_noun)
+                                 and all(_could_agree_own(x, y) for x, y in zip(words[:-2], words[1:-1]))
+                                 and not any(a.tag.startswith("V.") and not a.tag.split(".")[1].startswith("p")
+                                             for x in words[:-1] for a in self.analyses(x.text))):
+                    continue
                 pos = "after" if after else "before"
                 if any(len(t.text) > 1 and t.text.isupper() or t.text[:1].isupper() and not starts_sentence(idx[n])
                        for n, t in enumerate(words)):
@@ -1712,7 +1749,7 @@ class Grammar:
 
                 def n(case):
                     return sum(self.valency.get((k, c, pos, case), 0) for k, c in keys)
-                have = max(n(f[0]) for f in typed)
+                have = max((n(f[0]) for f in typed), default=0)
                 best = None
                 for _, rs in head.variants:
                     for r in rs:
@@ -1724,10 +1761,17 @@ class Grammar:
                         if f[0] in ("acc", "gen") and other_object:
                             continue
                         fixes = [phrase_fix(t, f, t is head) for t in words]
-                        if any(c > 2 for c, _ in fixes):
-                            continue      # no form fits
+                        if any(c > (1 if lost else 2) for c, _ in fixes):
+                            continue      # no form fits; with no case as written, only lost diacritics (nupirkti
+                                          # automobili, mažame nameli, tavo numeri: not nupirktą, mažą, tavą)
                         m = n(f[0])
                         ratio = VALENCY_RATIO_12 if classes == {"12"} else VALENCY_RATIO
+                        if lost:
+                            # no case to compare with: the verb's most frequent case that is no object (ateik šuneli:
+                            # ateiti takes the accusative 28 times, the dative 14; turite skėti: turėti 7,164, the
+                            # locative 1,222; a genitive is an object too: turite laiko)
+                            have = max(n(c) for c in NOT_OBJECT_CASES)
+                            ratio = VALENCY_RATIO_12
                         least = VALENCY_MIN_12 if classes == {"12"} else VALENCY_MIN
                         if m >= least and m >= ratio * (have + 1) and (best is None or m > best[0]):
                             best = (m, f, fixes)

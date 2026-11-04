@@ -8,7 +8,7 @@ import sys
 from .analyzer import Analyzer
 from .index import Index
 from .phonology import LT_ALPHABET, fold
-from .grammar import Grammar, Issue
+from .grammar import Grammar, Issue, RARE_TWIN_RATIO
 from .suggest import Suggester, _cost, _diacritic_cost, key_and_neighbours
 
 TOKEN = re.compile(r"[^\W\d_]+(?:[-‑][^\W\d_]+)*")
@@ -25,8 +25,6 @@ def is_foreign(word):
 
 # Letters Lithuanian doesn't use and the keys touching them (staggered rows: w is above a and s, not d)
 SLIP_KEYS = {"w": "qeas", "q": "wa", "x": "zsdc"}
-# A seen word's diacritic twin must be this many times as frequent to replace it
-RARE_TWIN_RATIO = 10
 CASE_PARTS = {"nom", "gen", "dat", "acc", "ins", "loc", "voc"}
 # what may stand between a sentence's end and its first word
 OPENERS = " \t\"'„“”«»‘’([-–—"
