@@ -101,6 +101,8 @@ def _allowed(kind, flags, tag, neg, vi, si):
         return not neg or (neg == "ne" and "N" in flags)
     if refl and (neg or vi >= 0 or si):
         return False   # *nedžiaugiasi -> nesidžiaugia; *nusipraustis
+    if "Z" in flags and not refl and not si:
+        return False   # reflexive only: a plain form only with -si- (nesidomiu, besidžiaugiantis; not didžiuoju, gėrimas)
     if vi >= 0:
         if neg not in ("", "ne", "nebe"):
             return False

@@ -159,6 +159,7 @@ CLAUSE_END = ",.;:!?…–—"
 # verbal prefixes a copula may have: išlieka, pasiliko (not atliko, paliko)
 COPULA_PREFIXES = ("", "si", "iš", "pasi")
 SUBORDINATORS = {"kad", "jog", "nes", "kai", "jei", "jeigu", "kadangi", "nors", "nebent", "kol"}
+BUTI = ("būti", "buvo", "būna", "esa", "yra")     # the lemmas (principal parts) of būti
 COPULA_FORMS = {"nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esame", "esate", "yra"}
 # Subject pronoun -> person of the verb
 SUBJECT_PERSON = {"aš": "1sg", "tu": "2sg", "mes": "1pl", "jūs": "2pl",
@@ -455,11 +456,12 @@ class Grammar:
         an = self.analyses(w)
         return bool(an) and all(a.tag in ("W", "Adv") for a in an)
 
-    def verb_keys(self, w):
+    def verb_keys(self, w, plain=False):
         """(verb, class) of each verb reading of w, for valency: the principal part with its
         prefix, "!" first when negated (nemačiau takes a genitive), "~" last when reflexive;
         class "12" (1st/2nd person), "3", "inf" or "ger". None when w is mostly not a verb, a
-        participle (it agrees with its noun) or a copula (būti takes a predicate)."""
+        participle (it agrees with its noun) or a copula (būti takes a predicate). plain: the
+        keys of the verb not negated (nesiėmiau: ėmė~, as ėmėsi is counted)."""
         an = self.analyses(w)
         # not a participle: they agree with a noun, and the neuter ones (kuriama programa) are predicates
         vs = [a for a in an if a.tag.startswith("V.") and not (a.tag.split(".")[1][0] == "p" and a.tag.split(".")[1] not in FINITE)]
@@ -471,6 +473,9 @@ class Grammar:
             m = re.match(r"nebe|tebe|ne|be|te", a.prefix)
             rest = a.prefix[m.end():] if m else a.prefix
             key = ("!" if m and m.group() in ("ne", "nebe") else "") + rest + a.lemma + ("~" if "refl" in p else "")
+            if plain:     # ne+si+ėmiau is the negated ėmiausi: the reflexive's key, not siėmė
+                key = (rest[2:] if m and rest.startswith("si") else rest) + a.lemma + (
+                    "~" if "refl" in p or m and rest.startswith("si") else "")
             cls = ("12" if p[2] != "3" else "3") if finite(a) else "inf" if p[1] == "inf" else "ger"
             out.add((key, cls))
         if any(c == "3" for _, c in out):
@@ -523,10 +528,10 @@ class Grammar:
 
         def skip(t):
             # an adverb, not a preposition (su, po), a connective, a question word (žinau kur mašina: an indirect
-            # question, not an object) or a quantity
+            # question, not an object; kažkur is none: padariau kažkur klaidą) or a quantity
             return (self.adverb(t.text) and t.lower not in PREPOSITIONS and t.lower != "po"
                     and t.lower not in CLAUSE_STARTERS and t.lower not in NO_COMMA_AFTER
-                    and t.lower not in INTERROGATIVES and not t.is_quantity())
+                    and not (t.lower in INTERROGATIVES and not t.lower.startswith("kažk")) and not t.is_quantity())
         if after:
             k, skipped = i + 1, 0
             while k < len(toks) and adjacent[k] and skipped < 2 and skip(toks[k]):
@@ -571,6 +576,34 @@ class Grammar:
         twin = max((self.freq.get(f.lower(), 0) for f, rs in t.variants
                     if any(r.pos == "noun" and r.case != "voc" for r in rs)), default=0)
         return twin >= RARE_TWIN_RATIO * max(seen, FREQ_MIN)
+
+    def instrumental_kept(self, verb, words, cases, after=True):
+        """After the negated verb (a Word), is a phrase agreeing as written in these oblique cases what it seems,
+        not a genitive of negation typed without its diacritics? The verb's counts after it, negated and not
+        (nepaisyti, netekti are counted almost only negated), decide first: it takes one of the cases 1/VALENCY_RATIO
+        as often as its objects, accusative and genitive (netikiu Dievu, nekalbėk tokiu tonu): kept; seen with
+        VALENCY_MIN objects otherwise: a genitive (nesuprantu pavadinimu, neturi vardu). Before that, a genitive
+        twin of a word seen next to the verb more often than the word as written is one (neturiu jokiu
+        klausimu: neturiu jokių 113 times); with too few counts, a twin RARE_TWIN_RATIO times as frequent.
+        Tuned on 1,426 decisions in 17.5k subtitle and dump lines with a negated verb, each line correct and
+        stripped of its diacritics: no guard 1,049 right fixes and 377 wrong, this 953 and 93; checked on
+        another 239 (171 / 68 -> 157 / 15)."""
+        keys = list(self.verb_keys(verb.text, plain=True) or []) + list(self.verb_keys(verb.text) or [])
+        def n(case):      # after the verb, also for a phrase before it: one there is often an adverbial
+            return sum(self.valency.get((k, c, "after", case), 0) for k, c in keys)
+        own, objects = max(n(case) for case in cases), n("acc") + n("gen")
+        if own and own * VALENCY_RATIO >= objects:
+            return True
+        def pair(a):
+            return self.pair(verb.lower, a) if after else self.pair(a, verb.lower)
+        twins = [[f.lower() for f, rs in t.variants if any(r.pos in ("noun", "adj") and r.case == "gen" for r in rs)]
+                 for t in words]
+        if any(pair(f) > pair(t.lower) for t, fs in zip(words, twins) for f in fs):
+            return False
+        if objects >= VALENCY_MIN:
+            return False
+        return not any(max((self.freq.get(f, 0) for f in fs), default=0) >= RARE_TWIN_RATIO * max(
+            self.freq.get(t.lower, 0), FREQ_MIN) for t, fs in zip(words, twins))
 
     def _valency_lone(self, toks, idx):
         if len(idx) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(toks[idx[0]].text)):
@@ -1051,11 +1084,20 @@ class Grammar:
                               [nxt.cap(NEG_PRONOUNS[nxt.lower])]))
                     continue
                 span = phrase(i)
-                timey = any(x.lower in TIME_WORDS or x.is_quantity() or any(
-                            a.lemma in TIME_LEMMAS for a in self.analyses(x.text)) for x in span)
+                timey = any(x.lower in TIME_WORDS or x.is_quantity() or any(   # also as in valency: tokiu būdu
+                            a.lemma in TIME_LEMMAS or a.lemma in ("prasmė", "būdas")   # not metas: nesulauks
+                            for a in self.analyses(x.text)) for x in span)            # Naujųjų metų
                 # an adverb reading is not an object: neatėjo laiku (on time), not laikų
                 adverbial = len(span) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(span[0].text))
-                if span and span[-1].is_noun and not timey and not adverbial:
+                # nor a phrase that agrees as written in a case that is no object: neturiu tuo metu laiko,
+                # nesidomiu tuo sportu (an instrumental the verb governs), unless it lost a diacritic
+                feats = phrase_feats(span) if span and span[-1].known else []
+                oblique = bool(feats) and all(f[0] in ("ins", "loc", "dat") for f in feats) and (
+                    any(a.lemma == "metas" for a in self.analyses(span[-1].text))      # tuo metu: when
+                    or self.instrumental_kept(w, span, {f[0] for f in feats}))
+                # nor an indirect question: nežinau kokiu kanalu, nežinau kuo tu vardu (as in valency; not kažkur)
+                question = nxt.lower in INTERROGATIVES and not nxt.lower.startswith("kažk")
+                if span and span[-1].is_noun and not timey and not adverbial and not oblique and not question:
                     for x in span:
                         cases = {r.case for r in x.own}
                         why = f"after the negated verb '{w.text}' use the genitive"
@@ -1654,8 +1696,10 @@ class Grammar:
                                for r in head.pos_readings() + [r for _, rs in head.variants for r in rs]):
                         continue
                     prep_head = True
-                elif any(a.tag.startswith("V.") for a in an_p) and self.mostly_verb(an_p):
-                    continue      # pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
+                elif any(a.tag.startswith("V.") for a in an_p) and self.mostly_verb(an_p) and not any(
+                        a.lemma in BUTI for a in an_p):
+                    continue      # pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb (būti
+                                  # governs none: buvo garbės reikalas)
                 elif p.lower in POSSESSIVES or an_p and all(a.tag == "W" for a in an_p) and (
                         p.lower not in PHRASE_STOP or p.lower == "kaip"):
                     continue      # jos pasirodymu danguje, šiuo metu; kaip snaiges (the case of what it is compared to)
@@ -1762,6 +1806,11 @@ class Grammar:
                             continue      # the subject: of a 3rd person verb, the only one (rūpinimasis gerove nukreipia)
                         if f[0] in ("acc", "gen") and other_object:
                             continue
+                        if (f[0] == "gen" and typed and all(x[0] in ("ins", "loc", "dat") for x in typed)
+                                and any(k.startswith("!") for k, _ in keys)
+                                and self.instrumental_kept(v, words, {x[0] for x in typed}, after)):
+                            continue      # the genitive of negation takes the place of an accusative: nemalk
+                                          # liežuviu, nepasakėte telefonu (as in the negation rule)
                         fixes = [phrase_fix(t, f, t is head) for t in words]
                         if any(c > (1 if lost else 2) for c, _ in fixes):
                             continue      # no form fits; with no case as written, only lost diacritics (nupirkti

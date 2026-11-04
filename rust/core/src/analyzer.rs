@@ -137,6 +137,9 @@ pub(crate) fn allowed(kind: Kind, flags: &str, tag: &str, neg: &str, vi: i32, si
     if refl && (!neg.is_empty() || vi >= 0 || !si.is_empty()) {
         return false;
     }
+    if flags.contains('Z') && !refl && si.is_empty() {
+        return false; // reflexive only: a plain form only with -si- (nesidomiu, besidžiaugiantis; not didžiuoju, gėrimas)
+    }
     if vi >= 0 {
         if !matches!(neg, "" | "ne" | "nebe") {
             return false;

@@ -19,11 +19,19 @@ VALID = {
                    "dirbęs dirbusi dirbamas dirbtas dirbtinas",
     "verbal nouns": "matymas nešimas buvimas abejojimas",
     "prefixes": "nusiprausė neapsimoka nesijaučia apibūdina neapibūdina",
-    "reflexive-only": "džiaugiuosi juokiuosi elgiuosi domiuosi pasidžiaugiau susidomėjau",
+    "reflexive-only": "džiaugiuosi juokiuosi elgiuosi domiuosi pasidžiaugiau susidomėjau "
+                      "didžiuojuosi didžiuotis didžiavausi nesididžiuoju bastausi bastėsi",   # ispell-lt's bare R/O
     "closed classes": "tokių tiems tuos penkių keturis trisdešimties trečiojo vienuolikos",
 }
 
-INVALID = "medžyje jaučie nedžiaugiasi nusipraustis apbūdina gerasias dirbantisis".split()
+INVALID = "medžyje jaučie nedžiaugiasi nusipraustis apbūdina gerasias dirbantisis džiaugiu elgiu".split()
+
+# a reflexive-only verb has plain forms only with -si-: didžiuoju is the instrumental of didysis, not "I am
+# proud"; gėrimas is a drink, not a participle of gėrėtis
+NOT_PLAIN_VERB = "didžiuoju didžiuoja elgia gėrimas gėrimo blaivus".split()
+SI_PREFIXED = "nesidomiu nesijuokiu nesidžiaugiu nesielgiu besidžiaugiantis nesididžiuoju".split()
+# forms ispell-lt also lists with only a reflexive flag (buvo/O, saugo/R): verbs, not particles
+NOT_PARTICLE = "buvo saugo būna didžiuotis darbinti".split()
 
 SPOKEN = {"valgyt": "valgyti", "buvom": "buvome", "jaučias": "jaučiasi", "mokykloj": "mokykloje",
           "namuos": "namuose", "dirbkit": "dirbkite", "eime": "eikime"}
@@ -44,6 +52,20 @@ class Morphology(unittest.TestCase):
         for w in INVALID:
             with self.subTest(word=w):
                 self.assertEqual(AN.check(w).status, "unknown")
+
+    def test_reflexive_only(self):
+        for w in NOT_PLAIN_VERB:
+            with self.subTest(word=w):
+                self.assertFalse([a.tag for a in AN.analyze(w) if a.tag.startswith("V.")
+                                  and not a.tag.endswith(".refl") and "si" not in a.prefix])
+        for w in SI_PREFIXED:      # ne+si+domiu, a reflexive verb (the object rule leaves it alone)
+            with self.subTest(word=w):
+                self.assertTrue([a for a in AN.analyze(w) if a.prefix.endswith("si")])
+
+    def test_no_particle_reading(self):
+        for w in NOT_PARTICLE:
+            with self.subTest(word=w):
+                self.assertFalse([a for a in AN.analyze(w) if a.tag == "W"])
 
     def test_spoken(self):
         for short, full in SPOKEN.items():

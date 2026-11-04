@@ -9,25 +9,19 @@ nėra
 esti   # archaic/bookish 3rd person of būti
 
 # reflexive-only verbs missing from ispell-lt (it lists only apsidžiaugti, apsijuokti...);
-# modelled on stengti/stengia/stengė and gailėti/gaili/gailėjo
-džiaugti/TRSXmrw
-džiaugia/ERSXmrw
-džiaugė/PRSXmrw
-juokti/TRSXmpqrv
-juokia/ERSXmpqrv
-juokė/PRSXmpqrv
-elgti/TRSXr
-elgia/ERSXr
-elgė/PRSXr
-domėti/TRSXrw
-domi/EOSXrw
-domėjo/POSXrw
-didžiuoti/TRSXr     # didžiuotis: ispell-lt has only bare didžiuotis/R, didžiuojasi/R, didžiavosi/O (no paradigm:
-didžiuoja/ERSXr     # didžiuojuosi, 739 times in the subtitles, was unknown, didžiuotis read only as an adverb)
-didžiavo/PRSXr
--didžiuotis/R
--didžiuojasi/R
--didžiavosi/O
+# modelled on stengti/stengia/stengė and gailėti/gaili/gailėjo; Z: reflexive forms only
+džiaugti/TRSXZmrw
+džiaugia/ERSXZmrw
+džiaugė/PRSXZmrw
+juokti/TRSXZmpqrv
+juokia/ERSXZmpqrv
+juokė/PRSXZmpqrv
+elgti/TRSXZr
+elgia/ERSXZr
+elgė/PRSXZr
+domėti/TRSXZrw
+domi/EOSXZrw
+domėjo/POSXZrw
 
 # pronouns that ispell-lt also lists as nouns: the noun reading hides them from agreement
 -šita/D

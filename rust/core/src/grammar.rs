@@ -198,6 +198,8 @@ const PREDICATIVE_VERBS: &[&str] = &[
     "gimė", "gimsta", "mirti", "mirė", "miršta", "jaustis", "jautėsi", "jaučiasi", "rodyti", "rodė",
     "rodo",
 ];
+/// the lemmas (principal parts) of būti
+const BUTI: &[&str] = &["būti", "buvo", "būna", "esa", "yra"];
 const COPULA_FORMS: &[&str] = &["nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esame", "esate", "yra"];
 /// Linking verbs whose predicate adjective is nominative (tapo parapine, dirbo vienas: not these)
 const NOMINATIVE_COPULAS: &[&str] = &[
@@ -569,7 +571,7 @@ impl<'a> G<'a> {
     /// first when negated (nemačiau takes a genitive), "~" last when reflexive; class "12" (1st/2nd
     /// person), "3", "inf" or "ger". Empty when w is mostly not a verb, a participle (it agrees with
     /// its noun) or a copula (būti takes a predicate).
-    fn verb_keys(&self, w: &str) -> Vec<(String, &'static str)> {
+    fn verb_keys(&self, w: &str, plain: bool) -> Vec<(String, &'static str)> {
         let an = self.analyses(w);
         // not a participle: they agree with a noun, and the neuter ones (kuriama programa) are predicates
         let vs: Vec<&Analysis> = an
@@ -593,7 +595,13 @@ impl<'a> G<'a> {
             let rest = m.map_or(a.prefix.as_str(), |x| &a.prefix[x.len()..]);
             let neg = matches!(m, Some(&"ne") | Some(&"nebe"));
             let refl = p.iter().any(|x| x == "refl");
-            let key = format!("{}{}{}{}", if neg { "!" } else { "" }, rest, a.lemma, if refl { "~" } else { "" });
+            let key = if plain {
+                // ne+si+ėmiau is the negated ėmiausi: the reflexive's key, not siėmė
+                let si = m.is_some() && rest.starts_with("si");
+                format!("{}{}{}", if si { &rest[2..] } else { rest }, a.lemma, if refl || si { "~" } else { "" })
+            } else {
+                format!("{}{}{}{}", if neg { "!" } else { "" }, rest, a.lemma, if refl { "~" } else { "" })
+            };
             let cls = if self.finite(a) {
                 if p[2] != "3" { "12" } else { "3" }
             } else if p[1] == "inf" {
@@ -709,7 +717,7 @@ fn phrase_feats(words: &[&Word]) -> Vec<Feats> {
 /// No keys: (empty, i).
 fn valency_verb(g: &G, toks: &[Word], adjacent: &[bool], i: usize) -> (Vec<(String, &'static str)>, usize) {
     let t = &toks[i];
-    let keys = if t.known { g.verb_keys(&t.text) } else { vec![] };
+    let keys = if t.known { g.verb_keys(&t.text, false) } else { vec![] };
     if !keys.is_empty() {
         return (keys, i);
     }
@@ -770,14 +778,14 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
     };
     let modi = |t: &Word| t.known && !t.own.is_empty() && t.own.iter().all(|r| r.pos == Pos::Adj);
     // an adverb, not a preposition (su, po), a connective, a question word (žinau kur mašina: an indirect
-    // question, not an object) or a quantity
+    // question, not an object; kažkur is none: padariau kažkur klaidą) or a quantity
     let skip = |t: &Word| {
         g.adverb(&t.text)
             && prep_cases(&t.lower).is_none()
             && t.lower != "po"
             && !CLAUSE_STARTERS.contains(&t.lower.as_str())
             && !KURIS.contains(&t.lower.as_str())
-            && !INTERROGATIVES.contains(&t.lower.as_str())
+            && !(INTERROGATIVES.contains(&t.lower.as_str()) && !t.lower.starts_with("kažk"))
             && !NO_COMMA_AFTER.contains(&t.lower.as_str())
             && !t.is_quantity(g)
     };
@@ -858,6 +866,53 @@ fn lost_case(g: &G, t: &Word) -> bool {
         .max()
         .unwrap_or(0);
     twin >= RARE_TWIN_RATIO * seen.max(FREQ_MIN)
+}
+
+/// After the negated verb, is a phrase agreeing as written in these oblique cases what it seems, not a
+/// genitive of negation typed without its diacritics? The verb's counts after it, negated and not (nepaisyti,
+/// netekti are counted almost only negated), decide first: it takes one of the cases 1/VALENCY_RATIO as often
+/// as its objects, accusative and genitive (netikiu Dievu, nekalbėk tokiu tonu): kept; seen with VALENCY_MIN
+/// objects otherwise: a genitive (nesuprantu pavadinimu, neturi vardu). Before that, a genitive twin of a word
+/// seen next to the verb more often than the word as written is one (neturiu jokiu klausimu: neturiu jokių 113
+/// times); with too few counts, a twin RARE_TWIN_RATIO times as frequent.
+fn instrumental_kept(g: &G, verb: &Word, words: &[&Word], cases: &[&str], after: bool) -> bool {
+    let mut keys = g.verb_keys(&verb.text, true);
+    keys.extend(g.verb_keys(&verb.text, false));
+    // after the verb, also for a phrase before it: one there is often an adverbial
+    let n = |case: &str| -> u64 {
+        keys.iter().map(|(k, c)| g.an.data.valency.get(&format!("{k}\t{c}\tafter\t{case}")) as u64).sum()
+    };
+    let own = cases.iter().map(|c| n(c)).max().unwrap_or(0);
+    let objects = n("acc") + n("gen");
+    if own > 0 && own * VALENCY_RATIO >= objects {
+        return true;
+    }
+    let pair = |a: &str| -> u32 {
+        if after {
+            g.an.data.pairs.get(&format!("{} {a}", verb.lower))
+        } else {
+            g.an.data.pairs.get(&format!("{a} {}", verb.lower))
+        }
+    };
+    let twins: Vec<Vec<String>> = words
+        .iter()
+        .map(|t| {
+            t.variants(g)
+                .iter()
+                .filter(|(_, rs)| rs.iter().any(|r| matches!(r.pos, Pos::Noun | Pos::Adj) && r.case == "gen"))
+                .map(|(f, _)| lower(f))
+                .collect()
+        })
+        .collect();
+    if words.iter().zip(&twins).any(|(t, fs)| fs.iter().any(|f| pair(f) > pair(&t.lower))) {
+        return false;
+    }
+    if objects >= VALENCY_MIN {
+        return false;
+    }
+    !words.iter().zip(&twins).any(|(t, fs)| {
+        fs.iter().map(|f| g.freq(f)).max().unwrap_or(0) >= RARE_TWIN_RATIO * g.freq(&t.lower).max(FREQ_MIN)
+    })
 }
 
 fn valency_lone(g: &G, toks: &[Word], idx: Vec<usize>) -> Option<Vec<usize>> {
@@ -1545,12 +1600,30 @@ impl Grammar {
                     let t = &toks[x];
                     TIME_WORDS.contains(&t.lower.as_str())
                         || t.is_quantity(&g)
-                        || g.analyses(&t.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()))
+                        // also as in valency: tokiu būdu
+                        || g.analyses(&t.text).iter().any(|a| {
+                            // not metas: nesulauks Naujųjų metų
+                            TIME_LEMMAS.contains(&a.lemma.as_str()) || ["prasmė", "būdas"].contains(&a.lemma.as_str())
+                        })
                 });
                 // an adverb reading is not an object: neatėjo laiku (on time), not laikų
                 let adverbial = span.len() == 1
                     && g.analyses(&toks[span[0]].text).iter().any(|a| matches!(g.tag(a), "W" | "Adv"));
-                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey && !adverbial {
+                // nor a phrase that agrees as written in a case that is no object: neturiu tuo metu laiko,
+                // nesidomiu tuo sportu (an instrumental the verb governs), unless it lost a diacritic
+                let oblique = !span.is_empty() && toks[*span.last().unwrap()].known && {
+                    let words: Vec<&Word> = span.iter().map(|&x| &toks[x]).collect();
+                    let feats = phrase_feats(&words);
+                    let cases: Vec<&str> = feats.iter().map(|f| f.0).collect();
+                    !feats.is_empty()
+                        && feats.iter().all(|f| matches!(f.0, "ins" | "loc" | "dat"))
+                        // tuo metu: when
+                        && (g.analyses(&toks[*span.last().unwrap()].text).iter().any(|a| a.lemma == "metas")
+                            || instrumental_kept(&g, w, &words, &cases, true))
+                };
+                // nor an indirect question: nežinau kokiu kanalu, nežinau kuo tu vardu (as in valency; not kažkur)
+                let question = INTERROGATIVES.contains(&nxt.lower.as_str()) && !nxt.lower.starts_with("kažk");
+                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey && !adverbial && !oblique && !question {
                     for &x in &span {
                         let t = &toks[x];
                         let why = format!("after the negated verb '{}' use the genitive", w.text);
@@ -2487,8 +2560,13 @@ impl Grammar {
                         continue;
                     }
                     prep_head = true;
-                } else if an_p.iter().any(|a| g.tag(a).starts_with("V.")) && g.mostly_verb(&an_p) {
-                    continue; // pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb
+                } else if an_p.iter().any(|a| g.tag(a).starts_with("V."))
+                    && g.mostly_verb(&an_p)
+                    && !an_p.iter().any(|a| BUTI.contains(&a.lemma.as_str()))
+                {
+                    // pirkęs žemes kaimuose, tapo kasdieniniu gėrimu: governed by the verb (būti governs none:
+                    // buvo garbės reikalas)
+                    continue;
                 } else if POSSESSIVES.contains(&p.lower.as_str())
                     || (!an_p.is_empty() && an_p.iter().all(|a| g.tag(a) == "W") && (!phrase_stop(&p.lower) || p.lower == "kaip"))
                 {
@@ -2649,6 +2727,16 @@ impl Grammar {
                             continue; // the subject: of a 3rd person verb, the only one (rūpinimasis gerove nukreipia)
                         }
                         if (f.0 == "acc" || f.0 == "gen") && other_object {
+                            continue;
+                        }
+                        if f.0 == "gen"
+                            && !typed.is_empty()
+                            && typed.iter().all(|x| matches!(x.0, "ins" | "loc" | "dat"))
+                            && keys.iter().any(|(k, _)| k.starts_with('!'))
+                            && instrumental_kept(&g, v, &words, &typed.iter().map(|x| x.0).collect::<Vec<_>>(), after)
+                        {
+                            // the genitive of negation takes the place of an accusative: nemalk liežuviu,
+                            // nepasakėte telefonu (as in the negation rule)
                             continue;
                         }
                         let fixes: Vec<(u32, Vec<String>)> = idx.iter().map(|&j| phrase_fix(&toks[j], &f, j == h)).collect();

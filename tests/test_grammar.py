@@ -153,12 +153,38 @@ FLAGGED = [
     ("Visa šita istorija girdėjau vakar.", "šita", "valency", "šitą"),          # girdėjau pools with girdi, girdėti
     ("Esu girdėjęs visa šita istorija.", "visa", "valency", "visą"),
     ("Per daug pasitikėdamas, aš padariau klaida.", "klaida", "valency", "klaidą"),
-    ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),
+    ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),                    # number, not case: not didelius
     ("Galbūt reikia padidinti įprasta dydi?", "įprasta", "valency", "įprastą"),  # dydi is only a vocative: no case
     ("Galbūt reikia padidinti įprasta dydi?", "dydi", "valency", "dydį"),
     ("Noriu nupirkti automobili.", "automobili", "valency", "automobilį"),  # nupirkti stays: no modifier
     ("Ar turite skėti?", "skėti", "valency", "skėtį"),                  # a genitive is an object too: turite laiko
-    ("Duok man tavo numeri.", "numeri", "valency", "numerį"),           # over the possessive                    # number, not case: not didelius
+    ("Duok man tavo numeri.", "numeri", "valency", "numerį"),           # over the possessive
+    ("Padariau kažkur klaida.", "klaida", "valency", "klaidą"),         # kažkur is no question word
+    ("Aš žinojau kas tai buvo.", "kas", "comma", ", kas"),            # buvo is a verb, not a particle (buvo/O)
+    ("Aš tavimi didžiuojasi.", "didžiuojasi", "subject", "didžiuojuosi"),
+    # negation over an instrumental as written: a lost ų when the verb doesn't take it and the genitive is the
+    # likelier word (much more frequent, or seen after the verb)
+    ("Man nesudarė sunkumu padaryti jį.", "sunkumu", "negation", "sunkumų"),
+    ("Tu buvai ten, bet tu nežudei kariu.", "kariu", "negation", "karių"),
+    ("Nenuostabu, kad tu neturi draugu.", "draugu", "negation", "draugų"),
+    ("Robertas neturėjo bilietu.", "bilietu", "negation", "bilietų"),
+    ("Neturiu jokiu klausimu.", "jokiu", "negation", "jokių"),           # the evidence is on jokių: neturiu jokių
+    ("Neturiu jokiu klausimu.", "klausimu", "negation", "klausimų"),
+    ("Man nereikia jokiu pinigu.", "pinigu", "negation", "pinigų"),     # reikėti takes a genitive object
+    ("Nebijok sunkumu.", "sunkumu", "negation", "sunkumų"),
+    ("Jis nebijo velniu.", "velniu", "negation", "velnių"),
+    ("Nelauk jokiu stebuklu.", "stebuklu", "negation", "stebuklų"),
+    ("Aš nesuprantu juoku.", "juoku", "negation", "juokų"),
+    ("Aš nesiėmiau jokiu veiksmu.", "veiksmu", "negation", "veiksmų"),  # a nesi- verb: its key is ėmė~
+    ("Klausimu neturiu.", "Klausimu", "valency", "Klausimų"),
+    ("Nepaisant šiu faktu, jis liko.", "faktu", "valency", "faktų"),     # nepaisyti is counted almost only negated
+    ("Tu nekenti filmu.", "filmu", "negation", "filmų"),
+    ("Aš nesuprantu pavadinimu.", "pavadinimu", "negation", "pavadinimų"),   # the verb's counts decide, not frequency
+    ("Jis neturi vardu.", "vardu", "negation", "vardų"),
+    ("Hymanas Rotas nesulauks Naujuju metu.", "metu", "negation", "metų"),   # metas: no adverbial here
+    # genitive before a head noun after a copula (buvo is a verb, not a particle, since the loader change)
+    ("Tai buvo garbes reikalas.", "garbes", "case", "garbės"),
+    ("Čia buvo upes vaga.", "upes", "case", "upės"),
     ("Mačiau didelę ir gražia kavinę.", "gražia", "phrase", "gražią"),       # not kavine
     ("Tie gražūs didelė namai.", "didelė", "phrase", "dideli"),              # gender and number
     ("Specialiais ryškias ženklais.", "ryškias", "phrase", "ryškiais"),
@@ -189,6 +215,26 @@ CORRECT = [
     "Ar žinai kieno ta mašina?",
     "Turėtum didžiuotis tėčiu.",             # didžiuotis is a verb (data/extra.txt), not an adverb
     "Aš didžiuojuosi tavimi.",
+    "Manoma, jog jis didžiuoju kunigaikščiu tapo 1236 m.",   # didžiuoju: didysis, not "I am proud"
+    "Jis didžiuoju meridianiniu skrituliu matavo.",
+    "Aš nesididžiuoju tuo darbu.",           # negation leaves an instrumental the verb governs
+    "Aš niekada taip nesididžiavau Tomu.",
+    "Aš nesidomiu tuo sportu.",
+    "Neturiu tuo metu laiko.",               # tuo metu: when, not what
+    "Aš nedirbu mokytoju.",
+    "Aš netikiu Dievu.",                     # negation: an instrumental the verb governs stays
+    "Nekalbėk tokiu tonu.",
+    "Tėtis neatsiliepia telefonu.",
+    "Rūmai nepasižymėjo dideliu masteliu ir prabanga.",
+    "Daktarai sakė, kad tai plaučių uždegimas.",
+    "Aš nesijuokiu iš vaikų.",               # nesijuokiu is reflexive: no object rule
+    "Aš nesijuokiu vaikai.",                 # (was vaikus: ne+si+juokiu was lost with the plain forms)
+    "Nerodyk tokiu būdu.",                   # būdas is an adverbial, as in valency
+    "Palauk kūdiki.",                        # an address (was kūdikį, a known false alarm until 2026-11-04)
+    "Net nežinau kokiu kanalu.",             # an indirect question after the negated verb
+    "Nežinau kuo tu vardu.",
+    "Nekalbėk su manimi tokiu tonu.",
+    "Mano mėgstamiausias gėrimas yra arbata.",
     "Grįšiu, ir net jei vėluosiu, paskambinsiu.",
     "Einu gatve namo.",                       # motion verb: instrumental is right
     "Mačiau ką tik atėjusį žmogų.",
@@ -297,7 +343,22 @@ CORRECT = [
 ]
 
 
+# Known false alarms, left on purpose (each with why). The test fails when one is no longer flagged: then move
+# it to CORRECT.
+KNOWN_FALSE_ALARMS = [
+    "Nemalk liežuviu.",                      # an instrumental of means after a verb whose counts say it takes
+    "Kodėl jūs man šito nepasakėte telefonu?",   # none; the verb-first negation guard is net better (AGENTS.md)
+]
+
+
 class Grammar(unittest.TestCase):
+    def test_known_false_alarms(self):
+        for text in KNOWN_FALSE_ALARMS:
+            with self.subTest(text=text):
+                got = {k: v for k, v in findings(text).items() if k[1] != "unknown"}
+                self.assertTrue(got, "no longer flagged: move it to CORRECT")
+
+
     def test_flagged(self):
         for text, word, rule, fix in FLAGGED:
             with self.subTest(text=text, word=word):
