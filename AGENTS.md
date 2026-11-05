@@ -187,8 +187,9 @@ the system dictionary; the extension has none and asks `Tally`). Rust-only with 
    `turėtų`, not the rare `turėtu`); restoration 62.9% → 65.8%. A word's diacritic
    variants in grammar are ordered by this cost, the same flat one for a word typed without diacritics, then
    by frequency (`šitą` before `sytą`; `vėją` before `veją`). A word typed without diacritics whose twin is a
-   possessive 10× as frequent stands for it in a phrase (`nematau musu namo`: `mūsų`, not the flies' `musų`; a twin a rule requires keeps the word's part of speech first:
-   `poros butu` → `butų`, flats, not the participle `būtų`;
+   possessive 10× as frequent stands for it in a phrase (`nematau musu namo`: `mūsų`, not the flies' `musų`; frequency, not the part of speech, also orders the twins a rule
+   requires (`kiek butu gerai` → `būtų`, would be; ordering by part of speech, `butų`, flats, was tried: after these
+   words the subtitles write `būtų` 77 times, `butų` 8);
    ispell-lt lists the personal pronouns' forms as bare words, so `mūsų` has no case reading of its own). Lowercase input penalises capitalised names.
    **Finger slips onto w, q, x** (`slip_fixes` in `__main__.py` / `checker.rs`, 2026-10-23, owner: `ziwma`
    got nothing): a word with a letter Lithuanian doesn't use is foreign and skipped, unless it is lowercase,
@@ -1108,7 +1109,8 @@ Left deliberately:
 - Rare twins in different cases when the grammar doesn't decide: the verb right next to the word decides by its
   valency counts on that side (`Masina stovi kieme`, `Mano masina neveikia` → `mašina`; `vairuoja masina` →
   `mašiną`; `Grammar.verb_fit`, 2026-11-05), else frequency (`Masina kieme`: both offered, the keyboard takes
-  `Mašiną`). Not reached: a verb further away (`Sita knyga buvo išversta` still gets `Šitą knygą`: autocorrect
+  `Mašiną`); the verb's count must be 10+ and 3× the other twins' (`Grįžau masina` stays undecided), an infinitive's
+  or gerund's "before" counts don't count (they are the main clause's subject: `Masina vairuoti sunku`). Not reached: a verb further away (`Sita knyga buvo išversta` still gets `Šitą knygą`: autocorrect
   takes `Šitą` for the unknown `Sita` by frequency, then makes `knyga` agree with its own guess when it commits it;
   the sentence fixer's soft re-decision comes too late. The 4 correct Tatoeba words the keyboard changes in 2,000
   sentences are all this. A fix needs autocorrect's context to show the keyboard's guesses as typed: the JNI `word`

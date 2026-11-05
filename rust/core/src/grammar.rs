@@ -1010,6 +1010,9 @@ impl Grammar {
         for (v, side) in [(next, "before"), (prev, "after")] {
             let Some(v) = v else { continue };
             for (k, c) in g.verb_keys(v, false) {
+                if side == "before" && matches!(c, "inf" | "ger") {
+                    continue; // before an infinitive stands the main clause's subject: masina vairuoti sunku
+                }
                 let n: u64 = cases.iter().map(|case| an.data.valency.get(&format!("{k}\t{c}\t{side}\t{case}")) as u64).sum();
                 best = best.max(n);
             }
@@ -1106,10 +1109,6 @@ impl Grammar {
             }
             let mut variants: Vec<&(String, Vec<Reading>)> =
                 w.variants(&g).iter().filter(|(_, rs)| rs.iter().any(|r| cases.contains(&r.case))).collect();
-            // its own part of speech first: poros butu -> butų (flats), not būtų (a participle of būti)
-            variants.sort_by_key(|(_, rs)| {
-                !rs.iter().any(|r| cases.contains(&r.case) && w.own.iter().any(|o| o.pos == r.pos && o.participle == r.participle))
-            });
             // an unknown word's candidates: prefer those agreeing with the adjective before it
             // (nepataiso visų zodziou -> žodžių, not žodžio)
             let i = toks.iter().position(|t| t.start == w.start).unwrap();
@@ -1344,7 +1343,7 @@ impl Grammar {
                 continue;
             }
             if !adds_diacritics(&w.lower, prep) {
-                continue; // a typed diacritic is meant: vidurį nakties (not vidury)
+                continue; // a typed diacritic is meant: vidurį nakties (not vidury); y is its own key (lygi, y)
             }
             let span = phrase(i, false);
             let cases = prep_cases(prep).unwrap();

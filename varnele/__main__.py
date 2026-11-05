@@ -163,7 +163,11 @@ class Checker:
         prev = re.search(r"([^\W\d_]+)\s*$", context)
         nxt = re.match(r"\s+([^\W\d_]+)", after)
         prev, nxt = prev and prev.group(1), nxt and nxt.group(1)
-        ranked = sorted(((issues(c) if judged else 0, -self.grammar.verb_fit(c, prev, nxt) if judged else 0, c)
+        fits = {c: self.grammar.verb_fit(c, prev, nxt) if judged else 0 for _, c in twins}
+        # the verb decides only clearly: 3x the other twins' count and seen 10 times (not 7 against 4)
+        top = max(fits.values(), default=0)
+        decided = top >= 10 and all(v * 3 <= top for c, v in fits.items() if v != top)
+        ranked = sorted(((issues(c) if judged else 0, -fits[c] if decided else 0, c)
                          for _, c in twins), key=lambda r: r[:2])     # a tie stays by frequency
         cap = word[:1].isupper()
         return [c[0].upper() + c[1:] if cap else c for n, v, c in ranked if (n, v) == ranked[0][:2]][:3]

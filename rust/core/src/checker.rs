@@ -494,9 +494,14 @@ impl Checker {
         let s = aft.iter().take_while(|c| c.is_whitespace()).count();
         let n = aft[s..].iter().take_while(|c| c.is_alphabetic()).count();
         let next: Option<String> = (s > 0 && n > 0).then(|| aft[s..s + n].iter().collect());
-        let fit = |c: &str| self.grammar.verb_fit(&self.an, c, prev.as_deref(), next.as_deref());
-        let mut ranked: Vec<(usize, u64, String)> = twins.into_iter()
-            .map(|(_, c)| if judged { (issues(&c), u64::MAX - fit(&c), c) } else { (0, 0, c) })
+        let fits: Vec<u64> = twins.iter()
+            .map(|(_, c)| if judged { self.grammar.verb_fit(&self.an, c, prev.as_deref(), next.as_deref()) } else { 0 })
+            .collect();
+        // the verb decides only clearly: 3x the other twins' count and seen 10 times (not 7 against 4)
+        let top = fits.iter().copied().max().unwrap_or(0);
+        let decided = top >= 10 && fits.iter().all(|&v| v == top || v * 3 <= top);
+        let mut ranked: Vec<(usize, u64, String)> = twins.into_iter().zip(fits)
+            .map(|((_, c), f)| if judged { (issues(&c), if decided { u64::MAX - f } else { 0 }, c) } else { (0, 0, c) })
             .collect();
         ranked.sort_by_key(|r| (r.0, r.1)); // a tie stays in order of frequency
         let best = ranked.first().map_or((0, 0), |r| (r.0, r.1));
