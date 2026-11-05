@@ -1766,7 +1766,12 @@ impl Grammar {
                     for &x in &span {
                         let t = &toks[x];
                         let why = format!("after the negated verb '{}' use the genitive", w.text);
-                        if !t.own.is_empty() && t.own.iter().all(|r| r.case == "acc") {
+                        // unambiguously accusative, or a modifier that can be one of a noun that is (tas knygas)
+                        let h = *span.last().unwrap();
+                        let head_acc = !toks[h].own.is_empty() && toks[h].own.iter().all(|r| r.case == "acc");
+                        if !t.own.is_empty()
+                            && (t.own.iter().all(|r| r.case == "acc") || (x != h && head_acc && t.own.iter().any(|r| r.case == "acc")))
+                        {
                             let mut fix = g.reinflect(t, |tg| tg.ends_with(".acc"), Some("gen"));
                             // nemačiau tą filmą -> to, not tos
                             let hg: Vec<Option<&str>> = toks[*span.last().unwrap()].own.iter()

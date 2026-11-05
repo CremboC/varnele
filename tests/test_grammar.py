@@ -47,6 +47,7 @@ FLAGGED = [
     ("Neturiu tą gražią knygą.", "knygą", "negation", "knygos"),    # a demonstrative goes with its phrase
     ("Aš nesu praradusi viltį.", "viltį", "negation", "vilties"),    # a compound past: nesu + participle
     ("Neturiu tą gražią knygą.", "tą", "negation", "tos"),
+    ("Neturiu tas knygas.", "tas", "negation", "tų"),                # tas: nom sg or acc pl, the noun decides
     ("Nemačiau šią knygą.", "knygą", "negation", "knygos"),         # šis is a pronoun, not a particle
     ("Pamiršiu ši vakarą.", "ši", "agreement", "šį"),
     ("Mačiau seni.", "seni", "object", "senį"),                     # a diacritic twin before senus

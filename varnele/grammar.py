@@ -1181,7 +1181,9 @@ class Grammar:
                     for x in span:
                         cases = {r.case for r in x.own}
                         why = f"after the negated verb '{w.text}' use the genitive"
-                        if cases and cases <= {"acc"}:          # unambiguously accusative
+                        head_acc = {r.case for r in span[-1].own} == {"acc"}
+                        # unambiguously accusative, or a modifier that can be one of a noun that is (tas knygas)
+                        if cases and (cases <= {"acc"} or x is not span[-1] and head_acc and "acc" in cases):
                             fix = self.reinflect(x, lambda t: t.endswith(".acc"), case="gen")
                             hg = {r.gender for r in span[-1].own if r.pos == "noun"} - {None}   # nemačiau tą filmą -> to
                             if x is not span[-1] and hg:
