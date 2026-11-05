@@ -747,6 +747,9 @@ class Grammar:
             variants = [(f, rs) for f, rs in w.variants if any(r.case in cases for r in rs)]
             if not variants:
                 return
+            # its own part of speech first: poros butu -> butų (flats), not būtų (a participle of būti)
+            variants.sort(key=lambda v: not any(r.case in cases and r.pos == o.pos and r.participle == o.participle
+                                                for r in v[1] for o in w.own))
             # an unknown word's candidates: prefer those agreeing with the adjective before it
             # (nepataiso visų zodziou -> žodžių, not žodžio)
             i = next(k for k, t in enumerate(toks) if t.start == w.start)
@@ -890,6 +893,8 @@ class Grammar:
             prep = PREP_BY_FOLD.get(fold(w.lower))
             if not prep or prep == w.lower or not w.known or i + 1 >= len(toks) or not adjacent[i + 1]:
                 continue
+            if not adds_diacritics(w.lower, prep):
+                continue          # a typed diacritic is meant: vidurį nakties (not vidury)
             span = phrase(i)
             if not span or not span[-1].is_noun or not all(x.known and any(x.can_be(c) for c in PREPOSITIONS[prep])
                                                             for x in span):

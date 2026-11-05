@@ -57,6 +57,7 @@ FLAGGED = [
     ("Nemačiau jį vakar.", "jį", "negation", "jo"),
     ("Nevalgau mėsą.", "mėsą", "negation", "mėsos"),
     ("Aš nematau musu namo.", "musu", "rare", "mūsų"),                # the possessive, not musų (flies)
+    ("Gyvenu už poros butu nuo mūsų.", "butu", "quantity", "butų"),   # a noun stays a noun (not būtų)
     ("Aš buvo namie.", "buvo", "subject", "buvau"),
     ("Tu eina namo.", "eina", "subject", "eini"),
     ("Mes skaito knygas.", "skaito", "subject", "skaitome"),
@@ -381,6 +382,7 @@ CORRECT = [
     "Turėsi vieną pati kada nors. Myliu tave visa siela. Manau ši perspektyva jums patinka.",
     # an adverb, the emphatic pati, a reflexive infinitive, an instrumental noun: no object
     "Filmai turi pirmiausia didelę vertę. Bandžiau pati, bet veltui. Turime keltis liftu. Myliu tave visa širdimi.",
+    "Pabundu vidurį nakties. Jis atėjo vidurį nakties.",                   # a typed į is meant: not vidury
     "Kas čia per vieta? Kas tai jau per vieta? Dabar mes kovojame vieni. Aš atėjau vienas.",
     "Tai per toli. Ką gali padaryti? Jie per seni. Per anksti išėjai. Ji per brangi.",
     "Per didelė rizika. Kas čia per vieta? Kas jūs per žmonės? Kas per velniava? Kas tai per kambarys?",

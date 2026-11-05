@@ -1087,6 +1087,10 @@ impl Grammar {
             }
             let mut variants: Vec<&(String, Vec<Reading>)> =
                 w.variants(&g).iter().filter(|(_, rs)| rs.iter().any(|r| cases.contains(&r.case))).collect();
+            // its own part of speech first: poros butu -> butų (flats), not būtų (a participle of būti)
+            variants.sort_by_key(|(_, rs)| {
+                !rs.iter().any(|r| cases.contains(&r.case) && w.own.iter().any(|o| o.pos == r.pos && o.participle == r.participle))
+            });
             // an unknown word's candidates: prefer those agreeing with the adjective before it
             // (nepataiso visų zodziou -> žodžių, not žodžio)
             let i = toks.iter().position(|t| t.start == w.start).unwrap();
@@ -1319,6 +1323,9 @@ impl Grammar {
             let Some(prep) = PREP_LIST.iter().find(|p| fold(p) == f).copied() else { continue };
             if prep == w.lower || !w.known || i + 1 >= toks.len() || !adjacent[i + 1] {
                 continue;
+            }
+            if !adds_diacritics(&w.lower, prep) {
+                continue; // a typed diacritic is meant: vidurį nakties (not vidury)
             }
             let span = phrase(i, false);
             let cases = prep_cases(prep).unwrap();
