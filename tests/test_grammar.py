@@ -44,6 +44,16 @@ FLAGGED = [
     ("Gaminys buvo prastos kokybes.", "kokybes", "agreement", "kokybės"),
     ("Dizainas nesikeitė daugybę metu.", "metu", "quantity", "metų"),
     ("Neturiu laiką.", "laiką", "negation", "laiko"),
+    ("Neturiu tą gražią knygą.", "knygą", "negation", "knygos"),    # a demonstrative goes with its phrase
+    ("Neturiu tą gražią knygą.", "tą", "negation", "tos"),
+    ("Nemačiau šią knygą.", "knygą", "negation", "knygos"),         # šis is a pronoun, not a particle
+    ("Pamiršiu ši vakarą.", "ši", "agreement", "šį"),
+    ("Mačiau seni.", "seni", "object", "senį"),                     # a diacritic twin before senus
+    ("Ši kartą aš liksiu.", "Ši", "agreement", "Šį"),                # not karta: the typed ą is meant
+    ("Nemačiau tą filmą.", "tą", "negation", "to"),                  # the head's gender first
+    ("Turiu ta pati problema.", "pati", "object", "pačią"),          # pati after a demonstrative: "same"
+    ("Aš turiu šeima.", "šeima", "object", "šeimą"),                 # not seimą: a typed diacritic stays
+    ("Matau pirma kartą.", "pirma", "object", "pirmą"),             # pirma is an adverb too, pirmiausia mostly
     ("Nemačiau jį vakar.", "jį", "negation", "jo"),
     ("Nevalgau mėsą.", "mėsą", "negation", "mėsos"),
     ("Aš buvo namie.", "buvo", "subject", "buvau"),
@@ -364,6 +374,12 @@ CORRECT = [
     "Aš\nPablogėjo.",
     # a vocative-only noun reading of a word that reads otherwise too is no phrase's noun (toli, gali, seni);
     # per before a nominative phrase: the degree word or kas … per; an instrumental the verb governs
+    # šiuo metu is an adverbial of time; durations after a negated verb; the emphatic pronoun; an object already
+    # there; a nominative that is the next verb's subject
+    "Vienas iš šiuo metu veikiančių. Daug šiuo metu nevyksta. Neateik tą pačią dieną. Nenorėjau šį savaitgalį būti.",
+    "Turėsi vieną pati kada nors. Myliu tave visa siela. Manau ši perspektyva jums patinka.",
+    # an adverb, the emphatic pati, a reflexive infinitive, an instrumental noun: no object
+    "Filmai turi pirmiausia didelę vertę. Bandžiau pati, bet veltui. Turime keltis liftu. Myliu tave visa širdimi.",
     "Kas čia per vieta? Kas tai jau per vieta? Dabar mes kovojame vieni. Aš atėjau vienas.",
     "Tai per toli. Ką gali padaryti? Jie per seni. Per anksti išėjai. Ji per brangi.",
     "Per didelė rizika. Kas čia per vieta? Kas jūs per žmonės? Kas per velniava? Kas tai per kambarys?",

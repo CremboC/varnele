@@ -241,6 +241,12 @@ def pronoun(lemma, flags=""):
         stem = lemma[:-2]
         _decline(out, stem, ["as", "o", "am", "ą", "uo", "ame"], "P.sg")
         return out
+    if lemma == "šis":        # declined like jis; ispell-lt lists its forms as bare words
+        _decline(out, "š", ["is", "io", "iam", "į", "iuo", "iame"], "P.m.sg")
+        _decline(out, "š", ["ie", "ių", "iems", "iuos", "iais", "iuose"], "P.m.pl")
+        _decline(out, "š", ["i", "ios", "iai", "ią", "ia", "ioje"], "P.f.sg")
+        _decline(out, "š", ["ios", "ių", "ioms", "ias", "iomis", "iose"], "P.f.pl")
+        return out
     if lemma.endswith("oks"):
         stem = lemma[:-1]
         _decline(out, stem, ["s", "io", "iam", "į", "iu", "iame"], "P.m.sg")

@@ -23,10 +23,40 @@ domėti/TRSXZrw
 domi/EOSXZrw
 domėjo/POSXZrw
 
+# šis ("this"): ispell-lt lists its forms only as bare words (particles); the pronoun is declined like jis
+šis/C
+-šis/
+-šio/
+-šiam/
+-šį/
+-šiuo/
+-šiame/
+-šie/
+-šių/
+-šiems/
+-šiuos/
+-šiais/
+-šiuose/
+-ši/
+-šios/
+-šiai/
+-šią/
+-šia/
+-šioje/
+-šioms/
+-šias/
+-šiomis/
+-šiose/
+
 # pronouns that ispell-lt also lists as nouns: the noun reading hides them from agreement
 -šita/D
 -kita/D
 -tokia/ND
+
+# superlative adverbs ispell-lt has only as adjective forms: "first of all", "mostly" (filmai turi pirmiausia
+# didelę vertę: no object)
+pirmiausia
+daugiausia
 
 # ispell-lt lists a truncated "bereikal"; the adverb is bereikalo
 -bereikal

@@ -75,7 +75,7 @@ NEG_PRONOUNS = {"jį": "jo", "ją": "jos", "juos": "jų", "jas": "jų", "mane": 
 # ...except durations, which stay accusative: nedirbau visą dieną
 TIME_LEMMAS = {"diena", "naktis", "savaitė", "mėnuo", "metai", "valanda", "minutė", "sekundė",
                "kartas", "rytas", "vakaras", "žiema", "vasara", "pavasaris", "ruduo", "para",
-               "pusmetis", "dešimtmetis", "šimtmetis", "amžius", "laikotarpis", "popietė"}
+               "pusmetis", "dešimtmetis", "šimtmetis", "amžius", "laikotarpis", "popietė", "savaitgalis"}
 # Verbs that take a genitive object: laukiu tavo žinutės, reikia pagalbos, ieškau raktų
 # (principal parts, matched by ending so prefixed entries count)
 GENITIVE_VERBS = ("laukti", "laukia", "laukė", "ieškoti", "ieško", "ieškojo", "bijoti", "bijo", "bijojo",
@@ -84,6 +84,10 @@ VERB_PREFIXES = {"ap", "at", "į", "iš", "nu", "pa", "par", "per", "pra", "pri"
 POSSESSIVES = {"mano", "tavo", "savo", "jo", "jos", "jų", "mūsų", "jūsų"}
 # possessives a phrase steps over (not jo, jos, jų: also the pronouns' genitives, žino visas jo užnugaris)
 SPAN_POSSESSIVES = ("mano", "tavo", "savo", "mūsų", "jūsų")
+# the emphatic pronoun pats, pati ("self", "same"), listed as a noun (pati: wife) and bare words
+EMPHATIC = ("pats", "paties", "pačiam", "patį", "pačiu", "pačiame", "patys", "pačių", "patiems", "pačius", "pačiais",
+            "pačiuose", "pati", "pačios", "pačiai", "pačią", "pačia", "pačioje", "pačioms", "pačias", "pačiomis", "pačiose")
+PERSONAL_ACC = ("jį", "ją", "juos", "jas", "mane", "tave", "mus", "jus", "save")   # a verb's object already
 # A number ending in 0 or 11-19 takes the genitive plural: 10 metų, 15 eurų (not 2,5 or the ordinal 10.)
 GEN_NUMBER = re.compile(r"(?:^|[\s(–—-])(\d+)\s+$")
 TIME_WORDS = {"visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "ištisas"}
@@ -447,6 +451,10 @@ class Grammar:
         w = max((self.lemma_freq.get(a.lemma.lower(), 0) for a in analyses if a.tag == "W"), default=-1)
         return w > 0 and all(self.lemma_freq.get(a.lemma.lower(), 0) <= w for a in analyses)
 
+    def demonstrative(self, w):
+        """A form of tas, ta or šis: tą pačią, šią knygą."""
+        return any(a.lemma in ("tas", "ta", "šis") and a.tag.startswith("P.") for a in self.analyses(w))
+
     def pronoun_or_particle(self, w):
         """Only pronoun or particle readings: čia, tai, jūs (not vyko)."""
         an = self.analyses(w)
@@ -526,7 +534,7 @@ class Grammar:
             return bool(gap) and not any(c in ",.;:!?()" for c in gap)
         def head(t):          # not the emphatic pronoun, listed as a noun: Pati mačiau (I saw it myself); not a
             # capitalised word read only as a name (Puikiai girdžiu: the village Puikiai, not "perfectly")
-            return (any(r.pos == "noun" for r in t.own) and t.lower not in ("pats", "pati", "patys", "pačios")
+            return (any(r.pos == "noun" for r in t.own) and t.lower not in EMPHATIC
                     and not (t.text[:1].isupper() and all(a.lemma[:1].isupper() for a in self.analyses(t.text))))
 
         def mod(t):
@@ -695,11 +703,18 @@ class Grammar:
             span, j = [], i + 1
             while j < len(toks) and adjacent[j]:
                 w = toks[j]
+                if w.lower in KAS_FORMS:
+                    break         # apie ką ši istorija: kas is a phrase of its own
                 if span and w.lower in SPAN_POSSESSIVES and j + 1 < len(toks) and adjacent[j + 1]:
                     j += 1
                     continue      # tą mano didelę kavinę (not jo: žino visas jo užnugaris yra ...)
-                if span and not _could_agree(span[-1], w):
-                    break         # už didžiausią | tuo metu: a new phrase starts
+                ref = span[-2] if len(span) > 1 and span[-1].lower in EMPHATIC else span[-1] if span else None
+                if ref and not _could_agree(ref, w):
+                    break         # už didžiausią | tuo metu: a new phrase starts (tą pačią dieną: as with tą)
+                if w.lower in EMPHATIC and span and self.demonstrative(span[-1].text):
+                    span.append(w)        # tą pačią dieną: "same", a modifier (pati is listed as a noun, wife)
+                    j += 1
+                    continue
                 if w.is_noun:
                     span.append(w)
                     break
@@ -707,6 +722,10 @@ class Grammar:
                     break
                 span.append(w)
                 j += 1
+            # šiuo metu, tuo pačiu metu: an adverbial of time ("at this time"), the object of nothing
+            if (len(span) > 1 and any(a.lemma == "metas" for a in self.analyses(span[-1].text))
+                    and phrase_feats(span) and all(f[0] == "ins" for f in phrase_feats(span))):
+                return []
             return span
 
         def require(w, cases, rule, why):
@@ -1089,7 +1108,7 @@ class Grammar:
             if i + 1 >= len(toks) or not adjacent[i + 1]:
                 continue
             alls = self.analyses(w.text)
-            verbs = [a for a in alls if finite(a) or a.tag == "V.inf"]
+            verbs = [a for a in alls if finite(a) or a.tag.startswith("V.inf")]
             if not verbs or not self.mostly_verb(alls):
                 continue
             if any(r.pos == "adj" for r in w.own) and _could_agree(w, toks[i + 1]):
@@ -1100,7 +1119,8 @@ class Grammar:
             negated = any(a.prefix.startswith("ne") for a in verbs)
 
             if negated and not copula:
-                if nxt.lower in NEG_PRONOUNS:
+                # a pronoun alone; a demonstrative before its noun goes with the phrase (neturiu tą gražią knygą)
+                if nxt.lower in NEG_PRONOUNS and not (self.demonstrative(nxt.text) and len(phrase(i)) > 1):
                     add(Issue(nxt.start, nxt.end, nxt.text, "negation",
                               f"after the negated verb '{w.text}' use the genitive",
                               [nxt.cap(NEG_PRONOUNS[nxt.lower])]))
@@ -1125,6 +1145,9 @@ class Grammar:
                         why = f"after the negated verb '{w.text}' use the genitive"
                         if cases and cases <= {"acc"}:          # unambiguously accusative
                             fix = self.reinflect(x, lambda t: t.endswith(".acc"), case="gen")
+                            hg = {r.gender for r in span[-1].own if r.pos == "noun"} - {None}   # nemačiau tą filmą -> to
+                            if x is not span[-1] and hg:
+                                fix.sort(key=lambda f: not any(r.gender in hg for r in self.readings_of(f)))
                             if fix:
                                 add(Issue(x.start, x.end, x.text, "negation", why, fix))
                                 continue
@@ -1160,41 +1183,68 @@ class Grammar:
             if (persons and (persons <= {"1sg", "2sg", "1pl", "2pl"} or plain_transitive and subject_before(i))
                     and not copula and not negated and not any(a.tag.endswith(".refl") for a in verbs)):
                 k = i     # dar, jau and adverbs may stand between: mačiau labai gražų namą
+                has_object = False
                 while k + 1 < len(toks) and adjacent[k + 1] and (toks[k + 1].lower in OBJECT_SKIP or between(k + 1)):
+                    has_object |= toks[k + 1].lower in PERSONAL_ACC   # myliu tave visa siela: tave is the object
                     k += 1
-                span = phrase(k, participles=transitive)
+                span = [] if has_object else phrase(k, participles=transitive)
+                # a verb right after the phrase has it as its subject: manau ši perspektyva jums patinka
+                m = k + len(span) + 1
+                while m < len(toks) and m <= k + len(span) + 2 and adjacent[m] and between(m):
+                    m += 1
+                subject_of = (span and m < len(toks) and adjacent[m] and any(finite(a) for a in self.analyses(toks[m].text))
+                              and self.mostly_verb(self.analyses(toks[m].text)))
                 # a lone nominative adjective or pronoun in the verb's number agrees with its subject: kovojame
                 # vieni (alone), not an object
                 number = {"sg" if p in ("1sg", "2sg") else "pl" for p in persons if p != "3"}
-                if any(any(a.tag == "V.inf" for a in self.analyses(x.text)) for x in span) or (
+                if any(any(a.tag.startswith("V.inf") for a in self.analyses(x.text)) for x in span) or (
                         len(span) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(span[0].text))) or (
                         len(span) == 1 and len(number) == 1 and any(
-                            r.pos == "adj" and r.case == "nom" and r.number in number for r in span[0].own)):
-                    span = []     # turėtų būti suprantama, sutiko baigti; atsirado kartu (together)
+                            r.pos == "adj" and r.case == "nom" and r.number in number for r in span[0].own)) or any(
+                        x.lower in EMPHATIC and not (n and self.demonstrative(span[n - 1].text)) for n, x in enumerate(span)):
+                    span = []     # turėtų būti suprantama, turime keltis; atsirado kartu (together); bandžiau pati
                 allowed = {"nom", "voc", "ins"} if transitive else {"nom", "voc"}
                 # the whole phrase instrumental (radau nukritusia sagute), not tapusią vienuole; or
                 # only the modifiers, once the noun is fixed (radau nukritusia sagutę)
-                ins_phrase = transitive and all(any(r.case == "ins" for r in t.own) for t in span)
+                def acc_twins(x):     # same part of speech, number and gender (tuo metu is not metų)
+                    own = [r for r in x.own if r.case == "ins"]
+                    return [x.cap(f) for f, rs in x.variants
+                            if any(r.case == "acc" and r.pos == o.pos and r.number == o.number
+                                   and r.gender == o.gender for r in rs for o in own)]
+                # and the noun has an accusative twin (myliu visa širdimi: širdimi has none)
+                ins_phrase = (transitive and all(any(r.case == "ins" for r in t.own) for t in span)
+                              and bool(span) and bool(acc_twins(span[-1])))
                 head_acc = transitive and bool(span) and any(r.case == "acc" for r in span[-1].own)
-                if span and span[-1].is_noun and span[0].lower not in CLAUSE_WORDS:
+                # the noun can be an object: nominative or accusative as written, or an accusative twin (not myliu
+                # visa širdimi: the modifier agrees with an instrumental)
+                head_ok = span and ({r.case for r in span[-1].pos_readings()} & {"nom", "voc", "acc"} or ins_phrase)
+                if span and span[-1].is_noun and span[0].lower not in CLAUSE_WORDS and head_ok:
                     hn = [r for r in span[-1].own if r.pos == "noun"]
-                    for x in span:
+                    for n, x in enumerate(span):
+                        if x.lower.endswith("iausia") and n < len(span) - 2:
+                            continue      # a superlative adverb before a modifier: turi pirmiausia didelę vertę
                         if x is not span[-1] and hn and not any(
                                 (not r.number or not h.number or r.number == h.number)
                                 and (not r.gender or not h.gender or r.gender == h.gender) for r in x.own for h in hn):
                             continue      # mačiau dideli namą: the number is wrong, not the case (didelį, not didelius)
                         cases = {r.case for r in x.own}
                         fix = []
-                        if cases and cases <= allowed and cases & {"nom", "voc"}:
-                            fix = self.reinflect(x, lambda t: t.endswith((".nom", ".voc")) and ".voc" not in t,
-                                                 case="acc")
+                        if cases and cases <= allowed and cases & {"nom", "voc"} and not ("nom" in cases and subject_of):
+                            # a diacritic twin before a re-inflection: mačiau seni -> senį (not senus), in a number the
+                            # word has (not metas -> mėtas, mėta's plural), only adding diacritics (not šeima -> seimą),
+                            # its own lemma first (siena -> sieną, then šieną)
+                            nums = {r.number for r in x.own}
+                            lemmas = {a.lemma for a in self.analyses(x.text)}
+                            twins = [f for f, rs in x.variants if "nom" in cases and adds_diacritics(x.lower, f.lower())
+                                     and any(r.case == "acc" and r.number in nums for r in rs)]
+                            twins.sort(key=lambda f: not any(a.lemma in lemmas for a in self.analyses(f)))
+                            fix = []
+                            for f in [x.cap(f) for f in twins] + self.reinflect(
+                                    x, lambda t: t.endswith((".nom", ".voc")) and ".voc" not in t, case="acc"):
+                                if f not in fix:
+                                    fix.append(f)
                         if not fix and (ins_phrase or head_acc and x is not span[-1]) and cases <= {"ins", "voc"}:
-                            # radau nukritusia sagute -> nukritusią sagutę (the accusative lost its diacritic);
-                            # same part of speech, number and gender (tuo metu is not metų)
-                            own = [r for r in x.own if r.case == "ins"]
-                            fix = [x.cap(f) for f, rs in x.variants
-                                   if any(r.case == "acc" and r.pos == o.pos and r.number == o.number
-                                          and r.gender == o.gender for r in rs for o in own)]
+                            fix = acc_twins(x)    # radau nukritusia sagute -> nukritusią sagutę
                         if fix:
                             add(Issue(x.start, x.end, x.text, "object",
                                       f"the object of '{w.text}' takes the accusative", fix))
@@ -1221,7 +1271,7 @@ class Grammar:
                 k += 1
             span = phrase(k, participles=True)
             if (not span or not span[-1].is_noun or span[0].lower in CLAUSE_WORDS
-                    or any(any(a.tag == "V.inf" or finite(a) for a in cand_analyses(x)) for x in span)):
+                    or any(any(a.tag.startswith("V.inf") or finite(a) for a in cand_analyses(x)) for x in span)):
                 continue          # turi buti (būti, not būtį)
             for x in span:
                 acc = [x.cap(f) for f, rs in x.variants if any(r.case == "acc" for r in rs)]
@@ -1520,6 +1570,7 @@ class Grammar:
             if last.is_participle and any(t is head for t, _, _ in outliers) and not _could_agree_own(last, head):
                 continue          # the participle may govern the noun: vieną pašovęs strėle
             if any(t is first and (c > 1 or t.lower.endswith("iausia")       # pirmiausia, svarbiausia: adverbs
+                                   or any(a.tag.startswith("V.") and a.tag.endswith(".n") for a in self.analyses(t.text))   # galima: an impersonal predicate
                                    or j >= 0 and adjacent[j + 1] and is_copula(toks[j])
                                    or feats[0] == "acc" and any(a.lemma in TIME_LEMMAS for a in self.analyses(head.text)))
                    for t, c, _ in outliers):
@@ -1578,6 +1629,8 @@ class Grammar:
                 continue
             if not (a.is_adj and n.is_noun) or a.can_be_verb or a.lower in KAS_FORMS or a.lower.startswith("kažk"):
                 continue          # ką gali: kas is a phrase of its own
+            if n.lower in EMPHATIC and not self.demonstrative(a.text):
+                continue          # vieną pati: the emphatic pronoun (myself), not a noun
             no_gen = False
             if a.lower in ("vienas", "viena", "vieni", "vienos") and n.lower.startswith("kit"):
                 continue          # viena kitą = each other (but: vienos eilutes -> eilutės)
@@ -1656,6 +1709,10 @@ class Grammar:
                     fix_n = []
                 elif not any(r.case in PREPOSITIONS[prep] for r in nr):
                     fix_a = []
+            # a typed diacritic is meant: Ši kartą -> Šį (not karta), when the other word's fix only adds one
+            if (fix_n and fix_a and not prep and any(adds_diacritics(a.lower, f.lower()) for f in fix_a)
+                    and not any(adds_diacritics(n.lower, f.lower()) for f in fix_n)):
+                fix_n = []
             # otherwise change the word typed without diacritics: nedidele mergaitė -> nedidelė (not mergaite)
             if fix_a and not has_diacritics(a.text) and has_diacritics(n.text) and not prep:
                 fix_n = []

@@ -104,7 +104,7 @@ fn neg_pronoun(w: &str) -> Option<&'static str> {
 const TIME_LEMMAS: &[&str] = &[
     "diena", "naktis", "savaitė", "mėnuo", "metai", "valanda", "minutė", "sekundė", "kartas",
     "rytas", "vakaras", "žiema", "vasara", "pavasaris", "ruduo", "para", "pusmetis", "dešimtmetis",
-    "šimtmetis", "amžius", "laikotarpis", "popietė",
+    "šimtmetis", "amžius", "laikotarpis", "popietė", "savaitgalis",
 ];
 // Verbs that take a genitive object: laukiu tavo žinutės, reikia pagalbos, ieškau raktų
 const GENITIVE_VERBS: &[&str] = &[
@@ -178,6 +178,13 @@ const GREETINGS: &[&str] = &[
 ];
 const SUBJECT_PRONOUNS: &[&str] = &["aš", "tu", "jis", "ji", "mes", "jūs", "jie", "jos"];
 /// Between a subject pronoun and its verb (aš vakar buvo): not these
+/// the emphatic pronoun, listed as a noun (pati: wife)
+const EMPHATIC: &[&str] = &[
+    "pats", "paties", "pačiam", "patį", "pačiu", "pačiame", "patys", "pačių", "patiems", "pačius", "pačiais",
+    "pačiuose", "pati", "pačios", "pačiai", "pačią", "pačia", "pačioje", "pačioms", "pačias", "pačiomis", "pačiose",
+];
+/// a verb's object already: myliu tave visa siela
+const PERSONAL_ACC: &[&str] = &["jį", "ją", "juos", "jas", "mane", "tave", "mus", "jus", "save"];
 const SUBJECT_NO_SKIP: &[&str] = &["tai", "tas", "ta", "šis", "ši", "šiuo", "tuo", "tie", "tos", "ne", "nė", "nei", "ar", "jo", "jos", "jų"];
 /// A participial phrase does not run across these (plus CLAUSE_STARTERS and KURIS)
 const PHRASE_STOP: &[&str] = &["ir", "bei", "ar", "arba", "o", "bet", "nei", "negu", "kaip"];
@@ -566,6 +573,11 @@ impl<'a> G<'a> {
     }
 
     /// Every reading is an active participle (or a gerund): stovintis, nukritusią.
+    /// A form of tas, ta or šis: tą pačią, šią knygą.
+    fn demonstrative(&self, w: &str) -> bool {
+        self.analyses(w).iter().any(|a| matches!(a.lemma.as_str(), "tas" | "ta" | "šis") && self.tag(a).starts_with("P."))
+    }
+
     /// Only pronoun or particle readings: čia, tai, jūs (not vyko).
     fn pronoun_or_particle(&self, w: &str) -> bool {
         let an = self.analyses(w);
@@ -789,7 +801,7 @@ fn valency_phrase(g: &G, toks: &[Word], adjacent: &[bool], i: usize, after: bool
     // read only as a name (Puikiai girdžiu: the village Puikiai, not "perfectly")
     let head = |t: &Word| {
         t.own.iter().any(|r| r.pos == Pos::Noun)
-            && !["pats", "pati", "patys", "pačios"].contains(&t.lower.as_str())
+            && !EMPHATIC.contains(&t.lower.as_str())
             && !(first_upper(&t.text) && g.analyses(&t.text).iter().all(|a| first_upper(&a.lemma)))
     };
     let modi = |t: &Word| t.known && !t.own.is_empty() && t.own.iter().all(|r| r.pos == Pos::Adj);
@@ -1002,6 +1014,9 @@ impl Grammar {
             let mut j = i + 1;
             while j < toks.len() && adjacent[j] {
                 let w = &toks[j];
+                if KAS_FORMS.contains(&w.lower.as_str()) {
+                    break; // apie ką ši istorija: kas is a phrase of its own
+                }
                 if !span.is_empty()
                     && SPAN_POSSESSIVES.contains(&w.lower.as_str())
                     && j + 1 < toks.len()
@@ -1010,10 +1025,21 @@ impl Grammar {
                     j += 1;
                     continue; // tą mano didelę kavinę (not jo: žino visas jo užnugaris yra ...)
                 }
-                if let Some(&last) = span.last() {
+                // tą pačią dieną: as with tą
+                let r = if span.len() > 1 && EMPHATIC.contains(&toks[span[span.len() - 1]].lower.as_str()) {
+                    span.get(span.len() - 2)
+                } else {
+                    span.last()
+                };
+                if let Some(&last) = r {
                     if !could_agree(&g, &toks[last], w) {
                         break;
                     }
+                }
+                if EMPHATIC.contains(&w.lower.as_str()) && span.last().is_some_and(|&l| g.demonstrative(&toks[l].text)) {
+                    span.push(j); // tą pačią dieną: "same", a modifier (pati is listed as a noun, wife)
+                    j += 1;
+                    continue;
                 }
                 if w.is_noun(&g) {
                     span.push(j);
@@ -1024,6 +1050,14 @@ impl Grammar {
                 }
                 span.push(j);
                 j += 1;
+            }
+            // šiuo metu, tuo pačiu metu: an adverbial of time ("at this time"), the object of nothing
+            if span.len() > 1 && g.analyses(&toks[*span.last().unwrap()].text).iter().any(|a| a.lemma == "metas") {
+                let words: Vec<&Word> = span.iter().map(|&x| &toks[x]).collect();
+                let feats = phrase_feats(&words);
+                if !feats.is_empty() && feats.iter().all(|f| f.0 == "ins") {
+                    return Vec::new();
+                }
             }
             span
         };
@@ -1614,7 +1648,7 @@ impl Grammar {
                 continue;
             }
             let alls = g.analyses(&w.text);
-            let verbs: Vec<&Analysis> = alls.iter().filter(|a| g.finite(a) || g.tag(a) == "V.inf").collect();
+            let verbs: Vec<&Analysis> = alls.iter().filter(|a| g.finite(a) || g.tag(a).starts_with("V.inf")).collect();
             if verbs.is_empty() || !g.mostly_verb(&alls) {
                 continue;
             }
@@ -1628,7 +1662,10 @@ impl Grammar {
             let negated = verbs.iter().any(|a| a.prefix.starts_with("ne"));
 
             if negated && !copula {
-                if let Some(gen) = neg_pronoun(&nxt.lower) {
+                // a pronoun alone; a demonstrative before its noun goes with the phrase (neturiu tą gražią knygą)
+                let gen = neg_pronoun(&nxt.lower)
+                    .filter(|_| !(g.demonstrative(&nxt.text) && phrase(i, false).len() > 1));
+                if let Some(gen) = gen {
                     add(&mut issues, Issue {
                         start: nxt.start, end: nxt.end, word: nxt.text.clone(), rule: "negation",
                         message: format!("after the negated verb '{}' use the genitive", w.text),
@@ -1669,7 +1706,13 @@ impl Grammar {
                         let t = &toks[x];
                         let why = format!("after the negated verb '{}' use the genitive", w.text);
                         if !t.own.is_empty() && t.own.iter().all(|r| r.case == "acc") {
-                            let fix = g.reinflect(t, |tg| tg.ends_with(".acc"), Some("gen"));
+                            let mut fix = g.reinflect(t, |tg| tg.ends_with(".acc"), Some("gen"));
+                            // nemačiau tą filmą -> to, not tos
+                            let hg: Vec<Option<&str>> = toks[*span.last().unwrap()].own.iter()
+                                .filter(|r| r.pos == Pos::Noun && r.gender.is_some()).map(|r| r.gender).collect();
+                            if x != *span.last().unwrap() && !hg.is_empty() {
+                                fix.sort_by_key(|f| !g.readings_of(f).iter().any(|r| hg.contains(&r.gender)));
+                            }
                             if !fix.is_empty() {
                                 add(&mut issues, Issue {
                                     start: t.start, end: t.end, word: t.text.clone(), rule: "negation",
@@ -1734,36 +1777,69 @@ impl Grammar {
                 && !verbs.iter().any(|a| g.tag(a).ends_with(".refl"))
             {
                 let mut k = i; // dar, jau and adverbs may stand between: mačiau labai gražų namą
+                let mut has_object = false;
                 while k + 1 < toks.len() && adjacent[k + 1] && (OBJECT_SKIP.contains(&toks[k + 1].lower.as_str()) || between(k + 1)) {
+                    has_object |= PERSONAL_ACC.contains(&toks[k + 1].lower.as_str()); // myliu tave visa siela: tave is the object
                     k += 1;
                 }
-                let mut span = phrase(k, transitive);
+                let mut span = if has_object { Vec::new() } else { phrase(k, transitive) };
+                // a verb right after the phrase has it as its subject: manau ši perspektyva jums patinka
+                let mut m = k + span.len() + 1;
+                while m < toks.len() && m <= k + span.len() + 2 && adjacent[m] && between(m) {
+                    m += 1;
+                }
+                let subject_of = !span.is_empty() && m < toks.len() && adjacent[m] && {
+                    let an = g.analyses(&toks[m].text);
+                    an.iter().any(|a| g.finite(a)) && g.mostly_verb(&an)
+                };
                 // a lone nominative adjective or pronoun in the verb's number agrees with its subject: kovojame
                 // vieni (alone), not an object
                 let mut number: Vec<&str> = persons.iter().filter(|p| **p != "3")
                     .map(|p| if *p == "1sg" || *p == "2sg" { "sg" } else { "pl" }).collect();
                 number.sort();
                 number.dedup();
-                if span.iter().any(|&x| g.analyses(&toks[x].text).iter().any(|a| g.tag(a) == "V.inf"))
+                if span.iter().any(|&x| g.analyses(&toks[x].text).iter().any(|a| g.tag(a).starts_with("V.inf")))
                     || (span.len() == 1 && g.analyses(&toks[span[0]].text).iter().any(|a| matches!(g.tag(a), "W" | "Adv")))
                     || (span.len() == 1 && number.len() == 1 && toks[span[0]].own.iter().any(|r| {
                         r.pos == Pos::Adj && r.case == "nom" && r.number == Some(number[0])
                     }))
+                    || span.iter().enumerate().any(|(n, &x)| {
+                        EMPHATIC.contains(&toks[x].lower.as_str()) && !(n > 0 && g.demonstrative(&toks[span[n - 1]].text))
+                    })
                 {
-                    span.clear(); // turėtų būti suprantama, sutiko baigti; atsirado kartu (together)
+                    span.clear(); // turėtų būti suprantama, turime keltis; atsirado kartu (together); bandžiau pati
                 }
                 let allowed: &[&str] = if transitive { &["nom", "voc", "ins"] } else { &["nom", "voc"] };
                 // the whole phrase instrumental (radau nukritusia sagute), not tapusią vienuole; or
                 // only the modifiers, once the noun is fixed (radau nukritusia sagutę)
-                let ins_phrase = transitive && span.iter().all(|&x| toks[x].own.iter().any(|r| r.case == "ins"));
+                // same part of speech, number and gender (tuo metu is not metų)
+                let acc_twins = |t: &Word| -> Vec<String> {
+                    let own: Vec<&Reading> = t.own.iter().filter(|r| r.case == "ins").collect();
+                    t.variants(&g).iter()
+                        .filter(|(_, rs)| rs.iter().any(|r| r.case == "acc" && own.iter().any(|o| {
+                            r.pos == o.pos && r.number == o.number && r.gender == o.gender
+                        })))
+                        .map(|(f, _)| t.cap(f)).collect()
+                };
+                // and the noun has an accusative twin (myliu visa širdimi: širdimi has none)
+                let ins_phrase = transitive && span.iter().all(|&x| toks[x].own.iter().any(|r| r.case == "ins"))
+                    && !span.is_empty() && !acc_twins(&toks[*span.last().unwrap()]).is_empty();
                 let head_acc = transitive && !span.is_empty() && toks[*span.last().unwrap()].own.iter().any(|r| r.case == "acc");
+                // the noun can be an object: nominative or accusative as written, or an accusative twin (not myliu
+                // visa širdimi: the modifier agrees with an instrumental)
+                let head_ok = !span.is_empty()
+                    && (toks[*span.last().unwrap()].pos_readings(&g).iter().any(|r| matches!(r.case, "nom" | "voc" | "acc")) || ins_phrase);
                 if !span.is_empty()
                     && toks[*span.last().unwrap()].is_noun(&g)
                     && !CLAUSE_WORDS.contains(&toks[span[0]].lower.as_str())
+                    && head_ok
                 {
                     let hn: Vec<&Reading> = toks[*span.last().unwrap()].own.iter().filter(|r| r.pos == Pos::Noun).collect();
-                    for &x in &span {
+                    for (n, &x) in span.iter().enumerate() {
                         let t = &toks[x];
+                        if t.lower.ends_with("iausia") && n + 2 < span.len() {
+                            continue; // a superlative adverb before a modifier: turi pirmiausia didelę vertę
+                        }
                         if x != *span.last().unwrap()
                             && !hn.is_empty()
                             && !t.own.iter().any(|r| hn.iter().any(|h| {
@@ -1774,24 +1850,38 @@ impl Grammar {
                             continue; // mačiau dideli namą: the number is wrong, not the case (didelį, not didelius)
                         }
                         let mut fix: Vec<String> = Vec::new();
+                        let nom = t.own.iter().any(|r| r.case == "nom");
                         if !t.own.is_empty()
                             && t.own.iter().all(|r| allowed.contains(&r.case))
                             && t.own.iter().any(|r| r.case == "nom" || r.case == "voc")
+                            && !(nom && subject_of)
                         {
-                            fix = g.reinflect(t, |tg| tg.ends_with(".nom"), Some("acc"));
+                            // a diacritic twin before a re-inflection: mačiau seni -> senį (not senus), in a number the
+                            // word has (not metas -> mėtas, mėta's plural), only adding diacritics (not šeima -> seimą),
+                            // its own lemma first (siena -> sieną, then šieną)
+                            let lemmas: Vec<String> = g.analyses(&t.text).iter().map(|a| a.lemma.clone()).collect();
+                            let mut twins: Vec<String> = t.variants(&g).iter()
+                                .filter(|(f, rs)| nom && adds_diacritics(&t.lower, &lower(f))
+                                    && rs.iter().any(|r| r.case == "acc" && t.own.iter().any(|o| o.number == r.number)))
+                                .map(|(f, _)| f.clone()).collect();
+                            twins.sort_by_key(|f| !g.analyses(f).iter().any(|a| lemmas.contains(&a.lemma)));
+                            for f in twins {
+                                let f = t.cap(&f);
+                                if !fix.contains(&f) {
+                                    fix.push(f);
+                                }
+                            }
+                            for f in g.reinflect(t, |tg| tg.ends_with(".nom"), Some("acc")) {
+                                if !fix.contains(&f) {
+                                    fix.push(f);
+                                }
+                            }
                         }
                         if fix.is_empty()
                             && (ins_phrase || (head_acc && x != *span.last().unwrap()))
                             && t.own.iter().all(|r| r.case == "ins" || r.case == "voc")
                         {
-                            // radau nukritusia sagute -> nukritusią sagutę (the accusative lost its diacritic);
-                            // same part of speech, number and gender (tuo metu is not metų)
-                            let own: Vec<&Reading> = t.own.iter().filter(|r| r.case == "ins").collect();
-                            fix = t.variants(&g).iter()
-                                .filter(|(_, rs)| rs.iter().any(|r| r.case == "acc" && own.iter().any(|o| {
-                                    r.pos == o.pos && r.number == o.number && r.gender == o.gender
-                                })))
-                                .map(|(f, _)| t.cap(f)).collect();
+                            fix = acc_twins(t); // radau nukritusia sagute -> nukritusią sagutę
                         }
                         if !fix.is_empty() {
                             add(&mut issues, Issue {
@@ -1835,7 +1925,7 @@ impl Grammar {
             if span.is_empty()
                 || !toks[*span.last().unwrap()].is_noun(&g)
                 || CLAUSE_WORDS.contains(&toks[span[0]].lower.as_str())
-                || span.iter().any(|&x| cand_analyses(&toks[x]).iter().any(|a| g.tag(a) == "V.inf" || g.finite(a)))
+                || span.iter().any(|&x| cand_analyses(&toks[x]).iter().any(|a| g.tag(a).starts_with("V.inf") || g.finite(a)))
             {
                 continue; // turi buti (būti, not būtį)
             }
@@ -2305,6 +2395,7 @@ impl Grammar {
                 o.0 == first
                     && (o.1 > 1
                         || toks[o.0].lower.ends_with("iausia") // pirmiausia, svarbiausia: adverbs
+                        || g.analyses(&toks[o.0].text).iter().any(|a| g.tag(a).starts_with("V.") && g.tag(a).ends_with(".n")) // galima: an impersonal predicate
                         || (j >= 0 && adjacent[j as usize + 1] && is_copula(&toks[j as usize]))
                         || (f.0 == "acc" && g.analyses(&head.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()))))
             }) {
@@ -2407,6 +2498,9 @@ impl Grammar {
             if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) || KAS_FORMS.contains(&a.lower.as_str()) || a.lower.starts_with("kažk") {
                 // ką gali: kas is a phrase of its own
                 continue;
+            }
+            if EMPHATIC.contains(&n.lower.as_str()) && !g.demonstrative(&a.text) {
+                continue; // vieną pati: the emphatic pronoun (myself), not a noun
             }
             // viena kitą = each other (but: vienos eilutes -> eilutės)
             if ["vienas", "viena", "vieni", "vienos"].contains(&a.lower.as_str()) && n.lower.starts_with("kit") {
@@ -2519,6 +2613,13 @@ impl Grammar {
                         fix_a.clear();
                     }
                 }
+            }
+            // a typed diacritic is meant: Ši kartą -> Šį (not karta), when the other word's fix only adds one
+            if !fix_n.is_empty() && !fix_a.is_empty() && prep.is_none()
+                && fix_a.iter().any(|f| adds_diacritics(&a.lower, &lower(f)))
+                && !fix_n.iter().any(|f| adds_diacritics(&n.lower, &lower(f)))
+            {
+                fix_n.clear();
             }
             // otherwise change the word typed without diacritics: nedidele mergaitė -> nedidelė (not mergaite)
             if !fix_a.is_empty() && !has_diacritics(&a.text) && has_diacritics(&n.text) && prep.is_none() {
