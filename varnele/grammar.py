@@ -100,7 +100,9 @@ TIME_WORDS = {"visą", "visus", "visas", "kiekvieną", "ištisą", "ištisus", "
 TRANSITIVE_VERBS = ("matyti", "mato", "matė", "rasti", "randa", "rado", "turėti", "turi", "turėjo",
                     "gauti", "gauna", "gavo", "pirkti", "perka", "pirko", "žinoti", "žino", "žinojo",
                     "mylėti", "myli", "mylėjo", "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko",
-                    "skaityti", "skaito", "skaitė")
+                    "skaityti", "skaito", "skaitė",
+                    # matched only by their ending before verb_of (grąžino ends like žino): transitive in their own right
+                    "grąžinti", "grąžina", "grąžino", "mažinti", "mažina", "mažino", "ragauti", "ragauja", "ragavo")
 # words that may stand between a verb and its object: matau dar vieną klaidą
 OBJECT_SKIP = {"dar", "jau", "vėl", "irgi", "tik", "net"}
 # verbs of seeing, knowing and saying that take an indirect question: matau, ką man rašo
@@ -144,7 +146,7 @@ NOMINATIVE_COPULAS = {"būti", "buvo", "būna", "esa", "yra", "atrodyti", "atrod
 # Participles of these verbs take a predicate instrumental, not an agreeing noun:
 # tapusią vienuole, išrinktas prezidentu, vadinamas tėvu, laikomas didvyriu.
 # Principal parts; matched by ending so prefixed entries (išrinkti) count too.
-PREDICATIVE_VERBS = ("būti", "buvo", "būna", "esa", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
+PREDICATIVE_VERBS = ("būti", "buvo", "būna", "esa", "nesa", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
                      "atrodyti", "atrodė", "atrodo", "vadinti", "vadino", "vadina", "vadintis",
                      "laikyti", "laikė", "laiko", "rinkti", "rinko", "renka", "skirti", "skyrė", "skiria",
                      "pažinti", "pažino", "pažįsta", "skelbti", "skelbė", "skelbia", "tituluoti",
@@ -960,6 +962,9 @@ class Grammar:
                     j += 1
                 else:
                     cands = []
+                if cands and j + 1 < len(toks) and adjacent[j + 1] and toks[j + 1].own and all(
+                        r.case == "acc" for r in toks[j + 1].own):
+                    cands = []    # the verb has its object: baladę, kuria susigrąžinčiau vyrą
                 if cands:
                     add(Issue(w.start, w.end, w.text, "relative",
                               f"'{toks[j].text}' takes an accusative object", [w.cap(c) for c in cands]))
@@ -1149,7 +1154,8 @@ class Grammar:
                 verbs = alls if aux else []
             if not verbs or not self.mostly_verb(alls):
                 continue
-            if any(r.pos == "adj" for r in w.own) and _could_agree(w, toks[i + 1]):
+            aux_intransitive = bool(aux) and not any(verb_of(a.lemma, TRANSITIVE_VERBS) for a in verbs)
+            if (not aux or aux_intransitive) and any(r.pos == "adj" for r in w.own) and _could_agree(w, toks[i + 1]):
                 continue          # Atskiri ruožai: an adjective agreeing with its noun, not "you separate"; esi suaugęs vyras
             lemmas = {a.lemma for a in verbs} | {w.lower}
             copula = bool(lemmas & COPULAS) or w.lower in COPULA_FORMS
@@ -1223,7 +1229,8 @@ class Grammar:
                                        for v in TRANSITIVE_VERBS) and "si" not in a.prefix for a in verbs)
             # objects after a 1st/2nd person verb can't be its subject: matau namas -> namą;
             # nor after a 3rd person transitive verb whose subject came before it: Jonas mato namas
-            if (persons and (persons <= {"1sg", "2sg", "1pl", "2pl"} or plain_transitive and subject_before(i))
+            # a compound past makes an object only with a transitive participle (esame suaugę žmonės: a predicate)
+            if (persons and not aux_intransitive and (persons <= {"1sg", "2sg", "1pl", "2pl"} or plain_transitive and subject_before(i))
                     and not copula and not negated and not any(a.tag.endswith(".refl") for a in verbs)):
                 k = i     # dar, jau and adverbs may stand between: mačiau labai gražų namą
                 has_object = False

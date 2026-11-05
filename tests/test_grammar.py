@@ -46,6 +46,8 @@ FLAGGED = [
     ("Neturiu laiką.", "laiką", "negation", "laiko"),
     ("Neturiu tą gražią knygą.", "knygą", "negation", "knygos"),    # a demonstrative goes with its phrase
     ("Aš nesu praradusi viltį.", "viltį", "negation", "vilties"),    # a compound past: nesu + participle
+    ("Esu matęs šitas filmas.", "filmas", "object", "filmą"),          # a transitive one makes an object
+    ("Grąžinau tavo knyga.", "knyga", "object", "knygą"),
     ("Neturiu tą gražią knygą.", "tą", "negation", "tos"),
     ("Neturiu tas knygas.", "tas", "negation", "tų"),                # tas: nom sg or acc pl, the noun decides
     ("Nemačiau šią knygą.", "knygą", "negation", "knygos"),         # šis is a pronoun, not a particle
@@ -386,6 +388,8 @@ CORRECT = [
     "Pabundu vidurį nakties. Jis atėjo vidurį nakties. Dydžio y pokytį.",  # a typed į is meant; y is its own key
     "Esi suaugęs vyras. Nesu jojusi drambliu!",                         # a participle agreeing with its noun
     "Noriu, kad pasimėgautum šia akimirka. Pasimėgauk laisva diena.",    # mėgauti only ends like gauti
+    "Bet esame suaugę žmonės, pamirškime tai. Buvai prisisiurbęs it erkė.",   # an intransitive compound past
+    "Sukurti baladę, kuria susigrąžinčiau vyrą. Ji, nesanti vienuole, išėjo.",
     "Čia stovi pirmasis mūrinis pastatas. Ką manai apie šiuos ašmenis?",   # -ys nouns
     "Kas čia per vieta? Kas tai jau per vieta? Dabar mes kovojame vieni. Aš atėjau vienas.",
     "Tai per toli. Ką gali padaryti? Jie per seni. Per anksti išėjai. Ji per brangi.",

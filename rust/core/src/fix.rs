@@ -122,7 +122,14 @@ pub fn word_context(before: &str) -> String {
     let start = chars.iter().rposition(|c| ".!?…\n".contains(*c)).map_or(0, |i| i + 1);
     let runs = letter_runs(&chars[start..]);
     let words: Vec<String> = runs.iter().map(|&(a, b)| chars[start + a..start + b].iter().collect()).collect();
-    words[words.len().saturating_sub(CONTEXT_WORDS)..].join(" ")
+    let mut context = words[words.len().saturating_sub(CONTEXT_WORDS)..].join(" ");
+    // a colon, an opening quote or a dash right before: the next capital may start a sentence (Pastaba: Siandien)
+    if let Some(c) = before.trim_end().chars().last().filter(|c| ":„“\"«(–—-".contains(*c)) {
+        if !context.is_empty() {
+            context.push(c);
+        }
+    }
+    context
 }
 
 impl KeyboardWord {

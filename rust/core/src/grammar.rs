@@ -147,6 +147,8 @@ const TRANSITIVE_VERBS: &[&str] = &[
     "matyti", "mato", "matė", "rasti", "randa", "rado", "turėti", "turi", "turėjo", "gauti", "gauna",
     "gavo", "pirkti", "perka", "pirko", "žinoti", "žino", "žinojo", "mylėti", "myli", "mylėjo",
     "girdėti", "girdi", "girdėjo", "sutikti", "sutinka", "sutiko", "skaityti", "skaito", "skaitė",
+    // matched only by their ending before verb_of (grąžino ends like žino): transitive in their own right
+    "grąžinti", "grąžina", "grąžino", "mažinti", "mažina", "mažino", "ragauti", "ragauja", "ragavo",
 ];
 /// Words that may stand between a verb and its object: matau dar vieną klaidą
 const OBJECT_SKIP: &[&str] = &["dar", "jau", "vėl", "irgi", "tik", "net"];
@@ -198,7 +200,7 @@ const COPULAS: &[&str] = &[
 /// Participles of these verbs take a predicate instrumental (tapusią vienuole);
 /// matched by ending so prefixed entries (išrinkti) count too.
 const PREDICATIVE_VERBS: &[&str] = &[
-    "būti", "buvo", "būna", "esa", "tapti", "tapo", "tampa", "likti", "liko", "lieka", "atrodyti",
+    "būti", "buvo", "būna", "esa", "nesa", "tapti", "tapo", "tampa", "likti", "liko", "lieka", "atrodyti",
     "atrodė", "atrodo", "vadinti", "vadino", "vadina", "vadintis", "laikyti", "laikė", "laiko",
     "rinkti", "rinko", "renka", "skirti", "skyrė", "skiria", "pažinti", "pažino", "pažįsta", "skelbti",
     "skelbė", "skelbia", "tituluoti", "titulavo", "tituluoja", "dirbti", "dirbo", "dirba", "gimti",
@@ -1429,6 +1431,9 @@ impl Grammar {
                 if !hit {
                     cands.clear();
                 }
+                if j + 1 < toks.len() && adjacent[j + 1] && !toks[j + 1].own.is_empty() && toks[j + 1].own.iter().all(|r| r.case == "acc") {
+                    cands.clear(); // the verb has its object: baladę, kuria susigrąžinčiau vyrą
+                }
                 if !cands.is_empty() {
                     add(&mut issues, Issue {
                         start: w.start, end: w.end, word: w.text.clone(), rule: "relative",
@@ -1712,7 +1717,8 @@ impl Grammar {
             if verbs.is_empty() || !g.mostly_verb(&alls) {
                 continue;
             }
-            if w.own.iter().any(|r| r.pos == Pos::Adj) && could_agree(&g, w, &toks[i + 1]) {
+            let aux_intransitive = !aux.is_empty() && !verbs.iter().any(|a| verb_of(&a.lemma, TRANSITIVE_VERBS));
+            if (aux.is_empty() || aux_intransitive) && w.own.iter().any(|r| r.pos == Pos::Adj) && could_agree(&g, w, &toks[i + 1]) {
                 continue; // esi suaugęs vyras: a participle agreeing with its noun
             }
             let copula = verbs.iter().any(|a| COPULAS.contains(&a.lemma.as_str()))
@@ -1848,7 +1854,9 @@ impl Grammar {
             });
             // objects after a 1st/2nd person verb can't be its subject: matau namas -> namą;
             // nor after a 3rd person transitive verb whose subject came before it: Jonas mato namas
+            // a compound past makes an object only with a transitive participle (esame suaugę žmonės: a predicate)
             if !persons.is_empty()
+                && !aux_intransitive
                 && (persons.iter().all(|p| ["1sg", "2sg", "1pl", "2pl"].contains(p)) || (plain_transitive && subject_before(i)))
                 && !copula
                 && !negated
