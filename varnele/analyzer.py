@@ -112,7 +112,12 @@ def _allowed(kind, flags, tag, neg, vi, si):
             return not si or bool(set(flags) & set("ROS"))
         return (REFL_PREFIX_FLAGS if si else PLAIN_PREFIX_FLAGS)[vi] in flags
     if si:
-        return neg in ("ne", "nebe", "be", "tebe") and "S" in flags
+        # ispell-lt's S (ne-si-, be-si-), or a reflexive (R, O) of a verb that takes the prefix: N for ne-, X for
+        # be- (jaudinti/TRNX: nesijaudink, besijaudinantis)
+        refl_ok = "R" in flags or "O" in flags
+        return (neg in ("ne", "nebe", "be", "tebe") and "S" in flags
+                or neg in ("ne", "nebe") and refl_ok and "N" in flags
+                or neg in ("be", "tebe") and refl_ok and "X" in flags)
     if neg in ("ne", "nebe"):
         return "N" in flags or "S" in flags
     if neg:

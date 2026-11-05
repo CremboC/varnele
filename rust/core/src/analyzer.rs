@@ -152,7 +152,12 @@ pub(crate) fn allowed(kind: Kind, flags: &str, tag: &str, neg: &str, vi: i32, si
         return flags.as_bytes().contains(&table[vi as usize]);
     }
     if !si.is_empty() {
-        return matches!(neg, "ne" | "nebe" | "be" | "tebe") && flags.contains('S');
+        // ispell-lt's S (ne-si-, be-si-), or a reflexive (R, O) of a verb that takes the prefix: N for ne-, X for
+        // be- (jaudinti/TRNX: nesijaudink, besijaudinantis)
+        let refl_ok = flags.contains('R') || flags.contains('O');
+        return (matches!(neg, "ne" | "nebe" | "be" | "tebe") && flags.contains('S'))
+            || (matches!(neg, "ne" | "nebe") && refl_ok && flags.contains('N'))
+            || (matches!(neg, "be" | "tebe") && refl_ok && flags.contains('X'));
     }
     if neg == "ne" || neg == "nebe" {
         return flags.contains('N') || flags.contains('S');

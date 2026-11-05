@@ -29,7 +29,8 @@ INVALID = "medžyje jaučie nedžiaugiasi nusipraustis apbūdina gerasias dirban
 # a reflexive-only verb has plain forms only with -si-: didžiuoju is the instrumental of didysis, not "I am
 # proud"; gėrimas is a drink, not a participle of gėrėtis
 NOT_PLAIN_VERB = "didžiuoju didžiuoja elgia gėrimas gėrimo blaivus".split()
-SI_PREFIXED = "nesidomiu nesijuokiu nesidžiaugiu nesielgiu besidžiaugiantis nesididžiuoju".split()
+SI_PREFIXED = ("nesidomiu nesijuokiu nesidžiaugiu nesielgiu besidžiaugiantis nesididžiuoju "
+               "nesijaudink nesijaudinu besijaudinantis").split()   # jaudinti/TRNX: R and N make ne-si- (no S)
 # forms ispell-lt also lists with only a reflexive flag (buvo/O, saugo/R): verbs, not particles
 NOT_PARTICLE = "buvo saugo būna didžiuotis darbinti".split()
 

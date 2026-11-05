@@ -1102,7 +1102,11 @@ Left deliberately:
 - Rare twins in different cases when the grammar doesn't decide: the verb right next to the word decides by its
   valency counts on that side (`Masina stovi kieme`, `Mano masina neveikia` → `mašina`; `vairuoja masina` →
   `mašiną`; `Grammar.verb_fit`, 2026-11-05), else frequency (`Masina kieme`: both offered, the keyboard takes
-  `Mašiną`). Not reached: a verb further away (`Sita knyga buvo išversta` still gets `Šitą knygą`).
+  `Mašiną`). Not reached: a verb further away (`Sita knyga buvo išversta` still gets `Šitą knygą`: autocorrect
+  takes `Šitą` for the unknown `Sita` by frequency, then makes `knyga` agree with its own guess when it commits it;
+  the sentence fixer's soft re-decision comes too late. The 4 correct Tatoeba words the keyboard changes in 2,000
+  sentences are all this. A fix needs autocorrect's context to show the keyboard's guesses as typed: the JNI `word`
+  call would need the fixer's soft words; tried in the fixer alone, it changed nothing).
 - **Statistics for diacritic twins: tried 2026-10-21, not shipped.** A class-bigram model
   (POS+case labels, top function words lexicalised, one EM step) trained on corpus/freq.
   Choosing between same-lemma twins that only add diacritics: at a 100:1 likelihood ratio
@@ -1198,8 +1202,9 @@ Left deliberately:
   `bičas`/`biče` (data/extra.txt). The name rule capitalises little else in the subtitle test set: of 2,953
   capitalised predictions shown, 29 are words the subtitles write lowercase, English (`Oh`, `You`, `Of`,
   `Ho`, as written in the context) and `Bičas`. Frequent lowercase subtitle words still unknown:
-  `nesijaudink` (822), `nesijaudinu`: ispell-lt has `jaudinti/TRNX`, no `S`, so ne+si is refused (R + N
-  without S may be a general gap); `didžiuojuosi` done (2026-11-04, data/extra.txt: other verbs listed in ispell-lt only
+  `nesijaudink` (822), `nesijaudinu`: done 2026-11-05, `-si-` after `ne-`/`nebe-` is allowed for a verb with a
+  reflexive flag (R, O) and N, after `be-`/`tebe-` with R/O and X, S or not (`_allowed` / `analyzer::allowed`): 664
+  tokens in half the 4.5M-word subtitle sample stop being unknown, all real (`nesikandžioja`, `nesikraustyti`); `didžiuojuosi` done (2026-11-04, data/extra.txt: other verbs listed in ispell-lt only
   as bare `word/R` entries may lack a paradigm the same way);
   spoken vocatives `drauguži`, `brolau`, `berniuk`, `mergyt`, `vyruti`, `brangute`; `bliamba`, `vistiek`, `nėr`.
 - Keyboard: completions for half-typed words (now we show corrections);
