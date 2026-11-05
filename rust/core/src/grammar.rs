@@ -256,6 +256,12 @@ fn copula_prefix(prefix: &str) -> bool {
     }
     COPULA_PREFIXES.contains(&vp)
 }
+/// The lemma is one of these verbs or a verbal prefix plus one (pamato), not a verb that only ends like one
+/// (pasimėgauti is no gauti).
+fn verb_of(lemma: &str, verbs: &[&str]) -> bool {
+    verbs.iter().any(|v| lemma == *v || (lemma.ends_with(v) && VERB_PREFIXES.contains(&&lemma[..lemma.len() - v.len()])))
+}
+
 fn has_diacritics(w: &str) -> bool {
     w.chars().any(|c| "ąčęėįšųūžĄČĘĖĮŠŲŪŽ".contains(c))
 }
@@ -1409,7 +1415,7 @@ impl Grammar {
                     let an_j = g.analyses(&toks[j].text);
                     // (skaičiau is a verb here although the noun skaičius is more frequent)
                     if an_j.iter().any(|a| {
-                        g.finite(a) && TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v))
+                        g.finite(a) && verb_of(&a.lemma, TRANSITIVE_VERBS)
                             && !a.prefix.starts_with("ne") && !g.tag(a).ends_with(".refl")
                     }) {
                         hit = true;
@@ -1486,7 +1492,7 @@ impl Grammar {
                 continue;
             }
             let pa = g.analyses(&prev.text);
-            if !(pa.iter().any(|a| g.finite(a) && QUESTION_VERBS.iter().any(|v| a.lemma.ends_with(v))) && g.mostly_verb(&pa)) {
+            if !(pa.iter().any(|a| g.finite(a) && verb_of(&a.lemma, QUESTION_VERBS)) && g.mostly_verb(&pa)) {
                 continue;
             }
             // the question needs a verb of its own
@@ -1823,7 +1829,12 @@ impl Grammar {
             } else {
                 aux.iter().map(|a| g.parts(a)[2].as_str()).collect()
             };
-            let transitive = verbs.iter().any(|a| TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)));
+            // by a real prefix (pamato; not pasimėgauti, which only ends like gauti)
+            let transitive = verbs.iter().any(|a| {
+                TRANSITIVE_VERBS.iter().any(|v| {
+                    a.lemma == *v || (a.lemma.ends_with(v) && VERB_PREFIXES.contains(&&a.lemma[..a.lemma.len() - v.len()]))
+                })
+            });
             // a real prefix, not reflexive: pamato, nupirko (not atsirado = atsi+rado)
             let plain_transitive = verbs.iter().any(|a| {
                 TRANSITIVE_VERBS.iter().any(|v| {
@@ -1975,7 +1986,7 @@ impl Grammar {
             }
             if verbs.iter().any(|a| COPULAS.contains(&a.lemma.as_str())) || COPULA_FORMS.contains(&w.lower.as_str())
                 || verbs.iter().any(|a| a.prefix.starts_with("ne") || g.tag(a).ends_with(".refl"))
-                || !verbs.iter().any(|a| TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)))
+                || !verbs.iter().any(|a| verb_of(&a.lemma, TRANSITIVE_VERBS))
             {
                 continue;
             }
@@ -2392,7 +2403,7 @@ impl Grammar {
             let last = &toks[lastk];
             if idx[..idx.len() - 1].iter().any(|&j| {
                 toks[j].is_participle(&g)
-                    && g.analyses(&toks[j].text).iter().any(|a| PREDICATIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)))
+                    && g.analyses(&toks[j].text).iter().any(|a| verb_of(&a.lemma, PREDICATIVE_VERBS))
             }) {
                 continue; // tapusią vienuole
             }
@@ -2588,7 +2599,7 @@ impl Grammar {
                         && !phrase_stop(&toks[j + 1].lower));
                 if j > i && a.known && n.known && hd.known && !ar.is_empty() && more
                     && !(i >= 2 && adjacent[i - 1] && g.analyses(&toks[i - 2].text).iter().any(|x| {
-                        g.tag(x).starts_with("V.") && PREDICATIVE_VERBS.iter().any(|v| x.lemma.ends_with(v))
+                        g.tag(x).starts_with("V.") && verb_of(&x.lemma, PREDICATIVE_VERBS)
                     }))
                 {
                     let gr: Vec<&Reading> = n.own.iter().filter(|r| r.pos == Pos::Noun && r.case == "gen").collect();
@@ -2623,7 +2634,7 @@ impl Grammar {
                 && !necessity
                 && (n.can_be(&g, "acc")
                     || n.can_be(&g, "loc")
-                    || g.analyses(&a.text).iter().any(|x| PREDICATIVE_VERBS.iter().any(|v| x.lemma.ends_with(v))))
+                    || g.analyses(&a.text).iter().any(|x| verb_of(&x.lemma, PREDICATIVE_VERBS)))
             {
                 continue;
             }
@@ -2866,7 +2877,7 @@ impl Grammar {
                     // yra ir aukščiausiu kalnu pasaulyje
                     own.iter().any(|r| r.case == "ins")
                         && (COPULA_FORMS.contains(&t.lower.as_str())
-                            || g.analyses(&t.text).iter().any(|a| g.tag(a).starts_with("V.") && PREDICATIVE_VERBS.iter().any(|v| a.lemma.ends_with(v))))
+                            || g.analyses(&t.text).iter().any(|a| g.tag(a).starts_with("V.") && verb_of(&a.lemma, PREDICATIVE_VERBS)))
                 };
                 j -= 1;
             }

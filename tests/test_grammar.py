@@ -384,6 +384,7 @@ CORRECT = [
     "Filmai turi pirmiausia didelę vertę. Bandžiau pati, bet veltui. Turime keltis liftu. Myliu tave visa širdimi.",
     "Pabundu vidurį nakties. Jis atėjo vidurį nakties. Dydžio y pokytį.",  # a typed į is meant; y is its own key
     "Esi suaugęs vyras. Nesu jojusi drambliu!",                         # a participle agreeing with its noun
+    "Noriu, kad pasimėgautum šia akimirka. Pasimėgauk laisva diena.",    # mėgauti only ends like gauti
     "Kas čia per vieta? Kas tai jau per vieta? Dabar mes kovojame vieni. Aš atėjau vienas.",
     "Tai per toli. Ką gali padaryti? Jie per seni. Per anksti išėjai. Ji per brangi.",
     "Per didelė rizika. Kas čia per vieta? Kas jūs per žmonės? Kas per velniava? Kas tai per kambarys?",

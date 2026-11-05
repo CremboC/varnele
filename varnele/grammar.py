@@ -218,6 +218,12 @@ def _load_pairs():
     return out
 
 
+def verb_of(lemma, verbs):
+    """The lemma is one of these verbs or a verbal prefix plus one (pamato), not a verb that only ends like one
+    (pasimėgauti is no gauti)."""
+    return any(lemma == v or lemma.endswith(v) and lemma[:-len(v)] in VERB_PREFIXES for v in verbs)
+
+
 def has_diacritics(w):
     return any(c in "ąčęėįšųūžĄČĘĖĮŠŲŪŽ" for c in w)
 
@@ -945,7 +951,7 @@ class Grammar:
                 while j < len(toks) and j <= i + 2 and adjacent[j] and not toks[j].lower in PHRASE_STOP:
                     an_j = self.analyses(toks[j].text)
                     # (skaičiau is a verb here although the noun skaičius is more frequent)
-                    if any(finite(a) and a.lemma.endswith(TRANSITIVE_VERBS) and not a.prefix.startswith("ne")
+                    if any(finite(a) and verb_of(a.lemma, TRANSITIVE_VERBS) and not a.prefix.startswith("ne")
                            and not a.tag.endswith(".refl") for a in an_j):
                         break
                     if any(finite(a) for a in an_j) and self.mostly_verb(an_j):
@@ -992,7 +998,7 @@ class Grammar:
                           [", " + w.text]))
                 continue
             pa = self.analyses(prev.text)
-            if not (any(finite(a) and a.lemma.endswith(QUESTION_VERBS) for a in pa) and self.mostly_verb(pa)):
+            if not (any(finite(a) and verb_of(a.lemma, QUESTION_VERBS) for a in pa) and self.mostly_verb(pa)):
                 continue
             j, verb_follows = i + 1, False       # the question needs a verb of its own
             while j < len(toks) and j <= i + 5 and adjacent[j]:
@@ -1207,7 +1213,9 @@ class Grammar:
                 continue
 
             persons = {a.tag.split(".")[2] for a in (aux or verbs) if finite(a)}
-            transitive = any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)
+            # by a real prefix (pamato; not pasimėgauti, which only ends like gauti)
+            transitive = any(any(a.lemma == v or a.lemma.endswith(v) and a.lemma[:-len(v)] in VERB_PREFIXES
+                                 for v in TRANSITIVE_VERBS) for a in verbs)
             # a real prefix, not reflexive: pamato, nupirko (not atsirado = atsi+rado)
             plain_transitive = any(any(a.lemma == v or a.lemma.endswith(v) and a.lemma[:-len(v)] in VERB_PREFIXES
                                        for v in TRANSITIVE_VERBS) and "si" not in a.prefix for a in verbs)
@@ -1297,7 +1305,7 @@ class Grammar:
                 continue
             if (any(a.lemma in COPULAS for a in verbs) or w.lower in COPULA_FORMS
                     or any(a.prefix.startswith("ne") or a.tag.endswith(".refl") for a in verbs)
-                    or not any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)):
+                    or not any(verb_of(a.lemma, TRANSITIVE_VERBS) for a in verbs)):
                 continue
             k = i
             while k + 1 < len(toks) and adjacent[k + 1] and (toks[k + 1].lower in OBJECT_SKIP or between(k + 1)):
@@ -1564,7 +1572,7 @@ class Grammar:
                     and any(r.pos in ("adj", "noun") for r in toks[h + 1].own)):
                 continue          # an adjective that is also a noun, before more: pirmasis mūrinis pastatas
             last = toks[max(mods)]
-            if any(t.is_participle and any(a.lemma.endswith(PREDICATIVE_VERBS) for a in self.analyses(t.text))
+            if any(t.is_participle and any(verb_of(a.lemma, PREDICATIVE_VERBS) for a in self.analyses(t.text))
                    for t in words[:-1]):
                 continue          # tapusią vienuole
             if (last.is_participle and (head.can_be("acc") or head.can_be("loc"))
@@ -1687,7 +1695,7 @@ class Grammar:
                                                             not in PREPOSITIONS and toks[j + 1].lower not in PHRASE_STOP)
                 if (j > i and a.known and n.known and hd.known and ar and more
                         and not (i >= 2 and adjacent[i - 1] and any(
-                            x.tag.startswith("V.") and x.lemma.endswith(PREDICATIVE_VERBS) for x in self.analyses(toks[i - 2].text)))):
+                            x.tag.startswith("V.") and verb_of(x.lemma, PREDICATIVE_VERBS) for x in self.analyses(toks[i - 2].text)))):
                     gr = [r for r in n.own if r.pos == "noun" and r.case == "gen"]
                     if not any(_agree(x, y) for x in ar for y in hr + n.own if y.pos == "noun"):
                         fix = [a.cap(f) for f, rs in a.variants if any(_agree(x, y) for x in rs if x.pos == "adj" for y in gr)]
@@ -1707,7 +1715,7 @@ class Grammar:
             necessity = (all(x.tag.startswith("V.pnec.") for x in self.analyses(a.text))
                          and n.can_be("acc") and not n.can_be("ins") and not n.can_be("loc"))
             if a.is_participle and not necessity and (n.can_be("acc") or n.can_be("loc") or any(
-                    an.lemma.endswith(PREDICATIVE_VERBS) for an in self.analyses(a.text))):
+                    verb_of(an.lemma, PREDICATIVE_VERBS) for an in self.analyses(a.text))):
                 continue
             if n.start in issues:
                 continue
@@ -1875,7 +1883,7 @@ class Grammar:
                     governed = any(r.case in PREPOSITIONS[t.lower] for r in own)
                 else:
                     governed = any(r.case == "ins" for r in own) and (t.lower in COPULA_FORMS or any(
-                        a.tag.startswith("V.") and a.lemma.endswith(PREDICATIVE_VERBS) for a in self.analyses(t.text)))
+                        a.tag.startswith("V.") and verb_of(a.lemma, PREDICATIVE_VERBS) for a in self.analyses(t.text)))
                     # yra ir aukščiausiu kalnu pasaulyje
                 j -= 1
             if governed:
