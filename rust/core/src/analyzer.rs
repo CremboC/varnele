@@ -157,7 +157,9 @@ pub(crate) fn allowed(kind: Kind, flags: &str, tag: &str, neg: &str, vi: i32, si
         let refl_ok = flags.contains('R') || flags.contains('O');
         return (matches!(neg, "ne" | "nebe" | "be" | "tebe") && flags.contains('S'))
             || (matches!(neg, "ne" | "nebe") && refl_ok && flags.contains('N'))
-            || (matches!(neg, "be" | "tebe") && refl_ok && flags.contains('X'));
+            || (neg == "tebe" && refl_ok && flags.contains('X'))
+            // be-si- makes participles and gerunds (besijaudinantis, besijaudindamas), not finite forms (besijaudink)
+            || (neg == "be" && refl_ok && flags.contains('X') && ["V.pap", "V.pfut", "V.pnec", "V.ppp", "V.pprs", "V.half", "V.ger", "V.bud"].iter().any(|p| tag.starts_with(p)));
     }
     if neg == "ne" || neg == "nebe" {
         return flags.contains('N') || flags.contains('S');

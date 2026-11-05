@@ -1217,7 +1217,7 @@ Left deliberately:
   capitalised predictions shown, 29 are words the subtitles write lowercase, English (`Oh`, `You`, `Of`,
   `Ho`, as written in the context) and `Bičas`. Frequent lowercase subtitle words still unknown:
   `nesijaudink` (822), `nesijaudinu`: done 2026-11-05, `-si-` after `ne-`/`nebe-` is allowed for a verb with a
-  reflexive flag (R, O) and N, after `be-`/`tebe-` with R/O and X, S or not (`_allowed` / `analyzer::allowed`): 664
+  reflexive flag (R, O) and N, after `tebe-` with R/O and X, after `be-` so only for participles and gerunds (`besijaudinantis`, not `besijaudink`), S or not (`_allowed` / `analyzer::allowed`): 664
   tokens in half the 4.5M-word subtitle sample stop being unknown, all real (`nesikandžioja`, `nesikraustyti`); `didžiuojuosi` done (2026-11-04, data/extra.txt: other verbs listed in ispell-lt only
   as bare `word/R` entries may lack a paradigm the same way);
   spoken vocatives `drauguži`, `brolau`, `berniuk`, `mergyt`, `vyruti`, `brangute`; `bliamba`, `vistiek`, `nėr`.

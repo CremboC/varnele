@@ -24,7 +24,8 @@ VALID = {
     "closed classes": "tokių tiems tuos penkių keturis trisdešimties trečiojo vienuolikos",
 }
 
-INVALID = "medžyje jaučie nedžiaugiasi nusipraustis apbūdina gerasias dirbantisis džiaugiu elgiu".split()
+INVALID = ("medžyje jaučie nedžiaugiasi nusipraustis apbūdina gerasias dirbantisis džiaugiu elgiu "
+           "besijaudink besijaudinu").split()   # be-si- without S: participles and gerunds only
 
 # a reflexive-only verb has plain forms only with -si-: didžiuoju is the instrumental of didysis, not "I am
 # proud"; gėrimas is a drink, not a participle of gėrėtis

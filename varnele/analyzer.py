@@ -117,7 +117,9 @@ def _allowed(kind, flags, tag, neg, vi, si):
         refl_ok = "R" in flags or "O" in flags
         return (neg in ("ne", "nebe", "be", "tebe") and "S" in flags
                 or neg in ("ne", "nebe") and refl_ok and "N" in flags
-                or neg in ("be", "tebe") and refl_ok and "X" in flags)
+                or neg == "tebe" and refl_ok and "X" in flags
+                # be-si- makes participles and gerunds (besijaudinantis, besijaudindamas), not finite forms (besijaudink)
+                or neg == "be" and refl_ok and "X" in flags and tag.startswith(("V.pap", "V.pfut", "V.pnec", "V.ppp", "V.pprs", "V.half", "V.ger", "V.bud")))
     if neg in ("ne", "nebe"):
         return "N" in flags or "S" in flags
     if neg:
