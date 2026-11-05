@@ -56,6 +56,7 @@ FLAGGED = [
     ("Matau pirma kartą.", "pirma", "object", "pirmą"),             # pirma is an adverb too, pirmiausia mostly
     ("Nemačiau jį vakar.", "jį", "negation", "jo"),
     ("Nevalgau mėsą.", "mėsą", "negation", "mėsos"),
+    ("Aš nematau musu namo.", "musu", "rare", "mūsų"),                # the possessive, not musų (flies)
     ("Aš buvo namie.", "buvo", "subject", "buvau"),
     ("Tu eina namo.", "eina", "subject", "eini"),
     ("Mes skaito knygas.", "skaito", "subject", "skaitome"),

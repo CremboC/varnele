@@ -39,7 +39,7 @@ fn near(a: char, b: char) -> bool {
 /// Cost of a same-length fix that only changes diacritics (and i/y). If nothing was typed
 /// with diacritics, how many are missing says nothing: one counts like many, and frequency
 /// decides (turetu -> turėtų, not the rare turėtu).
-fn diacritic_cost(word: &str, cand: &str) -> f64 {
+pub(crate) fn diacritic_cost(word: &str, cand: &str) -> f64 {
     if word.chars().any(|c| "ąčęėįšųūž".contains(c)) {
         return cost(word, cand);
     }

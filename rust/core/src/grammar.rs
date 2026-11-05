@@ -466,10 +466,15 @@ impl<'a> G<'a> {
             .folded_forms(&fold(w))
             .into_iter()
             .filter(|f| lower(f) != w && !self.an.analyze_exact(f).is_empty())
-            .map(|f| (crate::suggest::cost(w, &lower(&f)), f))
+            .map(|f| (crate::suggest::diacritic_cost(w, &lower(&f)), f))
             .collect();
-        // closest first: šita -> šitą before sytą (y is its own key)
-        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then_with(|| a.1.cmp(&b.1)));
+        // closest first: šita -> šitą before sytą (y is its own key); typed without diacritics, how many
+        // are missing says nothing and frequency decides, as in the suggester (musu -> mūsų before musų)
+        v.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0).unwrap()
+                .then_with(|| self.freq(&lower(&b.1)).cmp(&self.freq(&lower(&a.1))))
+                .then_with(|| a.1.cmp(&b.1))
+        });
         let v: Vec<String> = v.into_iter().map(|(_, f)| f).collect();
         self.c.variants.borrow_mut().insert(w.to_string(), v.clone());
         v
@@ -1016,6 +1021,17 @@ impl Grammar {
                 let w = &toks[j];
                 if KAS_FORMS.contains(&w.lower.as_str()) {
                     break; // apie ką ši istorija: kas is a phrase of its own
+                }
+                if let Some(poss) = SPAN_POSSESSIVES.iter().find(|p| fold(p) != **p && fold(p) == w.lower) {
+                    // musu: mūsų typed without its diacritics (42,575 times against 109 for musų, flies), a
+                    // possessive as below, not the noun (nematau musu namo)
+                    if g.freq(poss) >= RARE_TWIN_RATIO * g.freq(&w.lower).max(FREQ_MIN) {
+                        if !span.is_empty() && j + 1 < toks.len() && adjacent[j + 1] {
+                            j += 1;
+                            continue;
+                        }
+                        break;
+                    }
                 }
                 if !span.is_empty()
                     && SPAN_POSSESSIVES.contains(&w.lower.as_str())

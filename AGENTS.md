@@ -185,7 +185,10 @@ the system dictionary; the extension has none and asks `Tally`). Rust-only with 
    minus form and lemma frequency bonuses. Input typed with no diacritics at all pays
    0.3 once for any number of missing diacritics, so frequency decides (`turetu` →
    `turėtų`, not the rare `turėtu`); restoration 62.9% → 65.8%. A word's diacritic
-   variants in grammar are ordered by this cost (`šitą` before `sytą`). Lowercase input penalises capitalised names.
+   variants in grammar are ordered by this cost, the same flat one for a word typed without diacritics, then
+   by frequency (`šitą` before `sytą`; `vėją` before `veją`). A word typed without diacritics whose twin is a
+   possessive 10× as frequent stands for it in a phrase (`nematau musu namo`: `mūsų`, not the flies' `musų`;
+   ispell-lt lists the personal pronouns' forms as bare words, so `mūsų` has no case reading of its own). Lowercase input penalises capitalised names.
    **Finger slips onto w, q, x** (`slip_fixes` in `__main__.py` / `checker.rs`, 2026-10-23, owner: `ziwma`
    got nothing): a word with a letter Lithuanian doesn't use is foreign and skipped, unless it is lowercase,
    4+ letters, its one such letter is w, q or x, it is not in `freq.tsv` (foreign words seen 10+ times:
@@ -649,8 +652,7 @@ No store listing yet. Test: `eval/extension/test.mjs` (its header says how). Why
   indirect questions, all right (`aš žinojau, kas tai buvo`), 7 object false alarms gone (`buvo labai sunki`); all
   rules: test 20 → 20, freq 87 → 87, subtitles 219 → 214, Tatoeba 48 → 47. restore.py, keyboard_restore.py unchanged
   (Tatoeba keyboard whole sentences 62.0 → 62.3%, 9 → 8 correct words changed); restore.py doesn't count negation
-  fixes (`FIX_RULES`). Parity 100%. Left: `musu` → `musų` (flies) after a negated verb, not `mūsų` (also at HEAD: the
-  negation rule ranks twins by cost, not frequency); `Braunas` reads as the spoken `braunasi`; `vidurį nakties` →
+  fixes (`FIX_RULES`). Parity 100%. Left (`musu` → `musų` fixed 2026-11-05): `Braunas` reads as the spoken `braunasi`; `vidurį nakties` →
   `vidury` in more sentences now that `Buvo` is a verb; key-shift and one-typo autocorrect can reach never-seen forms
   of the new reflexive verbs (`Basteris` → `bastęsis`, `Hobitsai` → `Jovytasi`: ~30 in 6.4M words; a frequency floor
   for autocorrect targets would touch every keyboard decision, so not done here); `nesikėsina tave nužudyti` →

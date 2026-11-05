@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 from .phonology import fold
-from .suggest import DATA, _cost, _load_freq
+from .suggest import DATA, _cost, _diacritic_cost, _load_freq
 
 WORD = re.compile(r"[^\W\d_]+(?:[-‑][^\W\d_]+)*")
 FINITE = {"prs", "pst", "pstf", "fut", "cond", "imp", "inf"}
@@ -84,6 +84,7 @@ VERB_PREFIXES = {"ap", "at", "į", "iš", "nu", "pa", "par", "per", "pra", "pri"
 POSSESSIVES = {"mano", "tavo", "savo", "jo", "jos", "jų", "mūsų", "jūsų"}
 # possessives a phrase steps over (not jo, jos, jų: also the pronouns' genitives, žino visas jo užnugaris)
 SPAN_POSSESSIVES = ("mano", "tavo", "savo", "mūsų", "jūsų")
+POSSESSIVE_BY_FOLD = {fold(p): p for p in SPAN_POSSESSIVES if fold(p) != p}     # musu -> mūsų
 # the emphatic pronoun pats, pati ("self", "same"), listed as a noun (pati: wife) and bare words
 EMPHATIC = ("pats", "paties", "pačiam", "patį", "pačiu", "pačiame", "patys", "pačių", "patiems", "pačius", "pačiais",
             "pačiuose", "pati", "pačios", "pačiai", "pačią", "pačia", "pačioje", "pačioms", "pačias", "pačiomis", "pačiose")
@@ -679,10 +680,11 @@ class Grammar:
     def variants_of(self, w):
         """Other real words spelled like w apart from diacritics."""
         if w not in self._var:
-            # closest first: šita -> šitą before sytą (y is its own key)
+            # closest first: šita -> šitą before sytą (y is its own key); typed without diacritics, how many
+            # are missing says nothing and frequency decides, as in the suggester (musu -> mūsų before musų)
             self._var[w] = sorted((f for f in self.an.folded_forms(fold(w))
                                    if f.lower() != w and self.an._analyze_exact(f)),
-                                  key=lambda f: (_cost(w, f.lower()), f))
+                                  key=lambda f: (_diacritic_cost(w, f.lower()), -self.freq.get(f.lower(), 0), f))
         return self._var[w]
 
     # ------------------------------------------------------------------
@@ -705,6 +707,14 @@ class Grammar:
                 w = toks[j]
                 if w.lower in KAS_FORMS:
                     break         # apie ką ši istorija: kas is a phrase of its own
+                poss = POSSESSIVE_BY_FOLD.get(w.lower)
+                if poss and self.freq.get(poss, 0) >= RARE_TWIN_RATIO * max(self.freq.get(w.lower, 0), FREQ_MIN):
+                    # musu: mūsų typed without its diacritics (42,575 times against 109 for musų, flies), a
+                    # possessive as below, not the noun (nematau musu namo)
+                    if span and j + 1 < len(toks) and adjacent[j + 1]:
+                        j += 1
+                        continue
+                    break
                 if span and w.lower in SPAN_POSSESSIVES and j + 1 < len(toks) and adjacent[j + 1]:
                     j += 1
                     continue      # tą mano didelę kavinę (not jo: žino visas jo užnugaris yra ...)
