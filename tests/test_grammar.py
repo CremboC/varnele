@@ -24,6 +24,15 @@ FLAGGED = [
     ("Aš matau ką man rašo telefonas.", "ką", "comma", ", ką"),               # indirect question
     ("Kodėl nepataiso visų zodziou?", "zodziou", "unknown", "žodžių"),   # agree with visų
     ("Grįžau prieš pora dienų.", "pora", "case", "porą"),
+    ("Susitikime per pietūs.", "pietūs", "case", "pietus"),
+    ("Jis žiūrėjo į kitokį grobi.", "grobi", "case", "grobį"),        # an ogonek left off: a vocative or a verb
+    ("Vakare einam į šoki.", "šoki", "case", "šokį"),                  # (šoki: you dance) is still the accusative
+    ("Jaučiu didelį pykti.", "pykti", "agreement", "pyktį"),
+    ("Kas vyko per pamoka?", "pamoka", "case", "pamoką"),
+    ("Per savo istorija miestas nukentėjo.", "istorija", "case", "istoriją"),             # kas … per only with pronouns between
+    ("Noriu pasiekti geru rezultatu.", "geru", "case", "gerų"),       # pasiekti gerų seen, geru never          # a noun after per: the preposition
+    ("Dirbu aštuonias valandas per diena.", "diena", "case", "dieną"),
+    ("Perėjome per didele upe.", "upe", "case", "upę"),
     ("Nuėjome į didele kavine.", "didele", "case", "didelę"),
     ("Nuėjome į didele kavine.", "kavine", "case", "kavinę"),
     ("Kalbėjome apie nauja knyga.", "knyga", "case", "knygą"),
@@ -353,6 +362,12 @@ CORRECT = [
     "Mes verti daugiau. Aš nepratusi anksti keltis. Tu nepratęs. Mes karšti!",
     "Tokie kaip tu elgiasi kitaip. Tokių kaip aš jiems reikia. Tu ji nužudysi! Aš nė karto nemačiau.",
     "Aš\nPablogėjo.",
+    # a vocative-only noun reading of a word that reads otherwise too is no phrase's noun (toli, gali, seni);
+    # per before a nominative phrase: the degree word or kas … per; an instrumental the verb governs
+    "Kas čia per vieta? Kas tai jau per vieta? Dabar mes kovojame vieni. Aš atėjau vienas.",
+    "Tai per toli. Ką gali padaryti? Jie per seni. Per anksti išėjai. Ji per brangi.",
+    "Per didelė rizika. Kas čia per vieta? Kas jūs per žmonės? Kas per velniava? Kas tai per kambarys?",
+    "Prisiekiu Dievu. Mes bandėme su jais susisiekti telefonu.",
     "Jie šventi. Tu viso to nematei. Jis šiuo metu laisvėje. Mes mano kieme. Mes atkirsti.",
 ]
 
@@ -362,6 +377,8 @@ CORRECT = [
 KNOWN_FALSE_ALARMS = [
     "Nemalk liežuviu.",                      # an instrumental of means after a verb whose counts say it takes
     "Kodėl jūs man šito nepasakėte telefonu?",   # none; the verb-first negation guard is net better (AGENTS.md)
+    "Klausyk seni, aš nesu jaunas.",          # an address: seni is a vocative, but also the accusative senį typed
+                                              # without its ogonek, which the object rule must keep catching
 ]
 
 

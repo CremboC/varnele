@@ -566,6 +566,12 @@ impl<'a> G<'a> {
     }
 
     /// Every reading is an active participle (or a gerund): stovintis, nukritusią.
+    /// Only pronoun or particle readings: čia, tai, jūs (not vyko).
+    fn pronoun_or_particle(&self, w: &str) -> bool {
+        let an = self.analyses(w);
+        !an.is_empty() && an.iter().all(|a| self.tag(a) == "W" || self.tag(a).starts_with("P."))
+    }
+
     fn active_participle(&self, w: &str) -> bool {
         let an = self.analyses(w);
         !an.is_empty() && an.iter().all(|a| { let t = self.tag(a); t.starts_with("V.pap.") || t.starts_with("V.pprs.") || t.starts_with("V.ger.") })
@@ -885,18 +891,15 @@ fn lost_case(g: &G, t: &Word) -> bool {
 /// objects otherwise: a genitive (nesuprantu pavadinimu, neturi vardu). Before that, a genitive twin of a word
 /// seen next to the verb more often than the word as written is one (neturiu jokiu klausimu: neturiu jokių 113
 /// times); with too few counts, a twin RARE_TWIN_RATIO times as frequent.
-fn instrumental_kept(g: &G, verb: &Word, words: &[&Word], cases: &[&str], after: bool) -> bool {
+fn instrumental_kept(g: &G, verb: &Word, words: &[&Word], cases: &[&str], after: bool, twins_first: bool) -> bool {
     let mut keys = g.verb_keys(&verb.text, true);
     keys.extend(g.verb_keys(&verb.text, false));
+    keys.sort();
+    keys.dedup();
     // after the verb, also for a phrase before it: one there is often an adverbial
     let n = |case: &str| -> u64 {
         keys.iter().map(|(k, c)| g.an.data.valency.get(&format!("{k}\t{c}\tafter\t{case}")) as u64).sum()
     };
-    let own = cases.iter().map(|c| n(c)).max().unwrap_or(0);
-    let objects = n("acc") + n("gen");
-    if own > 0 && own * VALENCY_RATIO >= objects {
-        return true;
-    }
     let pair = |a: &str| -> u32 {
         if after {
             g.an.data.pairs.get(&format!("{} {a}", verb.lower))
@@ -914,7 +917,16 @@ fn instrumental_kept(g: &G, verb: &Word, words: &[&Word], cases: &[&str], after:
                 .collect()
         })
         .collect();
-    if words.iter().zip(&twins).any(|(t, fs)| fs.iter().any(|f| pair(f) > pair(&t.lower))) {
+    let twin_seen = words.iter().zip(&twins).any(|(t, fs)| fs.iter().any(|f| pair(f) > pair(&t.lower)));
+    if twins_first && twin_seen {
+        return false; // pasiekti gerų 10 times, geru never: pasiekti geru rezultatu is no instrumental
+    }
+    let own = cases.iter().map(|c| n(c)).max().unwrap_or(0);
+    let objects = n("acc") + n("gen");
+    if own > 0 && own * VALENCY_RATIO >= objects {
+        return true;
+    }
+    if twin_seen {
         return false;
     }
     if objects >= VALENCY_MIN {
@@ -1123,9 +1135,28 @@ impl Grammar {
                             && toks[span[0]].variants(&g).iter().any(|(f, _)| g.analyses(f).iter().any(|a| {
                                 a.kind == Kind::Num && (a.lemma.ends_with("lika") || a.lemma.ends_with("dešimt"))
                             }))));
+                // per is no preposition before an adverb or a nominative adjective: the degree word (per toli, per
+                // seni: too old, per didelė rizika: too big a risk); nor in kas … per with only pronouns and
+                // particles between (kas čia per vieta: what kind of place; not kas vyko per pamoka)
+                let degree_per = prep == "per" && w.lower == "per" && !span.is_empty() && span.iter().all(|&x| toks[x].known) && {
+                    let words: Vec<&Word> = span.iter().map(|&x| &toks[x]).collect();
+                    let feats = phrase_feats(&words);
+                    let an0 = g.analyses(&toks[span[0]].text);
+                    let adjective = an0.iter().any(|a| g.tag(a).starts_with("A.") && g.tag(a).split('.').any(|p| p == "nom"));
+                    (span.len() == 1 && (adjective || an0.iter().any(|a| matches!(g.tag(a), "W" | "Adv")))
+                        && !toks[span[0]].can_be(&g, "gen")) // per savo istorija: a genitive before the noun
+                        // not per savo kolonija
+                        || (adjective && !feats.is_empty() && feats.iter().all(|f| f.0 == "nom"))
+                        || (feats.iter().any(|f| f.0 == "nom")
+                            && (i.saturating_sub(3)..i).any(|k| {
+                                toks[k].lower == "kas" && (k + 1..=i).all(|m| adjacent[m])
+                                    && (k + 1..i).all(|m| g.pronoun_or_particle(&toks[m].text))
+                            }))
+                };
                 if !span.is_empty()
                     && toks[*span.last().unwrap()].is_noun(&g)
                     && !numeral
+                    && !degree_per
                     && !(prep == "apie" && toks[span[0]].is_quantity(&g))
                 {
                     let cases = prep_cases(prep).unwrap();
@@ -1629,7 +1660,7 @@ impl Grammar {
                         && feats.iter().all(|f| matches!(f.0, "ins" | "loc" | "dat"))
                         // tuo metu: when
                         && (g.analyses(&toks[*span.last().unwrap()].text).iter().any(|a| a.lemma == "metas")
-                            || instrumental_kept(&g, w, &words, &cases, true))
+                            || instrumental_kept(&g, w, &words, &cases, true, false))
                 };
                 // nor an indirect question: nežinau kokiu kanalu, nežinau kuo tu vardu (as in valency; not kažkur)
                 let question = INTERROGATIVES.contains(&nxt.lower.as_str()) && !nxt.lower.starts_with("kažk");
@@ -1668,7 +1699,17 @@ impl Grammar {
                         || t.is_quantity(&g)
                         || g.analyses(&t.text).iter().any(|a| TIME_LEMMAS.contains(&a.lemma.as_str()))
                 });
-                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey {
+                // as after a negated verb: not a phrase agreeing as written in a case the verb governs, by its own
+                // counts (prisiekiu Dievu: swear by God; prisiekti is no siekti)
+                let oblique = !span.is_empty() && toks[*span.last().unwrap()].known && {
+                    let words: Vec<&Word> = span.iter().map(|&x| &toks[x]).collect();
+                    let feats = phrase_feats(&words);
+                    let cases: Vec<&str> = feats.iter().map(|f| f.0).collect();
+                    !feats.is_empty()
+                        && feats.iter().all(|f| matches!(f.0, "ins" | "loc" | "dat"))
+                        && instrumental_kept(&g, w, &words, &cases, true, true)
+                };
+                if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) && !timey && !oblique {
                     for &x in &span {
                         require(&mut issues, &toks[x], &["gen"], "case", &format!("'{}' takes the genitive", w.text));
                     }
@@ -1697,8 +1738,17 @@ impl Grammar {
                     k += 1;
                 }
                 let mut span = phrase(k, transitive);
+                // a lone nominative adjective or pronoun in the verb's number agrees with its subject: kovojame
+                // vieni (alone), not an object
+                let mut number: Vec<&str> = persons.iter().filter(|p| **p != "3")
+                    .map(|p| if *p == "1sg" || *p == "2sg" { "sg" } else { "pl" }).collect();
+                number.sort();
+                number.dedup();
                 if span.iter().any(|&x| g.analyses(&toks[x].text).iter().any(|a| g.tag(a) == "V.inf"))
                     || (span.len() == 1 && g.analyses(&toks[span[0]].text).iter().any(|a| matches!(g.tag(a), "W" | "Adv")))
+                    || (span.len() == 1 && number.len() == 1 && toks[span[0]].own.iter().any(|r| {
+                        r.pos == Pos::Adj && r.case == "nom" && r.number == Some(number[0])
+                    }))
                 {
                     span.clear(); // turėtų būti suprantama, sutiko baigti; atsirado kartu (together)
                 }
@@ -2354,7 +2404,8 @@ impl Grammar {
             if !adjacent[i] || issues.contains_key(&a.start) || (settled[i - 1] && settled[i]) {
                 continue;
             }
-            if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) {
+            if !(a.is_adj(&g) && n.is_noun(&g)) || a.can_be_verb(&g) || KAS_FORMS.contains(&a.lower.as_str()) || a.lower.starts_with("kažk") {
+                // ką gali: kas is a phrase of its own
                 continue;
             }
             // viena kitą = each other (but: vienos eilutes -> eilutės)
@@ -2782,7 +2833,7 @@ impl Grammar {
                             && !typed.is_empty()
                             && typed.iter().all(|x| matches!(x.0, "ins" | "loc" | "dat"))
                             && keys.iter().any(|(k, _)| k.starts_with('!'))
-                            && instrumental_kept(&g, v, &words, &typed.iter().map(|x| x.0).collect::<Vec<_>>(), after)
+                            && instrumental_kept(&g, v, &words, &typed.iter().map(|x| x.0).collect::<Vec<_>>(), after, false)
                         {
                             // the genitive of negation takes the place of an accusative: nemalk liežuviu,
                             // nepasakėte telefonu (as in the negation rule)

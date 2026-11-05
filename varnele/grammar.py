@@ -447,6 +447,11 @@ class Grammar:
         w = max((self.lemma_freq.get(a.lemma.lower(), 0) for a in analyses if a.tag == "W"), default=-1)
         return w > 0 and all(self.lemma_freq.get(a.lemma.lower(), 0) <= w for a in analyses)
 
+    def pronoun_or_particle(self, w):
+        """Only pronoun or particle readings: čia, tai, jūs (not vyko)."""
+        an = self.analyses(w)
+        return bool(an) and all(a.tag == "W" or a.tag.startswith("P.") for a in an)
+
     def active_participle(self, w):
         """Every reading is an active participle (or a gerund): stovintis, nukritusią."""
         an = self.analyses(w)
@@ -578,7 +583,7 @@ class Grammar:
                     if any(r.pos == "noun" and r.case != "voc" for r in rs)), default=0)
         return twin >= RARE_TWIN_RATIO * max(seen, FREQ_MIN)
 
-    def instrumental_kept(self, verb, words, cases, after=True):
+    def instrumental_kept(self, verb, words, cases, after=True, twins_first=False):
         """After the negated verb (a Word), is a phrase agreeing as written in these oblique cases what it seems,
         not a genitive of negation typed without its diacritics? The verb's counts after it, negated and not
         (nepaisyti, netekti are counted almost only negated), decide first: it takes one of the cases 1/VALENCY_RATIO
@@ -589,17 +594,20 @@ class Grammar:
         Tuned on 1,426 decisions in 17.5k subtitle and dump lines with a negated verb, each line correct and
         stripped of its diacritics: no guard 1,049 right fixes and 377 wrong, this 953 and 93; checked on
         another 239 (171 / 68 -> 157 / 15)."""
-        keys = list(self.verb_keys(verb.text, plain=True) or []) + list(self.verb_keys(verb.text) or [])
+        keys = set(self.verb_keys(verb.text, plain=True) or []) | set(self.verb_keys(verb.text) or [])
         def n(case):      # after the verb, also for a phrase before it: one there is often an adverbial
             return sum(self.valency.get((k, c, "after", case), 0) for k, c in keys)
-        own, objects = max(n(case) for case in cases), n("acc") + n("gen")
-        if own and own * VALENCY_RATIO >= objects:
-            return True
         def pair(a):
             return self.pair(verb.lower, a) if after else self.pair(a, verb.lower)
         twins = [[f.lower() for f, rs in t.variants if any(r.pos in ("noun", "adj") and r.case == "gen" for r in rs)]
                  for t in words]
-        if any(pair(f) > pair(t.lower) for t, fs in zip(words, twins) for f in fs):
+        twin_seen = any(pair(f) > pair(t.lower) for t, fs in zip(words, twins) for f in fs)
+        if twins_first and twin_seen:
+            return False      # pasiekti gerų 10 times, geru never: pasiekti geru rezultatu is no instrumental
+        own, objects = max(n(case) for case in cases), n("acc") + n("gen")
+        if own and own * VALENCY_RATIO >= objects:
+            return True
+        if twin_seen:
             return False
         if objects >= VALENCY_MIN:
             return False
@@ -774,7 +782,20 @@ class Grammar:
                 numeral = span and any(a.kind == "num" for a in self.an.analyze(span[0].text)) or span and not span[0].known and any(
                     a.kind == "num" and a.lemma.endswith(("lika", "dešimt"))   # per sesiolika (šešiolika), not iš penkiu
                     for f, _ in span[0].variants for a in self.an.analyze(f))
-                if (span and span[-1].is_noun and not numeral                 # per šešiolika metų
+                # per is no preposition before an adverb or a nominative adjective: the degree word (per toli, per
+                # seni: too old, per didelė rizika: too big a risk); nor in kas … per with only pronouns and
+                # particles between (kas čia per vieta: what kind of place; not kas vyko per pamoka)
+                feats = phrase_feats(span) if span and all(x.known for x in span) else []
+                an0 = self.analyses(span[0].text) if span else []
+                adjective = any(a.tag.startswith("A.") and "nom" in a.tag.split(".") for a in an0)
+                degree_per = prep == "per" and w.lower == "per" and span and all(x.known for x in span) and (
+                    len(span) == 1 and (adjective or any(a.tag in ("W", "Adv") for a in an0))
+                    and not span[0].can_be("gen")         # per savo istorija: a genitive before the noun
+                    or adjective and feats and all(f[0] == "nom" for f in feats)          # not per savo kolonija
+                    or any(f[0] == "nom" for f in feats) and any(
+                        toks[k].lower == "kas" and all(adjacent[m] for m in range(k + 1, i + 1))
+                        and all(self.pronoun_or_particle(toks[m].text) for m in range(k + 1, i)) for k in range(max(0, i - 3), i)))
+                if (span and span[-1].is_noun and not numeral and not degree_per   # per šešiolika metų
                         and not (prep == "apie" and span[0].is_quantity())):   # apie pusė = "about half"
                     cases = PREPOSITIONS[prep]
                     want = " or ".join(CASE_NAMES[c] for c in sorted(cases))
@@ -1119,7 +1140,12 @@ class Grammar:
                 span = phrase(k)
                 timey = any(x.lower in TIME_WORDS or x.is_quantity() or any(
                             a.lemma in TIME_LEMMAS for a in self.analyses(x.text)) for x in span)
-                if span and span[-1].is_noun and not timey:
+                # as after a negated verb: not a phrase agreeing as written in a case the verb governs, by its own
+                # counts (prisiekiu Dievu: swear by God; prisiekti is no siekti)
+                feats = phrase_feats(span) if span and span[-1].known else []
+                oblique = bool(feats) and all(f[0] in ("ins", "loc", "dat") for f in feats) and self.instrumental_kept(
+                    w, span, {f[0] for f in feats}, twins_first=True)
+                if span and span[-1].is_noun and not timey and not oblique:
                     for x in span:
                         require(x, {"gen"}, "case", f"'{w.text}' takes the genitive")
                 continue
@@ -1137,8 +1163,13 @@ class Grammar:
                 while k + 1 < len(toks) and adjacent[k + 1] and (toks[k + 1].lower in OBJECT_SKIP or between(k + 1)):
                     k += 1
                 span = phrase(k, participles=transitive)
+                # a lone nominative adjective or pronoun in the verb's number agrees with its subject: kovojame
+                # vieni (alone), not an object
+                number = {"sg" if p in ("1sg", "2sg") else "pl" for p in persons if p != "3"}
                 if any(any(a.tag == "V.inf" for a in self.analyses(x.text)) for x in span) or (
-                        len(span) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(span[0].text))):
+                        len(span) == 1 and any(a.tag in ("W", "Adv") for a in self.analyses(span[0].text))) or (
+                        len(span) == 1 and len(number) == 1 and any(
+                            r.pos == "adj" and r.case == "nom" and r.number in number for r in span[0].own)):
                     span = []     # turėtų būti suprantama, sutiko baigti; atsirado kartu (together)
                 allowed = {"nom", "voc", "ins"} if transitive else {"nom", "voc"}
                 # the whole phrase instrumental (radau nukritusia sagute), not tapusią vienuole; or
@@ -1545,8 +1576,8 @@ class Grammar:
             a, n = toks[i - 1], toks[i]
             if not adjacent[i] or a.start in issues or i - 1 in settled and i in settled:
                 continue
-            if not (a.is_adj and n.is_noun) or a.can_be_verb:
-                continue
+            if not (a.is_adj and n.is_noun) or a.can_be_verb or a.lower in KAS_FORMS or a.lower.startswith("kažk"):
+                continue          # ką gali: kas is a phrase of its own
             no_gen = False
             if a.lower in ("vienas", "viena", "vieni", "vienos") and n.lower.startswith("kit"):
                 continue          # viena kitą = each other (but: vienos eilutes -> eilutės)
