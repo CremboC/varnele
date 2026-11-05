@@ -27,4 +27,4 @@ pub mod text;
 pub mod user;
 
 pub use checker::{Checker, Finding, KeyboardWord, WordStatus};
-pub use fix::{Edit, FixOptions, SentenceFixer, Tally};
+pub use fix::{AroundEdit, Edit, FixOptions, SentenceFixer, Tally};

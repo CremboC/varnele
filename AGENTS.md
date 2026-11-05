@@ -423,6 +423,20 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   žymiai rimtesne` → `žiema`, then `rimtesnė`; `kultūrinė ekspansija` is not fixed by it (the keyboard
   already changed `ekspansija` to agree). 0.15 ms a sentence (Mac, through serve). A word autocorrected by
   the fixer's last-word fix (not HeliBoard) can't be undone with backspace (HeliBoard committed it as typed).
+  **The whole sentence** (2026-11-05, owner: "not only the previous word or two but the whole sentence, into the
+  future too"): `SentenceFixer::apply_around(before, after, …)` also gets the text after the cursor (the fork reads
+  it fresh, 400 characters cut at a space; a cached copy went stale after a picked suggestion or a space-bar cursor
+  swipe), checks the sentence to its end and returns an `AroundEdit` (before: delete + insert; after: skip, delete,
+  insert, the cursor staying put; the fork selects that span, commits, puts the cursor back, and leaves it if the
+  app refuses the selection). The word just finished is decided with the rest of the sentence (`keyboard_word_in`),
+  an autocorrected word is re-decided once any word follows it, also after the cursor, and after the cursor only
+  findings that the word just finished brings are applied (the rest was there when those words were typed: a fix
+  the user undid stays undone). Typing `i ` before `didele kavine.` gives `į didelę kavinę.`; `ziema ` after `kad`
+  in `Tai svarbu, kad žymiai rimtesne negu šiaip.` gives `žiema … rimtesnė` (emulator). On 250 subtitle and 250
+  Wikipedia sentences with one word retyped without diacritics mid-sentence, with autocorrect: the word and the
+  sentence right 188 → 204 and 171 → 187. Serve: `fix\tBEFORE\tPICKED\tAFTER`. A sentence of 28 words takes ~7 ms a
+  word on the Mac with text after it (0.1–5 ms without). JNI `fixNative(before, after, base, …)`: the fork's
+  `Native.kt` must match.
 - **Red underline for unknown words** (`VarneleDictionary.markMisspelled`, called from
   `InputLogic.commitChosenWord`): a committed word Varnelė does not know gets a
   `SuggestionSpan` with `FLAG_MISSPELLED` and its corrections, so the text field draws the

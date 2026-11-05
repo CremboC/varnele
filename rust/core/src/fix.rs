@@ -197,10 +197,20 @@ pub struct FixOptions {
 }
 
 /// Change the text before the cursor: delete characters, then type some.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Edit {
     pub delete: usize,
     pub insert: String,
+}
+
+/// The sentence fixer's edit around the cursor: `before` as [`Edit`]; after the cursor, leave `skip`
+/// characters, delete `after.delete` more and put `after.insert` there. The cursor stays where it is,
+/// after `before.insert`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AroundEdit {
+    pub before: Edit,
+    pub skip: usize,
+    pub after: Edit,
 }
 
 /// Runs after each finished word, on the sentence before the cursor: fixes the word just finished, if
@@ -249,19 +259,29 @@ impl SentenceFixer {
 
     /// The edit for the text before the cursor, after a finished word. See [`SentenceFixer`].
     pub fn apply(&mut self, ck: &Checker, before: &str, base: usize, o: FixOptions) -> Option<Edit> {
+        self.apply_around(ck, before, "", base, o).map(|e| e.before)
+    }
+
+    /// The same with the text after the cursor (`after`, as much as the app has): the whole sentence
+    /// the cursor is in is checked, and its words after the cursor are fixed too, as earlier words are
+    /// (a word typed into the middle of a sentence: kad ziema | zymiai rimtesne -> žiema, rimtesnė).
+    pub fn apply_around(&mut self, ck: &Checker, before: &str, after: &str, base: usize, o: FixOptions) -> Option<AroundEdit> {
         let chars: Vec<char> = before.chars().collect();
         let start = sentence_start(&chars);
         let sentence = &chars[start..];
         if sentence.iter().all(|c| c.is_whitespace()) {
             return None;
         }
+        let after: Vec<char> = after.chars().collect();
+        let tail = &after[..sentence_end(&after)];
         self.enter(base + start);
         let last = letter_runs(sentence).last().copied();
-        let last_start = last.map_or(sentence.len(), |l| l.0);
+        let (last_start, last_end) = last.unwrap_or((sentence.len(), sentence.len()));
 
         let mut fixed: Vec<char> = sentence.to_vec();
         if let (false, Some((a, b))) = (o.picked, last) {
-            if let Some(word) = last_word_fix(ck, sentence, a, b, o.formal) {
+            let rest: String = tail.iter().collect();
+            if let Some(word) = last_word_fix(ck, sentence, a, b, &rest, o.formal) {
                 let typed: String = sentence[a..b].iter().collect();
                 fixed.splice(a..b, word.chars());
                 let new_end = a + clen(&word);
@@ -271,37 +291,55 @@ impl SentenceFixer {
                 }
             }
         }
+        let words_before = letter_runs(&fixed).len();
+        let mut cursor = fixed.len();
+        let last_end = last_end + cursor - sentence.len();
+        fixed.extend_from_slice(tail);
         if o.earlier {
-            self.fix_soft(ck, &mut fixed);
+            self.fix_soft(ck, &mut fixed, words_before);
         }
+        // the words after the cursor were checked when they were typed: only what the word just finished
+        // changes there is fixed (į | didele kavine), not what was there without it (a fix the user undid)
+        let old: Vec<(usize, usize, String)> = if tail.iter().any(|c| c.is_alphabetic()) {
+            let without: String = sentence[..last_start].iter().chain(tail.iter()).collect();
+            ck.check_text(&without, false, true).into_iter().filter(|f| f.start >= last_start)
+                .map(|f| (f.start - last_start, f.end - last_start, f.suggestions.first().cloned().unwrap_or_default()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         // a second pass catches what the first fix reveals: kuriu -> kurių then needs a comma
         for _ in 0..2 {
-            fixed = fix_pass(ck, fixed, last_start, o);
+            fixed = fix_pass(ck, fixed, (last_start, last_end), &mut cursor, &old, o);
         }
-        if fixed == sentence {
+        let (head, rest) = fixed.split_at(cursor);
+        if head == sentence && rest == tail {
             return None;
         }
-        let same = fixed.iter().zip(sentence).take_while(|(a, b)| a == b).count();
-        Some(Edit { delete: sentence.len() - same, insert: fixed[same..].iter().collect() })
+        let same = head.iter().zip(sentence).take_while(|(a, b)| a == b).count();
+        let before_edit = Edit { delete: sentence.len() - same, insert: head[same..].iter().collect() };
+        let skip = rest.iter().zip(tail).take_while(|(a, b)| a == b).count();
+        let same = rest[skip..].iter().rev().zip(tail[skip..].iter().rev()).take_while(|(a, b)| a == b).count();
+        let after_edit = Edit { delete: tail.len() - skip - same, insert: rest[skip..rest.len() - same].iter().collect() };
+        Some(AroundEdit { before: before_edit, skip, after: after_edit })
     }
 
-    /// The words that got diacritics from the app, among the last [`SOFT_WINDOW`] (not the word just
-    /// finished: nothing follows it yet), checked as typed. A word that no longer looks like the one
-    /// typed (edited) is forgotten.
-    fn fix_soft(&mut self, ck: &Checker, sentence: &mut Vec<char>) {
+    /// The words that got diacritics from the app, among the last [`SOFT_WINDOW`] before the cursor (`n`
+    /// words), checked as typed; one with nothing after it yet in the sentence (the word just finished at
+    /// its end) waits. A word that no longer looks like the one typed (edited) is forgotten.
+    fn fix_soft(&mut self, ck: &Checker, sentence: &mut Vec<char>, n: usize) {
         if self.soft.is_empty() {
             return;
         }
         let words = letter_runs(sentence);
         let mut typed = sentence.clone();
-        let n = words.len();
         self.soft.retain(|&k, t| {
             let Some(&(a, b)) = words.get(k) else { return false };
             let now: String = sentence[a..b].iter().collect();
             if !same_keys(&now, t) {
                 return false;
             }
-            if k + SOFT_WINDOW >= n && k + 1 < n {
+            if k + SOFT_WINDOW >= n && k + 1 < words.len() {
                 typed.splice(a..b, t.chars());
             }
             true
@@ -316,14 +354,20 @@ impl SentenceFixer {
     }
 }
 
-/// The word in `sentence[a..b]`, just finished, if the app left it as typed although its fix is sure.
-fn last_word_fix(ck: &Checker, sentence: &[char], a: usize, b: usize, formal: bool) -> Option<String> {
+/// The word in `sentence[a..b]`, just finished, if the app left it as typed although its fix is sure;
+/// `after`: the rest of the sentence after the cursor.
+fn last_word_fix(ck: &Checker, sentence: &[char], a: usize, b: usize, after: &str, formal: bool) -> Option<String> {
     if b - a < 2 {
         return None;
     }
     let word: String = sentence[a..b].iter().collect();
-    let context = word_context(&sentence[..a].iter().collect::<String>());
-    let r = ck.keyboard_word(&word, &context, false, formal);
+    let r = if after.trim().is_empty() {
+        ck.keyboard_word(&word, &word_context(&sentence[..a].iter().collect::<String>()), false, formal)
+    } else {
+        // the whole sentence: kad ziema | žymiai rimtesnė -> žiema, not the more frequent žiemą
+        let after: String = sentence[b..].iter().collect::<String>() + after;
+        ck.keyboard_word_in(&word, &sentence[..a].iter().collect::<String>(), &after, false, formal)
+    };
     let fix = cap_like(&word, r.confident_fix()?);
     if fix == word {
         return None;
@@ -332,25 +376,51 @@ fn last_word_fix(ck: &Checker, sentence: &[char], a: usize, b: usize, formal: bo
     (SURE_RULES.contains(&r.context_rule.as_str()) || same_keys(&fix, &word)).then_some(fix)
 }
 
-fn fix_pass(ck: &Checker, sentence: Vec<char>, last_start: usize, o: FixOptions) -> Vec<char> {
+/// Where the sentence after the cursor ends: at its full stop (included) or line break.
+fn sentence_end(after: &[char]) -> usize {
+    match after.iter().position(|c| ".!?\n".contains(*c)) {
+        Some(i) if after[i] == '\n' => i,
+        Some(i) => i + 1,
+        None => after.len(),
+    }
+}
+
+/// One pass of grammar fixes over the sentence; `last` is the word just finished, `cursor` where the
+/// cursor stands (moved along with the edits before it).
+fn fix_pass(ck: &Checker, sentence: Vec<char>, last: (usize, usize), cursor: &mut usize, old: &[(usize, usize, String)],
+            o: FixOptions) -> Vec<char> {
+    let (last_start, last_end) = last;
     let text: String = sentence.iter().collect();
     let mut out = sentence.clone();
     let mut found = ck.check_text(&text, false, true);
     found.sort_by_key(|f| std::cmp::Reverse(f.start));
+    let moved = |at: usize, by: isize, cursor: &mut usize| {
+        if at < *cursor {
+            *cursor = (*cursor as isize + by) as usize;
+        }
+    };
     for f in found {
-        if o.picked && f.rule != "comma" && f.end > last_start {
-            continue;
+        if o.picked && f.rule != "comma" && f.start < last_end && f.end > last_start {
+            continue; // the word picked from the list stays as chosen
+        }
+        if f.start >= *cursor {
+            let first = f.suggestions.first().cloned().unwrap_or_default();
+            if old.iter().any(|(a, b, s)| *a == f.start - *cursor && *b == f.end - *cursor && *s == first) {
+                continue; // after the cursor and there without the word just finished: seen before
+            }
         }
         if f.rule == "comma" {
             // wait for the next word: pirk bet may become pirk bet ką (no comma)
             let next_typed = sentence[f.end..].iter().any(|c| c.is_alphabetic());
             if o.commas && next_typed && f.start >= 2 && sentence[f.start - 1] == ' ' && sentence[f.start - 2].is_alphabetic() {
                 out.insert(f.start - 1, ',');
+                moved(f.start - 1, 1, cursor);
             }
-        } else if SAFE_RULES.contains(&f.rule) && (o.earlier || f.start >= last_start) {
+        } else if SAFE_RULES.contains(&f.rule) && (o.earlier || (f.start >= last_start && f.end <= last_end)) {
             let Some(s) = f.suggestions.first() else { continue };
             if *s != f.word && (LETTER_RULES.contains(&f.rule) || same_keys(s, &f.word)) {
                 out.splice(f.start..f.end, s.chars());
+                moved(f.start, clen(s) as isize - (f.end - f.start) as isize, cursor);
             }
         }
     }

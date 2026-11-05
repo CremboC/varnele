@@ -139,7 +139,8 @@ fn main() {
             //   learn<TAB>TEXT  -> "ok": the user wrote TEXT (turns the user model on); forget -> "ok": empty it
             //   ghostnext<TAB>CONTEXT<TAB>TYPED  -> {"w", "next", "p"}: the ghost's word and its likeliest next
             //                                     word, whatever P (predict_sim.py --ghost weighs thresholds)
-            //   fixreset / fixed<TAB>BEFORE<TAB>TYPED<TAB>COMMITTED / fix<TAB>BEFORE<TAB>PICKED: the sentence fixer
+            //   fixreset / fixed<TAB>BEFORE<TAB>TYPED<TAB>COMMITTED / fix<TAB>BEFORE<TAB>PICKED[<TAB>AFTER]: the sentence
+            //                                     fixer (AFTER: the text after the cursor; skip_after/delete_after/insert_after)
             let layout = Layout::qwerty();
             let mut fixer = varnele::SentenceFixer::default();
             use std::io::{BufRead, Write};
@@ -158,9 +159,11 @@ fn main() {
                     }
                     "fix" => {
                         let o = varnele::FixOptions { picked: parts.get(2) == Some(&"1"), earlier: true, commas: true, formal };
-                        let e = fixer.apply(&ck, parts[1], 0, o);
-                        let (delete, insert) = e.map_or((0, String::new()), |e| (e.delete, e.insert));
-                        writeln!(out, "{{\"delete\":{delete},\"insert\":{}}}", varnele::json::string(&insert)).unwrap();
+                        let e = fixer.apply_around(&ck, parts[1], parts.get(3).copied().unwrap_or(""), 0, o);
+                        let e = e.unwrap_or_default();
+                        writeln!(out, "{{\"delete\":{},\"insert\":{},\"skip_after\":{},\"delete_after\":{},\"insert_after\":{}}}",
+                            e.before.delete, varnele::json::string(&e.before.insert), e.skip, e.after.delete,
+                            varnele::json::string(&e.after.insert)).unwrap();
                     }
                     "kb" => writeln!(out, "{}", varnele::json::keyboard_word(&ck.keyboard_word_in(
                         parts[1], parts.get(2).copied().unwrap_or(""), parts.get(3).copied().unwrap_or(""), true, formal))).unwrap(),

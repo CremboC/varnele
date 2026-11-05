@@ -212,14 +212,17 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_fixUndoneNative(_env: JN
     FIXER.lock().unwrap().undone();
 }
 
-/// The sentence fixer on the text before the cursor (`base`: where it starts in the field). Returns
-/// {"delete", "insert"}: UTF-16 units to delete before the cursor and the text to put there.
+/// The sentence fixer on the text around the cursor (`base`: where `before` starts in the field; `after`:
+/// the text after the cursor, "" for none). Returns {"delete", "insert", "skip", "deleteAfter",
+/// "insertAfter"}: UTF-16 units to delete before the cursor and the text to put there; after the cursor,
+/// units to leave, units to delete and the text to put there, the cursor staying where it is.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_dev_imbrasas_varnele_Native_fixNative<'l>(
     mut env: JNIEnv<'l>,
     _class: JClass<'l>,
     before: JString<'l>,
+    after: JString<'l>,
     base: jint,
     picked: jboolean,
     earlier: jboolean,
@@ -227,19 +230,24 @@ pub extern "system" fn Java_dev_imbrasas_varnele_Native_fixNative<'l>(
     formal: jboolean,
 ) -> jstring {
     let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
+    let after: String = env.get_string(&after).map(Into::into).unwrap_or_default();
     let o = varnele::FixOptions { picked: picked != 0, earlier: earlier != 0, commas: commas != 0, formal: formal != 0 };
     let edit = {
         let ck = checker().lock().unwrap();
-        FIXER.lock().unwrap().apply(&ck, &before, base.max(0) as usize, o)
-    };
-    let (delete, insert) = match edit {
-        Some(e) => {
-            let chars: Vec<char> = before.chars().collect();
-            (chars[chars.len() - e.delete..].iter().map(|c| c.len_utf16()).sum::<usize>(), e.insert)
-        }
-        None => (0, String::new()),
-    };
-    let json = format!("{{\"delete\":{delete},\"insert\":{}}}", varnele::json::string(&insert));
+        FIXER.lock().unwrap().apply_around(&ck, &before, &after, base.max(0) as usize, o)
+    }
+    .unwrap_or_default();
+    let units = |s: &[char]| s.iter().map(|c| c.len_utf16()).sum::<usize>();
+    let b: Vec<char> = before.chars().collect();
+    let a: Vec<char> = after.chars().collect();
+    let delete = units(&b[b.len() - edit.before.delete..]);
+    let skip = units(&a[..edit.skip]);
+    let delete_after = units(&a[edit.skip..edit.skip + edit.after.delete]);
+    let json = format!(
+        "{{\"delete\":{delete},\"insert\":{},\"skip\":{skip},\"deleteAfter\":{delete_after},\"insertAfter\":{}}}",
+        varnele::json::string(&edit.before.insert),
+        varnele::json::string(&edit.after.insert)
+    );
     env.new_string(json).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
