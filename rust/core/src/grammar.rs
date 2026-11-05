@@ -178,10 +178,10 @@ const GREETINGS: &[&str] = &[
 ];
 const SUBJECT_PRONOUNS: &[&str] = &["aš", "tu", "jis", "ji", "mes", "jūs", "jie", "jos"];
 /// Between a subject pronoun and its verb (aš vakar buvo): not these
-const SUBJECT_NO_SKIP: &[&str] = &["tai", "tas", "ta", "šis", "ši", "tie", "tos", "ne", "nei", "ar", "jo", "jos", "jų"];
+const SUBJECT_NO_SKIP: &[&str] = &["tai", "tas", "ta", "šis", "ši", "šiuo", "tuo", "tie", "tos", "ne", "nė", "nei", "ar", "jo", "jos", "jų"];
 /// A participial phrase does not run across these (plus CLAUSE_STARTERS and KURIS)
 const PHRASE_STOP: &[&str] = &["ir", "bei", "ar", "arba", "o", "bet", "nei", "negu", "kaip"];
-const SENTENCE_GAP: &str = ".!?…\n(„“\"«»–—-";
+const SENTENCE_GAP: &str = ".!?…\n\r(„“\"«»–—-";
 const COPULAS: &[&str] = &[
     "būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
     "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė", "gimsta",
@@ -206,6 +206,16 @@ const NOMINATIVE_COPULAS: &[&str] = &[
     "būti", "buvo", "būna", "esa", "yra", "atrodyti", "atrodė", "atrodo", "likti", "liko", "lieka",
     "jaustis", "jautėsi", "jaučiasi",
 ];
+/// būti's present: its own paradigm
+fn buti_present(person: &str) -> &'static str {
+    match person {
+        "1sg" => "esu",
+        "2sg" => "esi",
+        "1pl" => "esame",
+        "2pl" => "esate",
+        _ => "yra",
+    }
+}
 /// Subject pronoun -> (number, gender) of its predicate adjective
 fn pronoun_features(w: &str) -> Option<(&'static str, &'static str)> {
     Some(match w {
@@ -967,7 +977,7 @@ impl Grammar {
         let spans = word_spans(&chars);
         let toks: Vec<Word> = spans.iter().map(|&(a, b)| g.word(substr(&chars, a, b), a, b)).collect();
         let adjacent: Vec<bool> = (0..toks.len())
-            .map(|i| i > 0 && chars[toks[i - 1].end..toks[i].start].iter().all(|c| c.is_whitespace()))
+            .map(|i| i > 0 && chars[toks[i - 1].end..toks[i].start].iter().all(|c| c.is_whitespace() && *c != '\n' && *c != '\r')) // a line break ends it
             .collect();
         let mut issues: BTreeMap<usize, Issue> = BTreeMap::new();
         let add = |issues: &mut BTreeMap<usize, Issue>, x: Issue| {
@@ -1801,6 +1811,10 @@ impl Grammar {
             if !adjacent[i + 1] || (i > 0 && ["ir", "bei", "arba", "ar", "nei"].contains(&toks[i - 1].lower.as_str())) {
                 continue; // aš ir jis buvome: a coordinated subject
             }
+            if i > 0 && adjacent[i] && (subject_person(&toks[i - 1].lower).is_some()
+                || (["kaip", "negu"].contains(&toks[i - 1].lower.as_str()) && i >= 2 && adjacent[i - 1])) {
+                continue; // tu ji nužudysi: an object; tokie kaip tu elgiasi: compared (not Kaip tu gyveni?)
+            }
             // adverbs and particles may stand between: aš vakar buvo -> buvau
             let mut k = i + 1;
             while k + 1 < toks.len() && k <= i + 2 && adjacent[k + 1] && g.adverb(&toks[k].text) && {
@@ -1832,18 +1846,53 @@ impl Grammar {
                 }
                 continue;
             }
-            let fin: Vec<Analysis> = g.analyses(&v.text).into_iter().filter(|a| g.finite(a)).collect();
-            if fin.is_empty() || fin.iter().any(|a| g.parts(a)[2] == want) {
-                continue;
+            let all = g.analyses(&v.text);
+            let fin: Vec<Analysis> = all.iter().filter(|a| g.finite(a)).cloned().collect();
+            if fin.is_empty() || fin.iter().any(|a| g.parts(a)[2] == want) || POSSESSIVES.contains(&v.lower.as_str()) {
+                continue; // mes mano kieme: a possessive, not manyti
             }
+            let copula = COPULA_FORMS.contains(&v.lower.as_str());
             let mut fix: Vec<String> = Vec::new();
-            for a in &fin {
-                for f in g.inflect(a, &retag(g.tag(a), None, Some(want))) {
-                    let f = v.cap(&f);
-                    if !fix.contains(&f) {
-                        fix.push(f);
+            if copula {
+                // būti: tu yra -> esi, aš nėra -> nesu (not yru, nėru)
+                let f = buti_present(want);
+                fix.push(v.cap(&if !v.lower.starts_with("ne") && !v.lower.starts_with("nė") { f.to_string() } else if f == "yra" { "nėra".into() } else { format!("ne{}", &f[1..]) }));
+            } else {
+                for a in &fin {
+                    for f in g.inflect(a, &retag(g.tag(a), None, Some(want))) {
+                        let f = v.cap(&f);
+                        if !fix.contains(&f) {
+                            fix.push(f);
+                        }
                     }
                 }
+            }
+            if fix.is_empty() {
+                continue;
+            }
+            // the corpus: the pronoun with a fix that is mostly a verb 10x as often as with the word (aš kalbu 605,
+            // aš kalba unseen; tu esi 4,559, tu yra 30; not tu viso -> visai, an adverb): strong evidence. A pair
+            // seen as written at least as often stays (mes visi, tu tik).
+            let pair = |b: &str| g.an.data.pairs.get(&format!("{} {}", pron.lower, b));
+            let typed = pair(&v.lower);
+            let fixed = fix.iter()
+                .filter(|f| COPULA_FORMS.contains(&lower(f).as_str()) || g.mostly_verb(&g.analyses(f)))
+                .map(|f| pair(&lower(f))).max().unwrap_or(0);
+            let strong = fixed >= RARE_TWIN_RATIO * typed.max(FREQ_MIN);
+            if !strong && typed >= FREQ_MIN && typed >= fixed {
+                continue;
+            }
+            // without it the word must be mostly a verb (aš jus, tu tik, aš gėlė are not)
+            if !(strong || copula || g.mostly_verb(&all)) {
+                continue;
+            }
+            // a predicate with the copula left out: a nominative adjective or participle agreeing with the
+            // pronoun (mes verti, aš nepratusi, jie šventi), unless the corpus is sure (aš girdi: girdus)
+            let number = if want == "2pl" { None } else if want == "1pl" || pron.lower == "jie" { Some("pl") } else { Some("sg") };
+            let gender = pronoun_features(&pron.lower).map(|f| f.1);
+            if !strong && v.own.iter().any(|r| r.pos == Pos::Adj && r.case == "nom" && (number.is_none() || number == r.number)
+                && (gender.is_none() || gender == r.gender)) {
+                continue;
             }
             if !fix.is_empty() {
                 add(&mut issues, Issue {

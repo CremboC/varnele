@@ -41,6 +41,13 @@ FLAGGED = [
     ("Tu eina namo.", "eina", "subject", "eini"),
     ("Mes skaito knygas.", "skaito", "subject", "skaitome"),
     ("Jis einu namo.", "einu", "subject", "eina"),
+    ("Mes negali grįžti.", "negali", "subject", "negalime"),
+    ("Aš kalba lietuviškai.", "kalba", "subject", "kalbu"),         # kalba is also a noun: aš kalbu 605 times
+    ("Tu yra mano draugas.", "yra", "subject", "esi"),              # būti's own paradigm, not yri
+    ("Aš nėra kaltas.", "nėra", "subject", "nesu"),
+    ("Kaip tu gyvena?", "gyvena", "subject", "gyveni"),             # kaip opens the clause: not compared
+    ("Aš girdi tave.", "girdi", "subject", "girdžiu"),              # not the rare adjective girdus
+    ("Aš vakar važiuosi namo.", "važiuosi", "subject", "važiuosiu"),
     ("Vakar mačiau namas.", "namas", "object", "namą"),
     ("Kuriu tai kas reikalinga.", "kas", "comma", ", kas"),          # relative clause after tai
     ("Darau viską ką galiu.", "ką", "comma", ", ką"),
@@ -340,6 +347,13 @@ CORRECT = [
     "Dirbau visą tai laiką. Dirbau visą tai laika.",
     "Tačiau visą tai",
     "Atidaviau visą tai mažai",
+    # subject rule on dialogue: no verb reading that is the likely one, a predicate with the copula left out,
+    # a pronoun compared (kaip tu) or an object after another pronoun, nė + noun, a line break between
+    "Mes visi einame namo. Aš jus įvesiu į kambarį. Tu tik žiūrėk. Aš iš ten. Mes juk sakėme. Mano draugai.",
+    "Mes verti daugiau. Aš nepratusi anksti keltis. Tu nepratęs. Mes karšti!",
+    "Tokie kaip tu elgiasi kitaip. Tokių kaip aš jiems reikia. Tu ji nužudysi! Aš nė karto nemačiau.",
+    "Aš\nPablogėjo.",
+    "Jie šventi. Tu viso to nematei. Jis šiuo metu laisvėje. Mes mano kieme. Mes atkirsti.",
 ]
 
 

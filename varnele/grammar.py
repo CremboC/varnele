@@ -124,10 +124,10 @@ GREETINGS = {"labas", "laba", "labi", "labos", "sveikas", "sveika", "sveiki", "s
              "dėkui", "labanakt", "sudie", "sveikinu"}
 SUBJECT_PRONOUNS = {"aš", "tu", "jis", "ji", "mes", "jūs", "jie", "jos"}
 # Between a subject pronoun and its verb (aš vakar buvo): not these
-SUBJECT_NO_SKIP = {"tai", "tas", "ta", "šis", "ši", "tie", "tos", "ne", "nei", "ar", "jo", "jos", "jų"}
+SUBJECT_NO_SKIP = {"tai", "tas", "ta", "šis", "ši", "šiuo", "tuo", "tie", "tos", "ne", "nė", "nei", "ar", "jo", "jos", "jų"}
 # a participial phrase does not run across these
 PHRASE_STOP = {"ir", "bei", "ar", "arba", "o", "bet", "nei", "negu", "kaip"} | CLAUSE_STARTERS
-SENTENCE_GAP = re.compile(r"[.!?…\n(„“\"«»–—-]")
+SENTENCE_GAP = re.compile(r"[.!?…\n\r(„“\"«»–—-]")
 
 COPULAS = {"būti", "buvo", "būna", "esa", "yra", "tapti", "tapo", "tampa", "likti", "liko", "lieka",
            "atrodyti", "atrodė", "atrodo", "vadintis", "vadinosi", "vadinasi", "gimti", "gimė",
@@ -159,7 +159,8 @@ CLAUSE_END = ",.;:!?…–—"
 # verbal prefixes a copula may have: išlieka, pasiliko (not atliko, paliko)
 COPULA_PREFIXES = ("", "si", "iš", "pasi")
 SUBORDINATORS = {"kad", "jog", "nes", "kai", "jei", "jeigu", "kadangi", "nors", "nebent", "kol"}
-BUTI = ("būti", "buvo", "būna", "esa", "yra")     # the lemmas (principal parts) of būti
+BUTI = ("būti", "buvo", "būna", "esa", "yra")
+BUTI_PRESENT = {"1sg": "esu", "2sg": "esi", "3": "yra", "1pl": "esame", "2pl": "esate"}   # its own paradigm     # the lemmas (principal parts) of būti
 COPULA_FORMS = {"nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esame", "esate", "yra"}
 # Subject pronoun -> person of the verb
 SUBJECT_PERSON = {"aš": "1sg", "tu": "2sg", "mes": "1pl", "jūs": "2pl",
@@ -674,7 +675,7 @@ class Grammar:
         clause seen without a verb may have one further left."""
         toks = [Word(self, m.group(), m.start(), m.end()) for m in WORD.finditer(text)]
         gaps = [text[toks[i - 1].end:t.start] if i else text[:t.start] for i, t in enumerate(toks)]
-        adjacent = [i > 0 and g.strip() == "" for i, g in enumerate(gaps)]
+        adjacent = [i > 0 and g.strip() == "" and "\n" not in g and "\r" not in g for i, g in enumerate(gaps)]   # a line break ends it
         issues = {}
 
         def add(issue):
@@ -1203,6 +1204,9 @@ class Grammar:
             want = SUBJECT_PERSON.get(pron.lower)
             if not want or not adjacent[i + 1] or (i > 0 and toks[i - 1].lower in ("ir", "bei", "arba", "ar", "nei")):
                 continue          # aš ir jis buvome: a coordinated subject
+            if i > 0 and adjacent[i] and (toks[i - 1].lower in SUBJECT_PERSON or toks[i - 1].lower in ("kaip", "negu")
+                                          and i >= 2 and adjacent[i - 1]):
+                continue          # tu ji nužudysi: an object; tokie kaip tu elgiasi: compared (not Kaip tu gyveni?)
             # adverbs and particles may stand between: aš vakar buvo -> buvau
             k = i + 1
             while (k + 1 < len(toks) and k <= i + 2 and adjacent[k + 1] and self.adverb(toks[k].text)
@@ -1223,14 +1227,40 @@ class Grammar:
                     add(Issue(v.start, v.end, v.text, "context",
                               f"'{pron.text}' needs the {PERSON_NAMES[want]} form of the verb", fix))
                 continue
-            fin = [a for a in self.analyses(v.text) if finite(a)]
-            if not fin or any(a.tag.split(".")[2] == want for a in fin):
+            an = self.analyses(v.text)
+            fin = [a for a in an if finite(a)]
+            if not fin or any(a.tag.split(".")[2] == want for a in fin) or v.lower in POSSESSIVES:
+                continue          # mes mano kieme: a possessive, not manyti
+            fix, copula = [], v.lower in COPULA_FORMS
+            if copula:        # būti: tu yra -> esi, aš nėra -> nesu (not yru, nėru)
+                f = BUTI_PRESENT[want]
+                fix = [v.cap(("nėra" if f == "yra" else "ne" + f[1:]) if v.lower[:2] in ("ne", "nė") else f)]
+            else:
+                for a in fin:
+                    for f in self.inflect(a, retag(a.tag, person=want)):
+                        if v.cap(f) not in fix:
+                            fix.append(v.cap(f))
+            if not fix:
                 continue
-            fix = []
-            for a in fin:
-                for f in self.inflect(a, retag(a.tag, person=want)):
-                    if v.cap(f) not in fix:
-                        fix.append(v.cap(f))
+            # the corpus: the pronoun with a fix that is mostly a verb 10x as often as with the word (aš kalbu 605,
+            # aš kalba unseen; tu esi 4,559, tu yra 30; not tu viso -> visai, an adverb): strong evidence. A pair
+            # seen as written at least as often stays (mes visi, tu tik).
+            typed = self.pair(pron.lower, v.lower)
+            fixed = max([self.pair(pron.lower, f.lower()) for f in fix
+                         if f.lower() in COPULA_FORMS or self.mostly_verb(self.analyses(f))] or [0])
+            strong = fixed >= RARE_TWIN_RATIO * max(typed, FREQ_MIN)
+            if not strong and typed >= FREQ_MIN and typed >= fixed:
+                continue
+            # without it the word must be mostly a verb (aš jus, tu tik, aš gėlė are not)
+            if not (strong or copula or self.mostly_verb(an)):
+                continue
+            # a predicate with the copula left out: a nominative adjective or participle agreeing with the
+            # pronoun (mes verti, aš nepratusi, jie šventi), unless the corpus is sure (aš girdi: girdus)
+            number = None if want == "2pl" else "pl" if want == "1pl" or pron.lower == "jie" else "sg"
+            gender = PRONOUN_FEATURES.get(pron.lower, (None, None))[1]
+            if not strong and any(r.pos == "adj" and r.case == "nom" and number in (None, r.number)
+                                  and gender in (None, r.gender) for r in v.own):
+                continue
             if fix:
                 add(Issue(v.start, v.end, v.text, "subject",
                           f"'{pron.text}' needs the {PERSON_NAMES[want]} form of the verb", fix))
