@@ -660,6 +660,21 @@ No store listing yet. Test: `eval/extension/test.mjs` (its header says how). Why
 
 ## Latest numbers
 
+- **Known issues, worked through with an adversarial review each** (2026-11-05, 16 commits after 4fcf31a, local only).
+  Flags on 5.7M words of correct text (subtitle sample, dump sample, the test sets; unknown words not counted):
+  18,078 → 10,579, nearly all of the drop false alarms: the subject rule 6,380 → 263 (`mes visi` → `visime`), cross-line
+  adjacency 260, vocative/degree `per` and `kas … per` 991, `šiuo metu`, `pasimėgauti` ≠ `gauti`, bogus `-ys` plurals 37.
+  On 20k subtitle and 3k dump lines stripped of diacritics, right first fixes 1,262 → 1,308 and 2,708 → 2,723, wrong or
+  false 146 → 89 and 108 → 87. restore.py Wikipedia / subtitles / Tatoeba 71.9 / 73.7 / 79.3 → 72.1 / 74.1 / 79.5%
+  (whole sentences 32.3 / 45.7 / 55.3 → 33.0 / 46.7 / 55.7%). keyboard_restore 75.8 / 76.6 / 83.1 → 75.7 / 76.7 /
+  83.4% with the simulation now passing the sentence's own words, as the keyboard does (with the old context it
+  read 76.0 / 77.2 / 83.4%), correct words changed 2 / 4 / 8 → 2 / 0 / 1 (Tatoeba's 2,000-sentence run: 4, all `Sita
+  knyga` → `Šitą knygą`, see the rare-twin note). Names autocorrected inside sentences 3,317 → 38 of 6,319. The whole-
+  sentence fixer: a word retyped mid-sentence right 188 → 204 (subtitles) and 171 → 187 (Wikipedia) of 250.
+  Parity 100% throughout. Open from this round: `Sita knyga` (autocorrect agrees with its own guess), coordinated
+  objects, `Palauk kūdiki` (animacy), `Visos linijos radialines`, the gesture path's names (it checks keys in
+  lowercase).
+
 - **Bare reflexive entries, negation over instrumentals** (2026-11-04, from the third to fifth reviews of the valency
   work: `jis didžiuoju kunigaikščiu tapo` → `didžiuoja`, `nesididžiuoju tuo darbu` → `darbų`). The loader reads ispell-lt's
   689 bare R/O lines (Architecture, item 1): 429 reflexive-only verbs (plain forms only with `-si-`), 198 flags join
@@ -1304,3 +1319,8 @@ Left deliberately:
 39. valency: question words end the phrase (`Žinau kur mašina`), `didžiuotis` a verb, counts rebuilt
 40. ispell-lt's bare R/O lines read as verbs (reflexive-only flag `Z`: `didžiuojuosi`, no `didžiuoju` "I am proud";
     no particle reading for `buvo`, `saugo`), negation keeps an instrumental the verb governs (`netikiu Dievu`)
+41. known issues with a review each: the subject rule by corpus pairs (`aš kalba`) and likely verbs, būti's present; a
+    line break ends adjacency; degree `per` and `kas … per`; `šis` declined; object/negation/agreement guards; twins
+    ordered like suggestions (`musu` → `mūsų`); the whole sentence around the cursor in the sentence fixer (fork too);
+    the verb next to a rare word chooses its case; `ne-si-` without S; names stay names in autocorrect (fork: context
+    after a comma); compound past; `verb_of`; plural-only `-ys` nouns; `tas knygas` under negation
