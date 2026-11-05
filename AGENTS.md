@@ -321,6 +321,12 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     (`Veliau`; a capital further on is a name). Comparing with the form alone also caught `ligoje`
     → `lygoje`. Twins in different cases: the one giving the fewest grammar issues with the words before,
     then the most frequent (`pavojingiausia žemės ūkio masina` → `mašina`, not `mašiną`).
+  - **a name stays a name** (2026-11-05): an unknown word with a capital inside a sentence (the keyboard passes only
+    the sentence's words as context) is autocorrected only into a name that adds diacritics (`Siauliuose` →
+    `Šiauliuose`), never by a typo correction or into another word (`KeyboardWord::name`, `name_fixes`): of 6,319
+    such words in the test sets autocorrect changed 3,317 (`Boruta` → `Biruta`, `Black` → `Blank`, `Bresto` →
+    `Bręsto`), now 19, most real fixes (`Cekai` → `Čekai`). eval/keyboard_sim.py now passes the sentence's words
+    only, as the keyboard does.
   - suggestion ranking: a negated form with no frequency of its own borrows the plain
     form's (`Neturetu` → `Neturėtų`); a suggestion differing from the input only by being a
     capitalised name costs +0.5.

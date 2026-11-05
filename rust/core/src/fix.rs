@@ -150,9 +150,13 @@ impl KeyboardWord {
 
     /// How far suggestion `i` may go: 2 applied without asking, 1 autocorrect may take it, 0 only
     /// offered. The first of a key-shift search is the likely word, if nothing else matched.
+    /// A name (a capital inside a sentence: Basteris) only becomes a name with diacritics added
+    /// (Siauliuose -> Šiauliuose; not Šantarų -> Santarų, Bresto -> Bręsto).
     pub fn suggestion_level(&self, i: usize) -> u8 {
         let Some(s) = self.suggestions.get(i) else { return 0 };
-        if self.key_shift && i == 0 {
+        if self.name && !self.name_fixes.contains(&s.0) {
+            0
+        } else if self.key_shift && i == 0 {
             1
         } else if i == 0 && self.clearly_best() && s.2 == 0.0 {
             2
@@ -182,7 +186,7 @@ impl KeyboardWord {
             return self.context_fixes.iter().find(|c| c.2 == 0.0).map(|c| c.0.as_str());
         }
         let top = self.suggestions.first()?;
-        (top.2 <= MAX_TYPO_COST).then_some(top.0.as_str())
+        (top.2 <= MAX_TYPO_COST && !(self.name && self.suggestion_level(0) == 0)).then_some(top.0.as_str())
     }
 }
 

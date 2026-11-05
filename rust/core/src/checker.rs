@@ -29,6 +29,10 @@ pub struct KeyboardWord {
     pub context_fixes: Vec<(String, f64, f64)>,
     /// the first suggestions come from the key-shift search
     pub key_shift: bool,
+    /// an unknown word with a capital inside a sentence: a name, which no typo correction may change
+    pub name: bool,
+    /// for a name: the suggestions it may become, names that only add diacritics (Siauliuose -> Šiauliuose)
+    pub name_fixes: Vec<String>,
 }
 
 pub struct Checker {
@@ -385,7 +389,16 @@ impl Checker {
                 suggestions = v;
             }
         }
-        KeyboardWord { status, suggestions, context_rule, context_fixes, key_shift: shifted }
+        let name = status == WordStatus::Unknown && !first_lower(word) && !context.trim().is_empty();
+        let name_fixes = if name {
+            suggestions.iter().map(|s| s.0.clone()).filter(|s| {
+                lower(s) != lw && crate::grammar::adds_diacritics(&lw, &lower(s)) // not Pop -> POP
+                    && self.an.analyze(s).iter().any(|a| a.lemma.chars().next().is_some_and(char::is_uppercase))
+            }).collect()
+        } else {
+            Vec::new()
+        };
+        KeyboardWord { status, suggestions, context_rule, context_fixes, key_shift: shifted, name, name_fixes }
     }
 
     /// The most frequent word (seen at least COMMON times) that differs from a short (2-4 letters), never

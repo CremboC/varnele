@@ -63,7 +63,8 @@ def type_text(text, soft=True):
         if i % 2 == 0:
             out += piece
             continue
-        before = re.findall(r"[^\W\d_]+", out)
+        # the words before it in its sentence, as the keyboard passes them (VarneleDictionary.previousWords)
+        before = re.findall(r"[^\W\d_]+", re.split(r"[.!?\n]", out)[-1])
         got = autocorrect(piece, " ".join(before[-3:]))
         out += got
         if soft:
