@@ -466,10 +466,28 @@ impl Checker {
             self.grammar.check_opts(&self.an, text.trim_start(), after.trim().is_empty()).iter().filter(|f| f.rule != "comma").count()
         };
         let judged = around && twins.len() > 1;
-        let mut ranked: Vec<(usize, String)> = twins.into_iter().map(|(_, c)| (if judged { issues(&c) } else { 0 }, c)).collect();
-        ranked.sort_by_key(|r| r.0); // a tie stays in order of frequency
-        let best = ranked.first().map_or(0, |r| r.0);
-        ranked.into_iter().filter(|r| r.0 == best).take(3).map(|(_, c)| cap_like(word, &c)).collect()
+        // then the verb next to it: the case its counts show on that side (mašina neveikia, not mašiną)
+        let ctx: Vec<char> = context.chars().collect();
+        let mut e = ctx.len();
+        while e > 0 && ctx[e - 1].is_whitespace() {
+            e -= 1;
+        }
+        let mut b = e;
+        while b > 0 && ctx[b - 1].is_alphabetic() {
+            b -= 1;
+        }
+        let prev: Option<String> = (b < e).then(|| ctx[b..e].iter().collect());
+        let aft: Vec<char> = after.chars().collect();
+        let s = aft.iter().take_while(|c| c.is_whitespace()).count();
+        let n = aft[s..].iter().take_while(|c| c.is_alphabetic()).count();
+        let next: Option<String> = (s > 0 && n > 0).then(|| aft[s..s + n].iter().collect());
+        let fit = |c: &str| self.grammar.verb_fit(&self.an, c, prev.as_deref(), next.as_deref());
+        let mut ranked: Vec<(usize, u64, String)> = twins.into_iter()
+            .map(|(_, c)| if judged { (issues(&c), u64::MAX - fit(&c), c) } else { (0, 0, c) })
+            .collect();
+        ranked.sort_by_key(|r| (r.0, r.1)); // a tie stays in order of frequency
+        let best = ranked.first().map_or((0, 0), |r| (r.0, r.1));
+        ranked.into_iter().filter(|r| (r.0, r.1) == best).take(3).map(|(_, _, c)| cap_like(word, &c)).collect()
     }
 
     /// The keyboard's next words (or completions of `prefix`, typed with or without diacritics)

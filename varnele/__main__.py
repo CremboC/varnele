@@ -159,9 +159,14 @@ class Checker:
             text = f"{context.rstrip()} {c}{after}".lstrip()
             return sum(f.rule != "comma" for f in self.grammar.check(text, partial=not after.strip()))
         judged = (context.strip() or after.strip()) and len(twins) > 1
-        ranked = sorted(((issues(c) if judged else 0, c) for _, c in twins), key=lambda r: r[0])   # a tie stays by frequency
+        # then the verb next to it: the case its counts show on that side (mašina neveikia, not mašiną)
+        prev = re.search(r"([^\W\d_]+)\s*$", context)
+        nxt = re.match(r"\s+([^\W\d_]+)", after)
+        prev, nxt = prev and prev.group(1), nxt and nxt.group(1)
+        ranked = sorted(((issues(c) if judged else 0, -self.grammar.verb_fit(c, prev, nxt) if judged else 0, c)
+                         for _, c in twins), key=lambda r: r[:2])     # a tie stays by frequency
         cap = word[:1].isupper()
-        return [c[0].upper() + c[1:] if cap else c for n, c in ranked if n == ranked[0][0]][:3]
+        return [c[0].upper() + c[1:] if cap else c for n, v, c in ranked if (n, v) == ranked[0][:2]][:3]
 
     def common_neighbour(self, word):
         """The most frequent word (seen at least 50 times) that differs from a short (2-4 letters),

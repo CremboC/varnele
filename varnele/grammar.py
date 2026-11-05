@@ -578,6 +578,17 @@ class Grammar:
             return None       # it starts the clause (not: Su šia nuomone sutinka, savo didybe rodo, per dvi savaites privalo)
         return self._valency_lone(toks, list(range(k + 1, h + 1)))
 
+    def verb_fit(self, word, prev, nxt):
+        """How often a verb right next to the word has a phrase in one of the word's cases on that side
+        (data/valency.tsv): mašina before neveikia (nominative, seen often) beats mašiną. prev/nxt: the
+        words right before and after it in the sentence, or None."""
+        cases = {r.case for r in self.readings_of(word) if r.case != "voc"}
+        best = 0
+        for v, side in ((nxt, "before"), (prev, "after")):
+            for k, c in (self.verb_keys(v) or []) if v else []:
+                best = max(best, sum(self.valency.get((k, c, side, case), 0) for case in cases))
+        return best
+
     def lost_case(self, t):
         """A noun that can only be a vocative, written RARE_TWIN_RATIO times less often than its diacritic twin:
         no address but the twin typed without its diacritics (dydi never seen, dydį 2,721 times; not tėti 10,747

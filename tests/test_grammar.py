@@ -446,8 +446,16 @@ class RareWords(unittest.TestCase):
                 self.assertFalse([f for f in CK.check_text(text) if f.rule == "rare"])
 
     def test_grammar_undecided_shows_the_twins(self):
-        got = [f.suggestions for f in CK.check_text("Masina stovi kieme.") if f.rule == "rare"]
+        got = [f.suggestions for f in CK.check_text("Masina kieme.") if f.rule == "rare"]
         self.assertEqual(sorted(got[0][:2]), ["Mašina", "Mašiną"])
+
+    def test_the_verb_next_to_it_chooses(self):
+        """No rule decides between the twins: the case the verb next to it takes in the counts does."""
+        for text, want in (("Masina stovi kieme.", "Mašina"), ("Mano masina neveikia.", "mašina"),
+                           ("Jis vairuoja masina.", "mašiną")):
+            with self.subTest(text=text):
+                got = [f.suggestions for f in CK.check_text(text) if f.rule == "rare"]
+                self.assertEqual(got[0][0], want)
 
     def test_key_shift_when_nothing_is_close(self):
         self.assertEqual(CK.check_word("fofrkua")[1][0], "didelis")

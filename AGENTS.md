@@ -1099,8 +1099,10 @@ Left deliberately:
   an address, not a wrong verb.
 - Only the word after the greeting is checked (`Laba diena Jonai` gets no comma).
 
-- Rare twins in different cases when the grammar doesn't decide (`Masina stovi kieme`): `check_text` offers them
-  all, the keyboard takes the more frequent (`Mašiną`). Left: frequency, not the verb, picks the case there.
+- Rare twins in different cases when the grammar doesn't decide: the verb right next to the word decides by its
+  valency counts on that side (`Masina stovi kieme`, `Mano masina neveikia` → `mašina`; `vairuoja masina` →
+  `mašiną`; `Grammar.verb_fit`, 2026-11-05), else frequency (`Masina kieme`: both offered, the keyboard takes
+  `Mašiną`). Not reached: a verb further away (`Sita knyga buvo išversta` still gets `Šitą knygą`).
 - **Statistics for diacritic twins: tried 2026-10-21, not shipped.** A class-bigram model
   (POS+case labels, top function words lexicalised, one EM step) trained on corpus/freq.
   Choosing between same-lemma twins that only add diacritics: at a 100:1 likelihood ratio

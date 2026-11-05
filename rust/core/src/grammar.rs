@@ -998,6 +998,25 @@ impl Grammar {
         self.check_opts(an, text, false)
     }
 
+    /// How often a verb right next to the word has a phrase in one of the word's cases on that side
+    /// (data/valency.tsv): mašina before neveikia (nominative, seen often) beats mašiną. prev/next: the
+    /// words right before and after it in the sentence.
+    pub fn verb_fit(&self, an: &Analyzer, word: &str, prev: Option<&str>, next: Option<&str>) -> u64 {
+        let g = G { an, c: self };
+        let mut cases: Vec<&str> = g.readings_of(word).iter().map(|r| r.case).filter(|c| *c != "voc").collect();
+        cases.sort();
+        cases.dedup();
+        let mut best = 0;
+        for (v, side) in [(next, "before"), (prev, "after")] {
+            let Some(v) = v else { continue };
+            for (k, c) in g.verb_keys(v, false) {
+                let n: u64 = cases.iter().map(|case| an.data.valency.get(&format!("{k}\t{c}\t{side}\t{case}")) as u64).sum();
+                best = best.max(n);
+            }
+        }
+        best
+    }
+
     /// partial: the text may start mid-sentence (the keyboard's last few words, no punctuation), so a
     /// clause seen without a verb may have one further left.
     pub fn check_opts(&self, an: &Analyzer, text: &str, partial: bool) -> Vec<Issue> {
