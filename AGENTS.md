@@ -1141,7 +1141,10 @@ Left deliberately:
   medžiaga`), 3rd person verbs and infinitives need ratio 30 (`pasakyti tiesa` is 11×: missed), the
   phrase before the verb only at a clause start (`BLB apylinke veikia`: missed), a capitalised word at a
   sentence start (`Bare auga`, a city: gone with the name guard), compound tenses whose fix needs more than
-  diacritics (`Nesu girdėjęs tokia istorija` → `tokios istorijos`, `yra matęs gražus namas` → `namą`). The pair rule's old `pirmasis mūrinis pastatas` → `mūrinys`
+  diacritics (`Nesu girdėjęs tokia istorija` → `tokios istorijos`). The negation and object rules take a compound
+  past as the participle's verb in the auxiliary's person and negation (2026-11-05: `nesu praradusi viltį` →
+  `vilties`), not when the participle agrees with the next word (`esi suaugęs vyras`: 18 false alarms on 5.7M
+  words without that guard), negation then only by an accusative (`nesu jojusi drambliu` stays). The pair rule's old `pirmasis mūrinis pastatas` → `mūrinys`
   (ispell-lt's `mūrinis` is also a noun) is still there.
   Seen while building it, older rules: negation stops at a pronoun object (`Neturiu tą gražią knygą`
   fixes only `tą`); the object rule takes `pirmiausia` as an object (`Filmai turi pirmiausia didelę

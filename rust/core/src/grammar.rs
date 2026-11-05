@@ -1690,18 +1690,32 @@ impl Grammar {
                 continue;
             }
             let alls = g.analyses(&w.text);
-            let verbs: Vec<&Analysis> = alls.iter().filter(|a| g.finite(a) || g.tag(a).starts_with("V.inf")).collect();
+            let mut verbs: Vec<&Analysis> = alls.iter().filter(|a| g.finite(a) || g.tag(a).starts_with("V.inf")).collect();
+            // a compound past (esu girdėjęs, nesu matęs): the participle is the verb, in the auxiliary's person
+            // and negation, as for valency
+            let mut aux: Vec<Analysis> = Vec::new();
+            if verbs.is_empty() && i > 0 && adjacent[i] && !alls.is_empty()
+                && alls.iter().all(|a| g.tag(a).starts_with("V.pap.") && g.parts(a).iter().any(|p| p == "nom"))
+            {
+                aux = g.analyses(&toks[i - 1].text).into_iter()
+                    .filter(|a| g.finite(a) && (BUTI.contains(&a.lemma.as_str()) || matches!(a.lemma.as_str(), "nesa" | "nėra")))
+                    .collect();
+                if !aux.is_empty() {
+                    verbs = alls.iter().collect();
+                }
+            }
             if verbs.is_empty() || !g.mostly_verb(&alls) {
                 continue;
             }
             if w.own.iter().any(|r| r.pos == Pos::Adj) && could_agree(&g, w, &toks[i + 1]) {
-                continue;
+                continue; // esi suaugęs vyras: a participle agreeing with its noun
             }
             let copula = verbs.iter().any(|a| COPULAS.contains(&a.lemma.as_str()))
                 || COPULAS.contains(&w.lower.as_str())
                 || COPULA_FORMS.contains(&w.lower.as_str());
             let nxt = &toks[i + 1];
-            let negated = verbs.iter().any(|a| a.prefix.starts_with("ne"));
+            let negated = verbs.iter().any(|a| a.prefix.starts_with("ne"))
+                || aux.iter().any(|a| a.prefix.starts_with("ne") || matches!(a.lemma.as_str(), "nesa" | "nėra"));
 
             if negated && !copula {
                 // a pronoun alone; a demonstrative before its noun goes with the phrase (neturiu tą gražią knygą)
@@ -1763,7 +1777,10 @@ impl Grammar {
                                 continue;
                             }
                         }
-                        require(&mut issues, t, &["gen"], "negation", &why); // nepataiso visu žodžių -> visų
+                        if aux.is_empty() {
+                            // a compound past only by an accusative (nesu praradusi viltį; not jojusi drambliu)
+                            require(&mut issues, t, &["gen"], "negation", &why); // nepataiso visu žodžių -> visų
+                        }
                     }
                 }
                 continue;
@@ -1802,7 +1819,11 @@ impl Grammar {
                 continue;
             }
 
-            let persons: Vec<&str> = verbs.iter().filter(|a| g.finite(a)).map(|a| g.parts(a)[2].as_str()).collect();
+            let persons: Vec<&str> = if aux.is_empty() {
+                verbs.iter().filter(|a| g.finite(a)).map(|a| g.parts(a)[2].as_str()).collect()
+            } else {
+                aux.iter().map(|a| g.parts(a)[2].as_str()).collect()
+            };
             let transitive = verbs.iter().any(|a| TRANSITIVE_VERBS.iter().any(|v| a.lemma.ends_with(v)));
             // a real prefix, not reflexive: pamato, nupirko (not atsirado = atsi+rado)
             let plain_transitive = verbs.iter().any(|a| {

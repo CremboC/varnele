@@ -45,6 +45,7 @@ FLAGGED = [
     ("Dizainas nesikeitė daugybę metu.", "metu", "quantity", "metų"),
     ("Neturiu laiką.", "laiką", "negation", "laiko"),
     ("Neturiu tą gražią knygą.", "knygą", "negation", "knygos"),    # a demonstrative goes with its phrase
+    ("Aš nesu praradusi viltį.", "viltį", "negation", "vilties"),    # a compound past: nesu + participle
     ("Neturiu tą gražią knygą.", "tą", "negation", "tos"),
     ("Nemačiau šią knygą.", "knygą", "negation", "knygos"),         # šis is a pronoun, not a particle
     ("Pamiršiu ši vakarą.", "ši", "agreement", "šį"),
@@ -179,7 +180,7 @@ FLAGGED = [
     ("Visa šita isterija mačiau vakar.", "isterija", "valency", "isteriją"),
     ("Visa šita istorija esu girdėjęs vakar.", "istorija", "valency", "istoriją"),   # a compound past: girdėti
     ("Visa šita istorija girdėjau vakar.", "šita", "valency", "šitą"),          # girdėjau pools with girdi, girdėti
-    ("Esu girdėjęs visa šita istorija.", "visa", "valency", "visą"),
+    ("Esu girdėjęs visa šita istorija.", "visa", "object", "visą"),
     ("Per daug pasitikėdamas, aš padariau klaida.", "klaida", "valency", "klaidą"),
     ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),                    # number, not case: not didelius
     ("Galbūt reikia padidinti įprasta dydi?", "įprasta", "valency", "įprastą"),  # dydi is only a vocative: no case
@@ -383,6 +384,7 @@ CORRECT = [
     # an adverb, the emphatic pati, a reflexive infinitive, an instrumental noun: no object
     "Filmai turi pirmiausia didelę vertę. Bandžiau pati, bet veltui. Turime keltis liftu. Myliu tave visa širdimi.",
     "Pabundu vidurį nakties. Jis atėjo vidurį nakties.",                   # a typed į is meant: not vidury
+    "Esi suaugęs vyras. Nesu jojusi drambliu!",                         # a participle agreeing with its noun
     "Kas čia per vieta? Kas tai jau per vieta? Dabar mes kovojame vieni. Aš atėjau vienas.",
     "Tai per toli. Ką gali padaryti? Jie per seni. Per anksti išėjai. Ji per brangi.",
     "Per didelė rizika. Kas čia per vieta? Kas jūs per žmonės? Kas per velniava? Kas tai per kambarys?",

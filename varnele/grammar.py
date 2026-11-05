@@ -164,8 +164,8 @@ CLAUSE_END = ",.;:!?…–—"
 # verbal prefixes a copula may have: išlieka, pasiliko (not atliko, paliko)
 COPULA_PREFIXES = ("", "si", "iš", "pasi")
 SUBORDINATORS = {"kad", "jog", "nes", "kai", "jei", "jeigu", "kadangi", "nors", "nebent", "kol"}
-BUTI = ("būti", "buvo", "būna", "esa", "yra")
-BUTI_PRESENT = {"1sg": "esu", "2sg": "esi", "3": "yra", "1pl": "esame", "2pl": "esate"}   # its own paradigm     # the lemmas (principal parts) of būti
+BUTI = ("būti", "buvo", "būna", "esa", "yra")     # the lemmas (principal parts) of būti
+BUTI_PRESENT = {"1sg": "esu", "2sg": "esi", "3": "yra", "1pl": "esame", "2pl": "esate"}   # its own paradigm
 COPULA_FORMS = {"nėra", "nesu", "nesi", "nesame", "nesate", "esu", "esi", "esame", "esate", "yra"}
 # Subject pronoun -> person of the verb
 SUBJECT_PERSON = {"aš": "1sg", "tu": "2sg", "mes": "1pl", "jūs": "2pl",
@@ -1135,14 +1135,21 @@ class Grammar:
                 continue
             alls = self.analyses(w.text)
             verbs = [a for a in alls if finite(a) or a.tag.startswith("V.inf")]
+            # a compound past (esu girdėjęs, nesu matęs): the participle is the verb, in the auxiliary's person
+            # and negation, as for valency
+            aux = []
+            if (not verbs and i > 0 and adjacent[i] and alls
+                    and all(a.tag.startswith("V.pap.") and "nom" in a.tag.split(".") for a in alls)):
+                aux = [a for a in self.analyses(toks[i - 1].text) if finite(a) and a.lemma in BUTI + ("nesa", "nėra")]
+                verbs = alls if aux else []
             if not verbs or not self.mostly_verb(alls):
                 continue
             if any(r.pos == "adj" for r in w.own) and _could_agree(w, toks[i + 1]):
-                continue          # Atskiri ruožai: an adjective agreeing with its noun, not "you separate"
+                continue          # Atskiri ruožai: an adjective agreeing with its noun, not "you separate"; esi suaugęs vyras
             lemmas = {a.lemma for a in verbs} | {w.lower}
             copula = bool(lemmas & COPULAS) or w.lower in COPULA_FORMS
             nxt = toks[i + 1]
-            negated = any(a.prefix.startswith("ne") for a in verbs)
+            negated = any(a.prefix.startswith("ne") for a in verbs + aux) or any(a.lemma in ("nesa", "nėra") for a in aux)
 
             if negated and not copula:
                 # a pronoun alone; a demonstrative before its noun goes with the phrase (neturiu tą gražią knygą)
@@ -1177,7 +1184,8 @@ class Grammar:
                             if fix:
                                 add(Issue(x.start, x.end, x.text, "negation", why, fix))
                                 continue
-                        require(x, {"gen"}, "negation", why)  # nepataiso visu žodžių -> visų
+                        if not aux:       # a compound past only by an accusative (nesu praradusi viltį; not jojusi drambliu)
+                            require(x, {"gen"}, "negation", why)  # nepataiso visu žodžių -> visų
                     continue
 
             # verbs with a genitive object: lauksiu tavo zinutes -> žinutės, reikia pagalbą -> pagalbos
@@ -1199,7 +1207,7 @@ class Grammar:
                         require(x, {"gen"}, "case", f"'{w.text}' takes the genitive")
                 continue
 
-            persons = {a.tag.split(".")[2] for a in verbs if finite(a)}
+            persons = {a.tag.split(".")[2] for a in (aux or verbs) if finite(a)}
             transitive = any(a.lemma.endswith(TRANSITIVE_VERBS) for a in verbs)
             # a real prefix, not reflexive: pamato, nupirko (not atsirado = atsi+rado)
             plain_transitive = any(any(a.lemma == v or a.lemma.endswith(v) and a.lemma[:-len(v)] in VERB_PREFIXES
