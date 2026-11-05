@@ -25,7 +25,8 @@ VALID = {
 }
 
 INVALID = ("medžyje jaučie nedžiaugiasi nusipraustis apbūdina gerasias dirbantisis džiaugiu elgiu "
-           "besijaudink besijaudinu").split()   # be-si- without S: participles and gerunds only
+           "besijaudink besijaudinu "   # be-si- without S: participles and gerunds only
+           "arklis").split()            # arklys/D is singular: no plural i-stem forms (durys/MK has them)
 
 # a reflexive-only verb has plain forms only with -si-: didžiuoju is the instrumental of didysis, not "I am
 # proud"; gėrimas is a drink, not a participle of gėrėtis

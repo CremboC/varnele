@@ -99,9 +99,11 @@ def noun(lemma, flags=""):
             _decline(out, stem, pl, f"N.{PLURALIA_GENDER[end]}.pl")
             return out
 
-    if lemma.endswith("ys") and len(lemma) > 4:
-        # durys, kepenys, smegenys are plural i-stems; arklys is singular -ys.
-        _decline(out, lemma[:-2], _pl_istem("ų"), "N.f.pl")
+    if lemma.endswith("ys") and ("M" in flags or "V" in flags):
+        # durys/MK, smegenys/MK, ašmenys/VK: plural i-stems (M feminine, V masculine); arklys/D, mūrinys/D are
+        # singular -ys nouns, without these plural forms (mūrinis is no accusative plural)
+        _decline(out, lemma[:-2], _pl_istem(genpl), f"N.{'f' if 'M' in flags else 'm'}.pl")
+        return out
     if lemma.endswith("ias"):
         name = "ias"
     elif lemma.endswith("ijas"):

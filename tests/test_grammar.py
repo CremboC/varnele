@@ -385,6 +385,7 @@ CORRECT = [
     "Pabundu vidurį nakties. Jis atėjo vidurį nakties. Dydžio y pokytį.",  # a typed į is meant; y is its own key
     "Esi suaugęs vyras. Nesu jojusi drambliu!",                         # a participle agreeing with its noun
     "Noriu, kad pasimėgautum šia akimirka. Pasimėgauk laisva diena.",    # mėgauti only ends like gauti
+    "Čia stovi pirmasis mūrinis pastatas. Ką manai apie šiuos ašmenis?",   # -ys nouns
     "Kas čia per vieta? Kas tai jau per vieta? Dabar mes kovojame vieni. Aš atėjau vienas.",
     "Tai per toli. Ką gali padaryti? Jie per seni. Per anksti išėjai. Ji per brangi.",
     "Per didelė rizika. Kas čia per vieta? Kas jūs per žmonės? Kas per velniava? Kas tai per kambarys?",
@@ -398,6 +399,7 @@ CORRECT = [
 KNOWN_FALSE_ALARMS = [
     "Nemalk liežuviu.",                      # an instrumental of means after a verb whose counts say it takes
     "Kodėl jūs man šito nepasakėte telefonu?",   # none; the verb-first negation guard is net better (AGENTS.md)
+    "Stosime petys petin.",                   # an idiom (shoulder to shoulder): a nominative after the verb
     "Klausyk seni, aš nesu jaunas.",          # an address: seni is a vocative, but also the accusative senį typed
                                               # without its ogonek, which the object rule must keep catching
 ]

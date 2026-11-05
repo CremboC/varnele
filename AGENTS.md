@@ -1150,7 +1150,9 @@ Left deliberately:
   past as the participle's verb in the auxiliary's person and negation (2026-11-05: `nesu praradusi viltį` →
   `vilties`), not when the participle agrees with the next word (`esi suaugęs vyras`: 18 false alarms on 5.7M
   words without that guard), negation then only by an accusative (`nesu jojusi drambliu` stays). The pair rule's old `pirmasis mūrinis pastatas` → `mūrinys`
-  (ispell-lt's `mūrinis` is also a noun) is still there.
+  is gone (2026-11-05): every `-ys` noun got the plural i-stem paradigm meant for `durys/MK`, `ašmenys/VK`
+  (`mūrinis` an accusative plural of `mūrinys`, `petys`, `arklis`); now only nouns with M (feminine) or V
+  (masculine) do, and no singular one. 37 bogus flags on 5.7M words of correct text gone.
   Seen while building it, older rules: negation stops at a pronoun object (`Neturiu tą gražią knygą`
   fixes only `tą`); the object rule takes `pirmiausia` as an object (`Filmai turi pirmiausia didelę
   vertę` → `pirmiausią`).
