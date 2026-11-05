@@ -389,11 +389,15 @@ impl Checker {
                 suggestions = v;
             }
         }
-        let name = status == WordStatus::Unknown && !first_lower(word) && !context.trim().is_empty();
+        // a capital after a colon, an opening quote or a dash may start a sentence (Pastaba: Siandien)
+        let opens = context.trim_end().ends_with(|c: char| ":„“\"«(–—-".contains(c));
+        let name = status == WordStatus::Unknown && !first_lower(word) && !context.trim().is_empty() && !opens;
         let name_fixes = if name {
             suggestions.iter().map(|s| s.0.clone()).filter(|s| {
                 lower(s) != lw && crate::grammar::adds_diacritics(&lw, &lower(s)) // not Pop -> POP
-                    && self.an.analyze(s).iter().any(|a| a.lemma.chars().next().is_some_and(char::is_uppercase))
+                    // a name, or a word written often (Didziosios Britanijos, Zemes; not Bresto -> Bręsto, Lakes -> Lakęs)
+                    && (self.an.analyze(s).iter().any(|a| a.lemma.chars().next().is_some_and(char::is_uppercase))
+                        || self.an.data.freq.get(&lower(s)) >= RARE_TWIN_RATIO * RARE_TWIN_RATIO)
             }).collect()
         } else {
             Vec::new()

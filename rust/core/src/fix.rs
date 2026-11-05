@@ -173,7 +173,8 @@ impl KeyboardWord {
         if self.is_valid() {
             return if self.is_sure(0) { self.context_fixes.first().map(|c| c.0.as_str()) } else { None };
         }
-        (self.clearly_best() && self.suggestions[0].2 == 0.0 && !self.key_shift).then(|| self.suggestions[0].0.as_str())
+        (self.clearly_best() && self.suggestions[0].2 == 0.0 && !self.key_shift && self.suggestion_level(0) > 0)
+            .then(|| self.suggestions[0].0.as_str()) // not a name into another word (iš Bresto)
     }
 
     /// What autocorrect commits when the word is finished, if it isn't the word as typed.

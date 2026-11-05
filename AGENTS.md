@@ -322,12 +322,15 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
     (`Veliau`; a capital further on is a name). Comparing with the form alone also caught `ligoje`
     → `lygoje`. Twins in different cases: the one giving the fewest grammar issues with the words before,
     then the most frequent (`pavojingiausia žemės ūkio masina` → `mašina`, not `mašiną`).
-  - **a name stays a name** (2026-11-05): an unknown word with a capital inside a sentence (the keyboard passes only
-    the sentence's words as context) is autocorrected only into a name that adds diacritics (`Siauliuose` →
-    `Šiauliuose`), never by a typo correction or into another word (`KeyboardWord::name`, `name_fixes`): of 6,319
-    such words in the test sets autocorrect changed 3,317 (`Boruta` → `Biruta`, `Black` → `Blank`, `Bresto` →
-    `Bręsto`), now 19, most real fixes (`Cekai` → `Čekai`). eval/keyboard_sim.py now passes the sentence's words
-    only, as the keyboard does.
+  - **a name stays a name** (2026-11-05): an unknown word with a capital inside a sentence (not after `:`, an
+    opening quote or a dash) is autocorrected, by autocorrect or the sentence fixer's last-word fix, only into a
+    twin adding diacritics that is a name or written 100+ times (`Siauliuose` → `Šiauliuose`, `Zemes` → `Žemės`),
+    never by a typo correction (`KeyboardWord::name`, `name_fixes`): of 6,319 such words in the test sets 3,317
+    were changed (`Boruta` → `Biruta`, `Black` → `Blank`, `Bresto` → `Bręsto`), now 38. HeliBoard's n-gram context
+    is empty right after a comma, colon or quote: the fork then passes the sentence so far (`sentenceSoFar`), else
+    `Labas, Boruta` looked like a sentence start. eval/keyboard_sim.py passes the sentence before the word (80
+    characters), as the keyboard's context; keyboard_restore 76.0 / 76.9 / 83.4% → 75.7 / 76.7 / 83.4%
+    (capitalised words with rare twins, `Kryziuocio`).
   - suggestion ranking: a negated form with no frequency of its own borrows the plain
     form's (`Neturetu` → `Neturėtų`); a suggestion differing from the input only by being a
     capitalised name costs +0.5.
