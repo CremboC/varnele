@@ -276,6 +276,23 @@ prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
   Checked on the emulator with taps placed below the centres by the old key height: logged dy 0.57 / 0.40 /
   0.23 per row, expected 0.55 / 0.39 / 0.24. The Material theme has no touch-position correction
   (`themes-lxx-base.xml`: `touchPositionCorrectionData` @null; Holo has AOSP's 2011 per-row data).
+  **First log** (owner, 2026-11-05, English, 6,613 taps on the Fold7's cover screen): 5.3% of taps hit another
+  key; taps land below the drawn key (top row +0.18 key heights, ~1.4 mm), and keys near the middle fall short
+  towards the thumb reaching for them (`t`, `g`, `y` left by 0.14–0.22 key widths, `h`, `n`, `u` right): `t`→`r` 36,
+  `h`→`j` 31, `e`→`w` 22, `o`→`k`/`l` 30. HeliBoard's hit box already holds the gap below each key (half a gap
+  lower than the key drawn), which covers ~0.12 key heights of the low taps.
+- **Touch model** (`keyboard/VarneleTouchModel.kt`, setting "Adapt keys to my typing" `varnele_touch_model`, default
+  on, any language, plus "Forget how I tap"; Varnelė screen): learns from the tap log's labelled taps (the same
+  words, whether or not the log is on) each letter key's mean offset from its hit box's centre, in key pitches,
+  and `KeyDetector.detectHitKey` moves each letter key's hit box by it (a tap in two moved boxes goes to the
+  nearer centre; in none, the usual detection). A key is a place (letter row from the bottom, column in half
+  keys), so layouts of the same shape share it; per screen (orientation, size in dp, split, one-handed). A key's
+  mean is shrunk towards its half row's and row's (30 taps' weight), counts halve every 1,000 taps, nothing moves
+  before 100, shifts capped at 0.3 pitch, taps over 0.9 / 0.7 pitch off ignored. Stored as sums per place
+  (`files/varnele_touch.tsv`), no text. Replaying the first log in order, learning as it goes: keys missed
+  350 → 288 (112 now right, 50 now wrong); offsets per row alone: 352, per half row: 309. On the emulator, 108
+  taps 45 px low moved the boundary under `t` from y 1787 to 1812. A tap whose letter is the word's with or
+  without diacritics now counts as meant for the key hit (a German `ä` key was labelled `a`).
 - **Gboard layout on every screen**: `Settings.useTabletLayout()` is false, so tablets and the
   Fold inner screen (≥600 dp, HeliBoard's "tablet") keep the phone layout (backspace next to `m`,
   enter bottom right, no extra `, .` keys, full key width). Split mode is cut from it:

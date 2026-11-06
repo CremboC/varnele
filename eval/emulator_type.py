@@ -4,7 +4,8 @@ goes through Varnelė Klaviatūra like a finger's: autocorrect, the sentence fix
     python3 eval/emulator_type.py "mano drakonas valgo morkas. "
 
 Letters a-z (typed without diacritics; the keyboard adds them), space, `.` and `,`, `<` = backspace,
-`\\n` = enter. Key centres are the Pixel 7 AVD's (1080x2400, number row on, Lithuanian QWERTY);
+`\\n` = enter. Key centres are the Pixel 7 AVD's (1080x2400, number row on, keyboard height 115%, Lithuanian QWERTY;
+the keyboard logs its own as `gesture keys (view px)`, 1447 px above the screen's);
 another screen or layout needs new ones (a screenshot: adb exec-out screencap -p > s.png).
 """
 
@@ -17,12 +18,12 @@ ADB = ["perl", "-e", "alarm 30; exec @ARGV", os.path.expanduser("~/Library/Andro
        "-s", "emulator-5554"]
 KEYS = {}
 for i, c in enumerate("qwertyuiop"):
-    KEYS[c] = (54 + 108 * i, 1767)
+    KEYS[c] = (54 + 108 * i, 1690)
 for i, c in enumerate("asdfghjkl"):
-    KEYS[c] = (108 + 108 * i, 1905)
+    KEYS[c] = (108 + 108 * i, 1849)
 for i, c in enumerate("zxcvbnm"):
-    KEYS[c] = (216 + 108 * i, 2043)
-KEYS.update({" ": (648, 2181), ".": (864, 2181), ",": (216, 2181), "\n": (998, 2181), "<": (998, 2043)})
+    KEYS[c] = (216 + 108 * i, 2009)
+KEYS.update({" ": (648, 2169), ".": (864, 2169), ",": (216, 2169), "\n": (998, 2169), "<": (998, 2009)})
 
 
 def tap(c, pause=0.25):
