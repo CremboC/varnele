@@ -2,6 +2,10 @@
 
 use std::collections::BTreeMap;
 
+/// cost per log10 of how much likelier the language model finds a correction after the previous words (as in
+/// swipe; 0.15 and 0.5 measured no better)
+const LM_WEIGHT: f64 = 0.3;
+
 use crate::analyzer::{Analyzer, Status};
 use crate::data::Data;
 use crate::grammar::{adds_diacritics, Fit, Grammar, Issue, RARE_TWIN_RATIO};
@@ -324,8 +328,23 @@ impl Checker {
             (w, cost, fc)
         };
         let mut suggestions: Vec<(String, f64, f64)> = Vec::new();
+        // the previous words: a candidate the language model finds likelier here costs less, as in swipe
+        let lm = self.an.lm_previous(context);
+        let lift = |w: &str| LM_WEIGHT * self.an.context_score(&lm, &lower(w), 0.0);
         if status == WordStatus::Unknown {
             suggestions = self.an.suggest_scored(word, 5).into_iter().map(|(w, c)| entry(w, c)).collect();
+            // only among corrections of one kind: a typo fix never overtakes a diacritic one (ka -> ką, not kad)
+            let slots: Vec<bool> = suggestions.iter().map(|s| s.2 == 0.0).collect();
+            let mut kinds: [Vec<(String, f64, f64)>; 2] = [Vec::new(), Vec::new()];
+            for s in suggestions.drain(..) {
+                let l = lift(&s.0);
+                kinds[(s.2 == 0.0) as usize].push((s.0, s.1 - l, s.2));
+            }
+            for k in kinds.iter_mut() {
+                k.sort_by(|a, b| a.1.total_cmp(&b.1));
+                k.reverse(); // popped from the end
+            }
+            suggestions = slots.iter().map(|&d| kinds[d as usize].pop().unwrap()).collect();
         }
         let mut context_rule = String::new();
         let mut context_fixes: Vec<(String, f64, f64)> = Vec::new();
@@ -362,7 +381,11 @@ impl Checker {
         // A valid but rare form whose diacritic twin is common was almost certainly typed
         // without diacritics: sakini (rare verb form) -> sakinį, veliau -> vėliau.
         if status == WordStatus::Ok && context_fixes.is_empty() {
-            if let Some(twin) = self.common_twins(word, context, after).into_iter().next() {
+            // twins the grammar can't tell apart: the likelier after the previous words (mano mašina)
+            let mut twins = self.common_twins(word, context, after);
+            let p = |w: &str| self.an.p_context(&lm, &lower(w), 0.0);
+            twins.sort_by(|a, b| p(b).total_cmp(&p(a)));
+            if let Some(twin) = twins.into_iter().next() {
                 context_rule = "rare".into();
                 context_fixes.push(entry(twin, 0.0));
             }

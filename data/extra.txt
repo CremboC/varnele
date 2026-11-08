@@ -48,6 +48,32 @@ domėjo/POSXZrw
 -šiomis/
 -šiose/
 
+# du, trys, abu: ispell-lt lists their forms only as bare words (particles); declined in paradigms.numeral
+du/H
+trys/H
+abu/H
+-du/
+-dvi/
+-dviejų/
+-dviem/
+-dviems/
+-dviejuose/
+-dviejose/
+-trys/
+-trijų/
+-trims/
+-tris/
+-trimis/
+-trim/
+-trijuose/
+-trijose/
+-abu/
+-abiejų/
+-abiems/
+-abiem/
+-abiejuose/
+-abi/
+
 # pronouns that ispell-lt also lists as nouns: the noun reading hides them from agreement
 -šita/D
 -kita/D

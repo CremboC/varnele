@@ -123,6 +123,21 @@ FLAGGED = [
     ("Radau nukritusia sagutę.", "nukritusia", "object", "nukritusią"),   # noun fixed first (keyboard)
     ("Labas, Jonai kaip sekasi?", "kaip", "comma", ", kaip"),             # first comma already there
     ("Bebėgiodamas link namu.", "namu", "case", "namų"),
+    # the distributive po + a numeral of 2-9 takes the accusative
+    ("Autobuse po dvi sėdynės.", "sėdynės", "case", "sėdynes"),
+    ("Kiekvienoje eilėje po tris keleivių sėdynės.", "sėdynės", "case", "sėdynes"),   # over a genitive
+    ("Turi po dvi didelės sėdynės.", "didelės", "case", "dideles"),
+    ("Varžėsi po keturios rinktines.", "keturios", "case", "keturias"),
+    ("Iš grupės pateko po trys geriausius.", "trys", "case", "tris"),
+    # du, trys, abu are declined numerals (plural), so they agree like other modifiers
+    ("Važiuoti trys ratus.", "trys", "agreement", "tris"),
+    ("Kurios tris kraštinės, išeinančios iš taško, sutampa.", "tris", "agreement", "trys"),
+    ("Neturėjau trijų tūkstančiu draugų.", "tūkstančiu", "agreement", "tūkstančių"),
+    ("Grojau bliuzą visa savo gyvenimą.", "visa", "agreement", "visą"),     # over savo (also an adverb)
+    # both words lost their diacritics: the noun only a vocative, far rarer than its twin
+    ("Yra nemokamas internetas visa skrydi.", "visa", "agreement", "visą"),
+    ("Yra nemokamas internetas visa skrydi.", "skrydi", "agreement", "skrydį"),
+    ("Rytoj aš organizuoju maža vakarėli.", "vakarėli", "agreement", "vakarėlį"),
     ("Aš net ne vienos eilutes kodo neparašiau.", "eilutes", "agreement", "eilutės"),  # not "viena kitą"
     # a noun before another noun is its genitive
     ("Miesto gyventoju skaičius auga.", "gyventoju", "case", "gyventojų"),
@@ -185,8 +200,8 @@ FLAGGED = [
     ("Esu girdėjęs visa šita istorija.", "visa", "object", "visą"),
     ("Per daug pasitikėdamas, aš padariau klaida.", "klaida", "valency", "klaidą"),
     ("Man nesvarbu, kiek jūs turite pinigu.", "pinigu", "valency", "pinigų"),                    # number, not case: not didelius
-    ("Galbūt reikia padidinti įprasta dydi?", "įprasta", "valency", "įprastą"),  # dydi is only a vocative: no case
-    ("Galbūt reikia padidinti įprasta dydi?", "dydi", "valency", "dydį"),
+    ("Galbūt reikia padidinti įprasta dydi?", "įprasta", "agreement", "įprastą"),  # dydi is only a vocative: no case (the pair rule, before valency)
+    ("Galbūt reikia padidinti įprasta dydi?", "dydi", "agreement", "dydį"),
     ("Noriu nupirkti automobili.", "automobili", "valency", "automobilį"),  # nupirkti stays: no modifier
     ("Ar turite skėti?", "skėti", "valency", "skėtį"),                  # a genitive is an object too: turite laiko
     ("Duok man tavo numeri.", "numeri", "valency", "numerį"),           # over the possessive
@@ -232,6 +247,22 @@ FLAGGED = [
 ]
 
 CORRECT = [
+    "Gavo po dvi teisės mokyklas.",          # teisės modifies the head
+    "Autobuse po dvi sėdynes.",
+    "Autobuse po dvi sėdynės",               # the keyboard types on: sėdynės may modify a noun after it
+    "Po dviem medžiais.",                    # under: another case
+    "Po dvi kiekvienai pėdai.",              # a dative phrase of its own
+    "Du gyvi, kiti mirę.",                   # du is plural: no du gyvį
+    "Labas, brangus tėti.",                  # an address: tėti is written more often than tėtį
+    "Abu blogi.",
+    "Staiga jūs kaip du seni šunys.",
+    "Žinoma, turiu abi aras.",
+    "Dėl šių dviejų kartu veikiančių mechanizmų.",           # kartu: together, not kartų
+    "Pakirdęs išvysi tris saulės nutviekstus rytus.",       # the head comes after the genitive
+    "Pridėsim pirmas tris pavardės „Kaltropas“ raides.",
+    "1956 m. į Baisogalą atkeltas Gyvulininkystės ir veterinarijos institutas.",
+    "Feniksas yra paukštis, turintis labai gražias plunksnas.",
+    "Perimant iš kaimynų produktyvesnes žemdirbystės bei gyvulininkystės technologijas.",
     "Palauk senoli.",                        # an address: senoli is seen as often as senolį
     "Pakrančių apsaugos sraigtasparni, girdite mane?",   # apsaugos modifies the address
     "Ateik šuneli.",                         # ateiti takes no case often enough to make šuneli an object

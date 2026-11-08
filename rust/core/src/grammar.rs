@@ -52,6 +52,16 @@ const QUANTIFIER_LEMMAS: &[&str] = &[
     "šimtas", "tūkstantis", "milijonas", "milijardas", "dešimtis", "keletas", "pora", "daugybė",
     "dauguma", "pusė", "trečdalis", "ketvirtadalis", "ketvirtis",
 ];
+/// po + a numeral of 2-9 in the nominative or accusative is the distributive po, which takes the accusative (po dvi
+/// sėdynes, po tris kartus); po trijų (after), po dviem (under) are other cases. The nominatives -> accusatives:
+const DISTRIBUTIVE_NOM: &[(&str, &str)] = &[
+    ("trys", "tris"), ("keturi", "keturis"), ("keturios", "keturias"), ("penki", "penkis"), ("penkios", "penkias"),
+    ("šeši", "šešis"), ("šešios", "šešias"), ("septyni", "septynis"), ("septynios", "septynias"),
+    ("aštuoni", "aštuonis"), ("aštuonios", "aštuonias"), ("devyni", "devynis"), ("devynios", "devynias"),
+];
+fn distributive_numeral(w: &str) -> bool {
+    matches!(w, "du" | "dvi" | "abu" | "abi") || DISTRIBUTIVE_NOM.iter().any(|(n, a)| *n == w || *a == w)
+}
 const KURIS: &[&str] = &[
     "kuris", "kuri", "kurio", "kurios", "kuriam", "kuriai", "kurį", "kurią", "kuriuo", "kuria",
     "kuriame", "kurioje", "kurie", "kurių", "kuriems", "kurioms", "kuriuos", "kurias", "kuriais",
@@ -988,6 +998,11 @@ fn valency_lone(g: &G, toks: &[Word], idx: Vec<usize>) -> Option<Vec<usize>> {
     Some(idx)
 }
 
+/// Nothing but spaces and quotes between two words (no line break).
+fn quote_gap(gap: &str) -> bool {
+    gap.chars().all(|c| (c.is_whitespace() && c != '\n' && c != '\r') || "„“\"”'".contains(c))
+}
+
 /// Do these two words agree as they are spelled?
 fn could_agree_own(w1: &Word, w2: &Word) -> bool {
     w1.own.iter().any(|a| w2.own.iter().any(|b| agree(a, b)))
@@ -1079,6 +1094,10 @@ impl Grammar {
                 };
                 if let Some(&last) = r {
                     if !could_agree(&g, &toks[last], w) {
+                        break;
+                    }
+                    // dėl šių dviejų | kartu veikiančių: an adverb, agreeing only by a twin (kartų)
+                    if g.analyses(&w.text).iter().any(|a| g.tag(a) == "W") && !could_agree_own(&toks[last], w) {
                         break;
                     }
                 }
@@ -1264,6 +1283,63 @@ impl Grammar {
                     if !span.is_empty() && toks[*span.last().unwrap()].is_noun(&g) {
                         for &x in &span {
                             require(&mut issues, &toks[x], cases, "case", &format!("'{prep}' takes the {want}"));
+                        }
+                    }
+                }
+            }
+            // 1b. the distributive po: po dvi sėdynės -> sėdynes, po trys vyrus -> tris
+            if w.lower == "po" && nxt_adjacent && distributive_numeral(&toks[i + 1].lower) && !is_upper(&toks[i + 1].text) {
+                let num = &toks[i + 1];
+                const WHY: &str = "distributive 'po' takes the accusative";
+                if let Some((_, acc)) = DISTRIBUTIVE_NOM.iter().find(|(n, _)| *n == num.lower) {
+                    add(&mut issues, Issue {
+                        start: num.start, end: num.end, word: num.text.clone(), rule: "case",
+                        message: WHY.to_string(), suggestions: vec![num.cap(acc)],
+                    });
+                }
+                let mut span = phrase(i + 1, false);
+                // genitive modifiers before the head: po tris keleivių sėdynes, po dvi teisės mokyklas
+                let start = i + 1 + span.len();
+                let mut k = start;
+                while !span.is_empty()
+                    && k + 1 < toks.len()
+                    && adjacent[k + 1]
+                    && toks[k].known
+                    && toks[k].own.iter().any(|r| r.case == "gen")
+                    && !toks[k].own.iter().any(|r| r.case == "acc")
+                    && !is_upper(&toks[k].text)
+                    && toks[k + 1].is_noun(&g)
+                {
+                    k += 1;
+                }
+                if k > start {
+                    span = phrase(k - 1, false);
+                }
+                // a head that may be a genitive with nothing after it yet waits for the noun it may modify
+                if let Some(&h) = span.last() {
+                    let head = &toks[h];
+                    if head.is_noun(&g)
+                        && !span.iter().any(|&x| is_upper(&toks[x].text))
+                        && !(h + 1 == toks.len() && head.can_be(&g, "gen") && chars[head.end..].iter().all(|c| c.is_whitespace()))
+                    {
+                        for &x in &span {
+                            let t = &toks[x];
+                            if t.own.iter().any(|r| matches!(r.case, "acc" | "dat" | "ins" | "loc")) {
+                                continue; // po du kiekvienai pėdai: a phrase of its own
+                            }
+                            let fixes: Vec<String> = t
+                                .variants(&g)
+                                .iter()
+                                .filter(|(_, rs)| rs.iter().any(|r| r.case == "acc" && r.number != Some("sg")))
+                                .map(|(f, _)| t.cap(f))
+                                .collect();
+                            if !fixes.is_empty() && !(t.known && t.own.is_empty()) {
+                                let rule = if t.known { "case" } else { "context" };
+                                add(&mut issues, Issue {
+                                    start: t.start, end: t.end, word: t.text.clone(), rule,
+                                    message: WHY.to_string(), suggestions: fixes,
+                                });
+                            }
                         }
                     }
                 }
@@ -2588,6 +2664,9 @@ impl Grammar {
             if EMPHATIC.contains(&n.lower.as_str()) && !g.demonstrative(&a.text) {
                 continue; // vieną pati: the emphatic pronoun (myself), not a noun
             }
+            if g.analyses(&n.text).iter().any(|x| g.tag(x) == "W") && !could_agree_own(a, n) && !n.can_be(&g, "gen") {
+                continue; // dviejų kartu veikiančių: an adverb (together), agreeing only by a twin (kartų)
+            }
             // viena kitą = each other (but: vienos eilutes -> eilutės)
             if ["vienas", "viena", "vieni", "vienos"].contains(&a.lower.as_str()) && n.lower.starts_with("kit") {
                 continue;
@@ -2635,6 +2714,14 @@ impl Grammar {
                     n = &toks[j];
                 } else if j > i || !n.own.iter().any(|r| r.pos == Pos::Noun && r.case != "gen") {
                     continue;
+                } else if (i + 1..toks.len()).take(3).any(|k| {
+                    (i + 1..=k).all(|m| quote_gap(&gap_of(m)))
+                        && toks[k].known
+                        && a.own.iter().filter(|x| x.pos == Pos::Adj).any(|x| {
+                            toks[k].own.iter().any(|y| matches!(y.pos, Pos::Noun | Pos::Adj) && agree(x, y))
+                        })
+                }) {
+                    continue; // the head comes later: tris saulės nutviekstus, tris pavardės „Kaltropas“ raides
                 } else {
                     no_gen = true; // no head follows: not a modifier (šita žmogų -> šitą)
                 }
@@ -2680,6 +2767,25 @@ impl Grammar {
                             suggestions: g.ranked(&t.text, fix.clone()),
                         });
                     }
+                }
+                continue;
+            }
+            // neither agrees by a change of its own, and the noun has no case as written (a vocative far rarer than
+            // its twin, lost_case): both lost their diacritics (internetas visa skrydi -> visą skrydį); not a participle,
+            // which may take it as its object (būčiau pasakiusi penktadienį)
+            if fix_n.is_empty() && fix_a.is_empty() && a.known && n.known && !a.is_participle(&g) && lost_case(&g, n) {
+                let mut pairs: Vec<(String, String)> = Vec::new();
+                for (fa, ras) in a.variants(&g).iter().filter(|(f, _)| adds_diacritics(&a.lower, &lower(f))) {
+                    for (fn_, rns) in n.variants(&g).iter().filter(|(f, _)| adds_diacritics(&n.lower, &lower(f))) {
+                        if ras.iter().any(|x| x.pos == Pos::Adj && rns.iter().any(|y| y.pos == Pos::Noun && agree(x, y))) {
+                            pairs.push((fa.clone(), fn_.clone()));
+                        }
+                    }
+                }
+                if pairs.len() == 1 {
+                    let (fa, fn_) = &pairs[0];
+                    add(&mut issues, Issue { start: a.start, end: a.end, word: a.text.clone(), rule: "agreement", message: msg.clone(), suggestions: vec![a.cap(fa)] });
+                    add(&mut issues, Issue { start: n.start, end: n.end, word: n.text.clone(), rule: "agreement", message: msg, suggestions: vec![n.cap(fn_)] });
                 }
                 continue;
             }

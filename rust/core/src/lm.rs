@@ -185,6 +185,12 @@ impl crate::analyzer::Analyzer {
         LmContext { prev, prev2, lemmas, words: recent.len() as u32 }
     }
 
+    /// [`Self::lm_context`] without the paragraph: only the two previous words (cheap, for every keystroke).
+    pub fn lm_previous(&self, context: &str) -> LmContext {
+        let (prev2, prev) = previous_words(context);
+        LmContext { prev, prev2, lemmas: Default::default(), words: 0 }
+    }
+
     /// log10 of how much likelier the word (lowercase) is here than anywhere: the previous
     /// word (tuo metu, taip pat) and the paragraph's lemmas.
     pub fn context_score(&self, ctx: &LmContext, w: &str, cache_share: f64) -> f64 {

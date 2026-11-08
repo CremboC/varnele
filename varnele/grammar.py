@@ -41,6 +41,14 @@ QUANTIFIER_WORDS = {"daug", "mažai", "nemažai", "kiek", "tiek", "daugiau", "ma
 QUANTIFIER_LEMMAS = {"šimtas", "tūkstantis", "milijonas", "milijardas", "dešimtis", "keletas",
                      "pora", "daugybė", "dauguma", "pusė", "trečdalis", "ketvirtadalis", "ketvirtis"}
 
+# po + a numeral of 2-9 in the nominative or accusative is the distributive po, which takes the accusative (po dvi
+# sėdynes, po tris kartus); po trijų (after), po dviem (under) are other cases. The nominatives -> accusatives:
+DISTRIBUTIVE_NOM = {"trys": "tris", "keturi": "keturis", "keturios": "keturias", "penki": "penkis",
+                    "penkios": "penkias", "šeši": "šešis", "šešios": "šešias", "septyni": "septynis",
+                    "septynios": "septynias", "aštuoni": "aštuonis", "aštuonios": "aštuonias",
+                    "devyni": "devynis", "devynios": "devynias"}
+DISTRIBUTIVE_NUMERALS = {"du", "dvi", "abu", "abi"} | set(DISTRIBUTIVE_NOM) | set(DISTRIBUTIVE_NOM.values())
+
 # Comma rules: these start a clause, so a comma goes before them.
 KURIS = {"kuris", "kuri", "kurio", "kurios", "kuriam", "kuriai", "kurį", "kurią", "kuriuo",
          "kuria", "kuriame", "kurioje", "kurie", "kurių", "kuriems", "kurioms", "kuriuos",
@@ -369,6 +377,11 @@ def _could_agree(w1, w2):
     r1 = w1.pos_readings() + [r for _, rs in w1.variants for r in rs]
     r2 = w2.pos_readings() + [r for _, rs in w2.variants for r in rs]
     return any(_agree(a, b) for a in r1 for b in r2)
+
+
+def QUOTE_GAP(gap):
+    """Nothing but spaces and quotes between two words (no line break)."""
+    return all((c.isspace() and c not in "\n\r") or c in "„“\"”'" for c in gap)
 
 
 def phrase_feats(words):
@@ -742,6 +755,8 @@ class Grammar:
                 ref = span[-2] if len(span) > 1 and span[-1].lower in EMPHATIC else span[-1] if span else None
                 if ref and not _could_agree(ref, w):
                     break         # už didžiausią | tuo metu: a new phrase starts (tą pačią dieną: as with tą)
+                if ref and any(a.tag == "W" for a in self.analyses(w.text)) and not _could_agree_own(ref, w):
+                    break         # dėl šių dviejų | kartu veikiančių: an adverb, agreeing only by a twin (kartų)
                 if w.lower in EMPHATIC and span and self.demonstrative(span[-1].text):
                     span.append(w)        # tą pačią dieną: "same", a modifier (pati is listed as a noun, wife)
                     j += 1
@@ -863,6 +878,34 @@ class Grammar:
                     if span and span[-1].is_noun:
                         for x in span:
                             require(x, cases, "case", f"'{prep}' takes the {want}")
+            # 1b. the distributive po: po dvi sėdynės -> sėdynes, po trys vyrus -> tris
+            if (w.lower == "po" and nxt_adjacent and toks[i + 1].lower in DISTRIBUTIVE_NUMERALS
+                    and not toks[i + 1].text.isupper()):
+                num = toks[i + 1]
+                if num.lower in DISTRIBUTIVE_NOM:
+                    add(Issue(num.start, num.end, num.text, "case", "distributive 'po' takes the accusative",
+                              [num.cap(DISTRIBUTIVE_NOM[num.lower])]))
+                span = phrase(i + 1)
+                # genitive modifiers before the head: po tris keleivių sėdynes, po dvi teisės mokyklas
+                k = i + 1 + len(span)
+                while (span and k + 1 < len(toks) and adjacent[k + 1] and toks[k].known
+                       and any(r.case == "gen" for r in toks[k].own) and not any(r.case == "acc" for r in toks[k].own)
+                       and not toks[k].text.isupper() and toks[k + 1].is_noun):
+                    k += 1
+                if k > i + 1 + len(span):
+                    span = phrase(k - 1)
+                head = span[-1] if span else None
+                # a head that may be a genitive with nothing after it yet waits for the noun it may modify
+                if (head and head.is_noun and not any(x.text.isupper() for x in span)
+                        and not (head is toks[-1] and head.can_be("gen") and not text[head.end:].strip())):
+                    for x in span:
+                        if any(r.case == "acc" for r in x.own) or any(r.case in ("dat", "ins", "loc") for r in x.own):
+                            continue      # po du kiekvienai pėdai: a phrase of its own
+                        fixes = [x.cap(f) for f, rs in x.variants
+                                 if any(r.case == "acc" and r.number != "sg" for r in rs)]
+                        if fixes and not (x.known and not x.own):
+                            add(Issue(x.start, x.end, x.text, "case" if x.known else "context",
+                                      "distributive 'po' takes the accusative", fixes))
             # 2b. numbers: 10 metu -> metų
             # (a noun right after the number: not units "20 m atstumu", manner "12 etniniu pagrindu",
             # labels "KNM-ER 1813 atveju")
@@ -1672,6 +1715,11 @@ class Grammar:
                           f"'{a.text} {w.text}': the words of a phrase agree in case, number and gender",
                           self.ranked(w.text, fix)))
 
+        def after_agrees(a, k):
+            """toks[k] is a noun or adjective agreeing with a as written."""
+            return toks[k].known and any(_agree(x, y) for x in a.own if x.pos == "adj"
+                                         for y in toks[k].own if y.pos in ("noun", "adj"))
+
         # 2. adjective-noun agreement
         for i in range(1, len(toks)):
             a, n = toks[i - 1], toks[i]
@@ -1681,6 +1729,8 @@ class Grammar:
                 continue          # ką gali: kas is a phrase of its own
             if n.lower in EMPHATIC and not self.demonstrative(a.text):
                 continue          # vieną pati: the emphatic pronoun (myself), not a noun
+            if any(x.tag == "W" for x in self.analyses(n.text)) and not _could_agree_own(a, n) and not n.can_be("gen"):
+                continue          # dviejų kartu veikiančių: an adverb (together), agreeing only by a twin (kartų)
             no_gen = False
             if a.lower in ("vienas", "viena", "vieni", "vienos") and n.lower.startswith("kit"):
                 continue          # viena kitą = each other (but: vienos eilutes -> eilutės)
@@ -1716,6 +1766,9 @@ class Grammar:
                     n = toks[j]
                 elif j > i or not any(r.pos == "noun" and r.case != "gen" for r in n.own):
                     continue
+                elif any(after_agrees(a, k) for k in range(i + 1, len(toks))[:3]
+                         if all(QUOTE_GAP(gaps[m]) for m in range(i + 1, k + 1))):
+                    continue      # the head comes later: tris saulės nutviekstus, tris pavardės „Kaltropas“ raides
                 else:
                     no_gen = True       # no head follows: not a modifier (šita žmogų -> šitą)
             # A participle before a noun is usually an attribute (nukritusią sagutę), but it
@@ -1745,6 +1798,17 @@ class Grammar:
                 for t, fix in ((n, fix_n), (a, fix_a)):
                     if fix and len(fix) < len(t.variants):
                         add(Issue(t.start, t.end, t.text, "context", msg, self.ranked(t.text, fix)))
+                continue
+            # neither agrees by a change of its own, and the noun has no case as written (a vocative far rarer than
+            # its twin, lost_case): both lost their diacritics (internetas visa skrydi -> visą skrydį); not a participle,
+            # which may take it as its object (būčiau pasakiusi penktadienį)
+            if not fix_n and not fix_a and a.known and n.known and not a.is_participle and self.lost_case(n):
+                pairs = [(fa, fn) for fa, ras in a.variants if adds_diacritics(a.lower, fa.lower())
+                         for fn, rns in n.variants if adds_diacritics(n.lower, fn.lower())
+                         if any(_agree(x, y) for x in ras if x.pos == "adj" for y in rns if y.pos == "noun")]
+                if len(pairs) == 1:
+                    add(Issue(a.start, a.end, a.text, "agreement", msg, [a.cap(pairs[0][0])]))
+                    add(Issue(n.start, n.end, n.text, "agreement", msg, [n.cap(pairs[0][1])]))
                 continue
             # An unknown word may only reorder its own suggestions; it never
             # justifies changing a correctly spelled neighbour.

@@ -269,9 +269,25 @@ def pronoun(lemma, flags=""):
     return out
 
 
+# du, trys, abu decline on their own; ispell-lt lists their forms as bare words (particles). Plural: du seni (two
+# old ones) is no du senį
+SMALL_NUMERALS = {
+    "du": [("Num.m.pl", ["du", "dviejų", ("dviem", "dviems"), "du", "dviem", "dviejuose"]),
+           ("Num.f.pl", ["dvi", "dviejų", ("dviem", "dviems"), "dvi", "dviem", "dviejose"])],
+    "trys": [("Num.pl", ["trys", "trijų", "trims", "tris", ("trimis", "trim"), None]),
+             ("Num.m.pl", [None, None, None, None, None, "trijuose"]),
+             ("Num.f.pl", [None, None, None, None, None, "trijose"])],
+    "abu": [("Num.m.pl", ["abu", "abiejų", ("abiem", "abiems"), "abu", "abiem", "abiejuose"]),
+            ("Num.f.pl", ["abi", "abiejų", ("abiem", "abiems"), "abi", "abiem", "abiejose"])],
+}
+
+
 def numeral(lemma, flags=""):
     out = []
-    if lemma.endswith("lika"):
+    if lemma in SMALL_NUMERALS:
+        for tag, row in SMALL_NUMERALS[lemma]:
+            _decline(out, "", row, tag)
+    elif lemma.endswith("lika"):
         _decline(out, lemma[:-1], ["a", "os", "ai", "ą", "a", "oje"], "Num")
     elif lemma.endswith("dešimt"):
         out.append((lemma, "Num.nom"))
