@@ -434,7 +434,7 @@ CORRECT = [
 # it to CORRECT.
 KNOWN_FALSE_ALARMS = [
     "Nemalk liežuviu.",                      # an instrumental of means after a verb whose counts say it takes
-    "Kodėl jūs man šito nepasakėte telefonu?",   # none; the verb-first negation guard is net better (AGENTS.md)
+    "Kodėl jūs man šito nepasakėte telefonu?",   # none; the verb-first negation guard is net better (docs/rules.md, negation)
     "Stosime petys petin.",                   # an idiom (shoulder to shoulder): a nominative after the verb
     "Klausyk seni, aš nesu jaunas.",          # an address: seni is a vocative, but also the accusative senį typed
                                               # without its ogonek, which the object rule must keep catching

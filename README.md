@@ -67,7 +67,7 @@ the top suggestion for each flagged word and counts what comes back:
 Most of what is still missed is valid without diacritics and grammar can't decide
 it (`kalba` is "speaks" and "language", `žmones` an accusative). A model of case
 sequences trained on the frequency corpus was tried for these and left out: on
-173 k words of training text it changed too many correct words (see AGENTS.md).
+173 k words of training text it changed too many correct words (see docs/backlog.md).
 
 ## Rust runtime and Android app
 

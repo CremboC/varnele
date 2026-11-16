@@ -1,9 +1,11 @@
 # Varnelė: agent notes (read this first, every session)
 
 Rule-based Lithuanian spell and grammar checker, plus a fork of the HeliBoard
-Android keyboard that uses it for autocorrect. This file is the memory of the
-project: what exists, why it is built this way, what was learned, what is next.
-Keep it current when something changes.
+Android keyboard that uses it for autocorrect, a Mac autocorrect app and a Chrome
+extension. This file holds what every session needs: how to work, the commands,
+the shape of the system, the gotchas. The detail (every rule's exceptions, the
+keyboard's design, all measurements, the backlog) is in `docs/`, see "Where the
+detail is". Keep both current when something changes.
 
 ## Goals and preferences of the owner
 
@@ -22,7 +24,7 @@ Keep it current when something changes.
     then `git -C ~/git/varnele merge --ff-only origin/main` in the same step.
   - Pushing from `~/git/varnele`: `git fetch origin`, `git merge --ff-only origin/main` first, then push.
   - Before building, testing or recording from `~/git/varnele`, also `git fetch origin` and fast-forward if
-    `git status -sb` says behind. A keyboard built from a stale checkout fails silently (see Gotchas).
+    `git status -sb` says behind. A keyboard built from a stale checkout fails silently (see Gotchas: `Native.kt` arguments).
   - Uncommitted work may be another session's. If it blocks the fast-forward, stash only the files that
     collide (`git stash push -- FILE`) and pop them after; never reset, and commit only your own hunks.
   - The fork is the same: `~/git/HeliBoard` `main` and `fork/main` stay on one commit (`origin` there is
@@ -52,6 +54,7 @@ tests/          unittest: test_morphology.py, test_grammar.py
 vendor/ispell-lt  BSD word list (stems + class flags only; its affix rules are NOT used)
 data/           extra.txt (our lexicon additions), abbreviations.txt, freq.tsv, lemma_freq.tsv,
                 varnele.bin (generated, git-ignored), index.pkl (cache, git-ignored)
+docs/           the detail behind this file: rules, architecture, keyboard, desktop, numbers, backlog, history
 corpus/         Wikipedia (git-ignored): test/ (150 articles, evaluation only), freq/ (600 articles, the old
                 frequency corpus), wiki/ (the lt dump + text/ from extract_wiki.py: 213k articles, 31M words,
                 the test articles left out; eval/training.py counts on it when present, else on freq/)
@@ -73,7 +76,8 @@ python3 eval/commas.py [corpus/freq] [--show-wrong]  # strip all commas, precisi
 python3 eval/agreement.py [DIR...] [--max N] [--show] # break one word of agreeing modifier+modifier+noun phrases, count fixes
 python3 eval/build_valency.py [--workers 8]        # case of the phrase next to each verb, on the training text -> data/valency.tsv
                                                    # (~80 s; then export). restore.py also applies the valency rule's fixes
-rust/desktop/mac/bundle.sh [--reset]               # build ~/Applications/Varnele.app (macOS menu-bar app)
+rust/desktop/mac/bundle.sh [--reset]               # build ~/Applications/Varnele.app (macOS menu-bar app); a rebuild
+                                                   # loses its Accessibility grant: ask the owner first
 rust/target/release/varnele-desktop --sim "text"   # type text through the desktop engine (stdin too; --no-english)
 cargo test --release -p varnele-desktop --manifest-path rust/Cargo.toml
 python3 eval/keyboard_sim.py "kodel nepataiso ..." # type through the engine's keyboard decisions, word by word
@@ -155,855 +159,100 @@ language decision), settings, UI, reading and writing the field, and the Mac's E
 the system dictionary; the extension has none and asks `Tally`). Rust-only with no Python twin, because
 `check_text` doesn't use them: gesture decoding, the language model, predictions, `keyboard_soft`.
 
-## Architecture and key decisions
+## Where the detail is
 
-1. **Lexicon = ispell-lt stems + flags**, our own paradigms generate every form
-   (12 noun declensions, adjectives with definite forms/degrees/-umas/-okas, verbs
-   from 3 principal parts: all tenses, moods, participles, gerunds, verbal nouns,
-   reflexives). ~10 M forms. ispell-lt's bare `word/R` and `word/O` lines (689: R/O are its reflexive
-   flags, with no class flag) are read by `lexicon._bare_verb_forms`: the flag of a verb entry of the same
-   word (`buvo/O`, `saugo/R`; read as words they gave common verbs a particle reading `W`, which made
-   them "not mostly a verb"), or the reflexive form of a reflexive-only verb (`didžiuotis/R`,
-   `bastosi/R`, `didžiavosi/O`: the kind from the ending, an `-o` present with R, past with O), which
-   becomes a principal part with our own flag `Z`: a plain form of it only with the `-si-` infix (`_allowed` /
-   `analyzer::allowed`: `nesidomiu`, `besidžiaugiantis`; `didžiuoju` stays the instrumental of didysis, `gėrimas`
-   no participle of gėrėtis). 53 plain forms of no listed verb (`gavi/O`, `bėgėti/R`) are left words.
-2. **Index = stem + shared ending signature** (~96k stems, ~400 signatures).
-   Lookup tries every split point. Diacritic-blind ("folded") index is built lazily.
-3. **Sound rules at the stem/ending boundary** (`phonology.join`): t/d+i+back
-   vowel → č/dž, j+i → j, future s/š merge, imperative g/k+k → k.
-4. **Prefix grammar at lookup**: ne-/nebe-/be-/te-/tebe- + 12 verbal prefixes
-   (api-/ati- before p/b, t/d) + -si- infix, checked against ispell prefix flags.
-   Principal parts with *no* prefix flags (data gap, e.g. krinta) accept all prefixes.
-5. **Spoken register layer**: -t, -m, -t(e), -s(i), -oj, -ėj, -uj, -y, -uos, -om, -ėm, -im…
-6. **Productive word formation** (derivation suffixes, compounds, prefixoids
-   geo-/neo-/anti-…) with **blocking**: a guessed analysis is rejected if a
-   dictionary word is one slip (diacritics or one typo) away.
-7. **Suggestions**: diacritic-blind lookup + one typo on folded text; ranking =
-   weighted edit distance (same-class diacritic 0.3, i/y 0.6 because y is its own key
-   so `sita` means `šita` not `syta`, adjacent key 0.8, other 1.0)
-   minus form and lemma frequency bonuses. Input typed with no diacritics at all pays
-   0.3 once for any number of missing diacritics, so frequency decides (`turetu` →
-   `turėtų`, not the rare `turėtu`); restoration 62.9% → 65.8%. A word's diacritic
-   variants in grammar are ordered by this cost, the same flat one for a word typed without diacritics, then
-   by frequency (`šitą` before `sytą`; `vėją` before `veją`). A word typed without diacritics whose twin is a
-   possessive 10× as frequent stands for it in a phrase (`nematau musu namo`: `mūsų`, not the flies' `musų`; frequency, not the part of speech, also orders the twins a rule
-   requires (`kiek butu gerai` → `būtų`, would be; ordering by part of speech, `butų`, flats, was tried: after these
-   words the subtitles write `būtų` 77 times, `butų` 8);
-   ispell-lt lists the personal pronouns' forms as bare words, so `mūsų` has no case reading of its own). Lowercase input penalises capitalised names.
-   **Finger slips onto w, q, x** (`slip_fixes` in `__main__.py` / `checker.rs`, 2026-10-23, owner: `ziwma`
-   got nothing): a word with a letter Lithuanian doesn't use is foreign and skipped, unless it is lowercase,
-   4+ letters, its one such letter is w, q or x, it is not in `freq.tsv` (foreign words seen 10+ times:
-   `news`, `wiki`, `box`), and replacing that letter by a key touching it gives seen words (`SLIP_KEYS`:
-   staggered rows, w touches q e a s, not d; the suggester's `_near` also counts the other diagonal, which
-   made `kawa` → `kada`, `wirba` → `dirba`): `ziwma` → `žiema`, `priwglobsčio` → `prieglobsčio`, `xiūrėti` →
-   `žiūrėti`; or deleting it when it was pressed as well as a letter next to it that it touches (`ziewma` →
-   `žiema`, `dawrbas` → `darbas`; not `zwiema`). A capital counts as the keyboard's own only at a sentence
-   start (`check_word(w, sentence_start)`: `check_text` by what precedes the word, `keyboard_word` when no
-   words of the sentence come before; `Gwrai` → `Gerai`), and not when the capital is the slip itself
-   (`Westu`, `Xanderis`, `Waltas`: names). The keyboard's underline passes the words before the word, else a
-   name inside a sentence (`Narwi`) would count as a sentence start. On 23.5M words of correct text (test,
-   freq, both dialogue test sets, the dialogue training text, 4 dump files) 72 flags, ~3 per million words:
-   4 real typos (`Galėjqi` → `Galėjai`), the rest rare Latin and foreign words (`natrix`, `vertex`, `woke`),
-   names at a sentence start (`Maxas` → `Mažas`, `Brokaw`, 18) and extra-key deletions into short words
-   (`twai` → `tai`, `jaws` → `jas`, ~15). Replacement alone, lowercase only: 35; any capital at a sentence
-   start: 86. Without the guards 502 of the 2,780 such tokens in the test sets alone (`New` → `Nes`,
-   `index` → `indes`). keyboard_restore and parity unchanged.
-8. **Context rules** (`grammar.py` / `grammar.rs`), see list below. Case rules
-   only fire when a **diacritic-only** variant satisfies them; re-inflection
-   (negation, subject, object) is generated from the word's own entry.
-9. **Python = compiler/reference, Rust = runtime.** `export` writes everything
-   the runtime needs; Rust must stay **line-for-line equivalent** (parity 100%).
-   Any rule change goes into both `varnele/grammar.py` and `rust/core/src/grammar.rs`,
-   then `eval/parity.py`.
-10. Offsets are characters in Python/Rust; the JNI bridge converts to UTF-16.
-12. **Lexicon fixes in data/extra.txt** (2026-11-05): ispell-lt lists `šis/ši` ("this") only as bare words (particles), so
-    no agreement rule saw `šią knygą`, `ši darbą`: it gets the pronoun paradigm (`paradigms.pronoun`, declined like jis)
-    and the bare forms are dropped; `pirmiausia`, `daugiausia` get their adverb reading. `jis` and `pats` are bare
-    words too: `jis` forms are handled by lists throughout the rules; a `pats` paradigm was tried and dropped (`pati
-    savo slėptuvę`, `kuri pati vyną` became modifiers): `EMPHATIC` lists its forms instead. A phrase of a
-    demonstrative and `metu` (`šiuo metu`, `tuo pačiu metu`) is an adverbial of time: no rule governs it.
-    `du`/`dvi`, `trys`, `abu`/`abi` were bare words too (2026-11-08): `paradigms.SMALL_NUMERALS` declines them as plural
-    numerals (`Num.m.pl.nom`; no number made `du seni` → `senį`), lemma_freq.tsv recomputed from freq.tsv (`du` 27k →
-    60k: it now counts `dvi`, `dviejų`…). Two guards came with it: a word with an adverb reading (W) that agrees with the
-    modifier only by a twin ends a phrase and is no head (`šių dviejų kartu veikiančių`, not `kartų`; a W word that can
-    be genitive still goes through the genitive skip: `visa savo gyvenimą` → `visą`), and the pair rule's lone genitive
-    is no head when a word up to 3 later (spaces and quotes between) agrees with the modifier (`tris saulės nutviekstus`).
-    On 3.9M words of correct text (test, freq, both dialogue test sets, a dump file, every 8th subtitle training line):
-    6 new flags, all real (`trys ratus`, `tris kraštinės`, `trijų tūkstančiu`, `dviejų kokiu nors`), 25 old ones gone,
-    all false (`įkurtas Papilės`, `turintis labai`, `nuo visų tuo metu`); restore.py unchanged, keyboard_restore
-    Wikipedia 75.7 → 75.9%, swipe_sim and predict_sim level, parity 100%. Unknown foreign words now get `du`/`abi`
-    first more often (`de` → `du`, was `ne`; `baby` → `abi`), from the larger lemma counts.
-11. **A line break ends a sentence**: words across `\n` or `\r` are not adjacent (`Aš⏎Pablogėjo.` is no subject
-    error), as the sentence start already was. Hard-wrapped text inside a sentence pays for it (`buvo
-    nedidele⏎mergaite` is a finished predicate), on 5.7M words: 260 cross-line flags gone, 8 new, 7 real.
+Read the file for the area before changing it; none of these is loaded by default. Paths are in this repo
+(`~/git/varnele/docs/…`), also when this file is read from the fork.
 
-## Context rules (all in Python and Rust)
-
-| Rule | Example | Main exceptions (each from a real false alarm) |
+| File | Holds | Read it when |
 |---|---|---|
-| case (prepositions) | `prieš pora` → `porą`, `į didele kavine`, `link namu` → `namų`; after an acc/ins preposition a genitive that can't be its object is a modifier, so the noun after it is checked (`į teisės mokykla` → `mokyklą`) | genitive modifiers (`su lietuvių kultūra`), that head rule only for a typed preposition (not the numeral `I pasaulinio karo metu`) and not across all-caps words (`į NATO diena`), `apie` + quantity (`apie pusė`), numerals (`per šešiolika`; an unknown word whose twin is a -lika/-dešimt numeral too: `per sesiolika`, not `iš penkiu`), phrase must end in a noun, phrase stops at a word that can't agree (`už didžiausią | tuo metu`), participles end the phrase; `per` before a phrase agreeing as written in the nominative is no preposition: the degree word before an adjective (`per didelė rizika`; `per pietūs` → `pietus` is still fixed) or `kas … per` with only pronouns and particles between (`kas čia per vieta`; not `kas vyko per pamoka`); one word alone with a nominative adjective or adverb reading, not a genitive, is the degree word too (`per toli`, `per seni`; not `per savo istorija`). Tried and dropped: making every vocative-only noun that also reads as an adverb, adjective or verb no noun at all: it lost the accusatives typed without their ogonek (`į šoki`, `didelį pykti`) |
-| distributive `po` (rule `case`) | `po dvi sėdynės` → `sėdynes`, `po tris keleivių sėdynės` (over genitive modifiers), `po trys` → `tris`, `po keturios` → `keturias`: `po` + a nominative/accusative numeral of 2–9 (`du`, `dvi`, `abu`, `abi`, `tris`, `keturias`…) takes the accusative; `po` alone takes three cases and is otherwise unchecked. On 1,046 corpus lines with `po` + such a numeral: 7 flags, all real errors (`po trys geriausius` ×5) | `po trijų` (after), `po dviem` (under) don't match; a phrase with a dat/ins/loc reading as written is its own (`po dvi kiekvienai pėdai`); a head that may be a genitive waits at the end of the text (keyboard: `po dvi teisės | mokyklas`); only diacritic twins (`po tris knygos` stays) |
-| quantity | `daug vaiku` → `vaikų`; a number ending in 0 or 11–19 + noun (`10 metu` → `metų`, `15 euru`) | comparatives (`kiek silpnesnes`), only `kind == num` for -lika/-dešimt (not `Respublika`); numbers: only a known lowercase noun right after the number (not units `20 m atstumu`, manner `12 etniniu pagrindu`, labels `KNM-ER 1813 atveju`), not decimals or ordinals |
-| case (verbs, indefinites) | GENITIVE_VERBS laukti, ieškoti, bijoti, siekti, reikėti, vengti: `lauksiu tavo zinutes` → `žinutės`, `ieškau raktu`; `koki nors` → `kokį nors`, `ka nors` → `ką nors` | verbs as in negation (durations, quantities, an instrumental the verb's own counts show it governs: `Prisiekiu Dievu`, prisiekti is no siekti; `instrumental_kept`, here the genitive twin seen next to the verb first: `pasiekti geru rezultatu` → `gerų`), possessives skipped (`tavo`); prefixed verbs only with a real prefix (`plaukė` is not `p+laukė`) |
-| agreement (adj+noun, case/number/gender) | `gražią kavine`, `prastos kokybes`, `šita žmogų`, `ši darbą` → `šį`; both words when the noun has no case as written (only a vocative, 10× rarer than its twin: `lost_case`) and exactly one pair of twins adding diacritics agrees (`internetas visa skrydi` → `visą skrydį`, `organizuoju maža vakarėli`; 2026-11-08: 3.9M words of correct text 2 new flags, both real; 100k stripped subtitle lines 46 right, 0 wrong; restore.py subtitles / Tatoeba +0.2, keyboard_restore +0.2–0.3; not after a participle, which may take it as its object: `būčiau pasakiusi penktadienį`) | the word whose fix only adds a diacritic changes, not the one losing a typed one (`Ši kartą` → `Šį`, not `karta`); the emphatic `pati` is no noun unless after a demonstrative (`vieną pati`); a kas-form is no modifier (`ką gali`, `kažką jauti`); `viena kitą` (only before a kitas form: `vienos eilutes` → `eilutės`); adjective that is likely a verb (`palaikė`); skip over genitive modifiers to the head (`profesionalūs [Lietuvos cirko] artistai`); a genitive with no head after it is checked on its other noun readings (`žmogų` is also a bogus gen pl); unknown word never changes a known neighbour; participles allowed except when the noun can be acc/loc or the participle is a predicate verb (`tapusią vienuole`, `išrinktas prezidentu`, `einanti sakinio gale`), but a -tinas participle takes no accusative (`pažintini taką` → `pažintinį`; other passives do: `nutarta datą paankstinti`). Keyboard order: an adjective agreeing with neither the genitive after it nor the noun after the genitives takes its twin agreeing with the genitive (`dalyvaujančiu šalių viršūnių susitikimą` → `dalyvaujančių`), only once a word follows the genitives (`su dideliu žmonių …` waits; `su dideliu žmonių būriu` agrees), not when that word is a preposition or connective (`svarbiausiu musulmonų kovos prieš … centru`), not after a predicative verb (`laikomas lemiamu serbų kovoje`), all words known. Which word changes: a preposition before decides (`pro nedideles gyvenvietės` → `gyvenvietes`), else the one typed without diacritics (`nedidele mergaitė` → `nedidelė`, `visa energiją` → `visą`) |
-| neuter `visa tai` (rule `agreement`) | `tačiau visą tai ateis` → `visa`, `padariau visą tai` → `visa`, `Ką tu žinai apie visą tai?`: the neuter `visa` doesn't decline, in any case (a diacritic-only fix of an earlier word, so the sentence fixer applies it once the next word or punctuation is typed; no fork change) | `tai` as the dative of `ta` (`atidaviau visą tai mergaitei`, `mažai mergaitei`) and a mistyped `tą` (`visą tai laiką`, an error of its own): left alone when the phrase after `tai` ends in a noun that is acc sg or dat sg fem, as spelled or by a diacritic unless it can be a verb (`visą tai kelia` is flagged); an unknown next word; all caps. At the end of the text it waits (`Tačiau visą tai`, `Atidaviau visą tai mažai`), punctuation ends it (`padariau visą tai.`) |
-| agreement across a phrase (rule `phrase`; 2+ modifiers + noun, before the pair rule) | `Ant stalo guli viena nukritusią sagutė` → `nukritusi`, `didele graži sagutė` → `didelė`, `ta mano didele kavinę` → `tą`, `didelę` (across `mano/tavo/savo/mūsų/jūsų`), `didelę ir gražia kavinę` → `gražią`, `Tie gražūs didelė namai` → `dideli`. The case/number/gender (from the noun's readings, within a preposition's cases) that costs least wins: own reading 0, a diacritic added 1, a modifier re-inflected 2 (case, number, gender); a typed diacritic never changes (`kavinę` is trusted; it once cost 3, until `pailga lėkštašlaitė neryškia papėde` → `lėkštašlaite`) and the noun is never re-inflected; at most cost 3 and no tie with other fixes. The pair rule then leaves the phrase alone | each from Wikipedia: modifiers exclude adverbs (`paprastai`, any W/Adv reading), numerals (`dvidešimt devynerias rungtynes`), `tai/tam/to/tuo` (`tam tikru`), prepositions (`Netoli`), possessives, kuris/question words; a participle with its object ends the phrase (`turinčių | vieną storiausių kamienų`, unless it agrees with the noun); not a genitive head before a noun (`tos gražios mergaitės batai`), `vienas … kit-`; the first word only by a lost diacritic, not after a copula, not a duration (`buvo lengva visą dieną`), not `-iausia` (`pirmiausia`: an adverb), not a partitive genitive (`vienas didžiausių miestų`) unless a preposition precedes; not a participle predicate further left (`Sienos atkurtos tomis pačiomis`) or a predicative verb's participle; a participle before the noun may govern it (`vieną pašovęs strėle`; `viena baigusi mokyklą` unless the word before agrees with the noun: `didžiules keliaujančios parodas`); not an adjective as a noun (genitive-only `kairiųjų`, definite gen/dat `baltiesiems`, `pirmosios`); a noun that could be a genitive with nothing after it yet waits (keyboard: `apgultos užbaigta taikos | sutartimi`); coordination: only the word after `ir` by a diacritic (`rezervines ir pagrindinę komandas`); an outlier agreeing as spelled with a neighbour that stays is no outlier (`du nauji | rusiška heraldika`, `pailga lėkštašlaitė | neryškia papėde`), except right before the noun when that neighbour can also have the phrase's case (`viena`, nom or ins: `viena nukritusia sagutė` → `nukritusi`); the noun and the modifier before it both changing while they agree as written are a phrase of their own; a noun that is also an adjective, followed by a noun or adjective, is not the head (`pirmasis mūrinis pastatas`: `mūrinis` is also a noun) |
-| valency (rule `valency`, last) | `Visa šita isterija mačiau vakar` → `Visą šitą isteriją`, `guli viena nukritusia sagute` → `sagutė` (then the phrase rule: `nukritusi`), `padariau klaida` → `klaidą`, `turite pinigu` → `pinigų`, `sesute turi` → `sesutė`, `padidinti įprasta dydi` → `įprastą dydį` (`dydi` is only a vocative, written far less often than its twin: the phrase has no case as written, so the verb gives it one), `Visa šita istorija esu girdėjęs` → `Visą šitą istoriją` (a compound past: finite `būti` + nominative past active participle is the participle's verb in the auxiliary's person, negated by `nesu`/`nėra`). A phrase next to a verb (after it, adverbs between; before it only at the start of its clause) that agrees with itself in a case the verb rarely takes, when its noun's diacritic twin gives a case the verb takes 30× as often (5× and seen 10+ times after a 1st/2nd person verb, whose phrase can't be its subject: no false alarm in 1.7M words at any value tried; else seen 20+ times), every word reaching it by a lost diacritic or a re-inflected modifier. Counts: `data/valency.tsv` (eval/build_valency.py: the dump and the dialogue text, 49M words, the same `Grammar.verb_keys` / `valency_phrase` / `phrase_feats` as the rule; key = principal part with prefix, `!` negated, `~` reflexive; class 12 / 3 / inf / ger, a form that can be 3rd person counts as 3rd only (`girdi`: you hear or he hears); after / before; case. Pooling a verb's three principal parts under its infinitive was tried and dropped: fewer right fixes, more false alarms, its tenses take different adjuncts: `gulėjo užmerktomis akimis`) | each from 1.7M words of Wikipedia (976 false alarms at the first try, 3 left): verbs exclude participles (`kuriama programa`, `V.p…` other than tenses), copulas, adjectives agreeing with the phrase (`Gausi tautosaka`); phrases stop at prepositions (`su`, `po`: W readings, not adverbs), continue across a noun/adjective/`ir` after the noun or a quote/number (`baigė Vilniaus pedagoginį institutą`, `Kauno „Aušros“`: a genitive that modifies), skip a lone word with an adverb reading (`kartu`), the emphatic `pati` (a noun in ispell-lt: `Pati mačiau`), a capitalised word read only as a name (`Puikiai girdžiu`: a village), durations and manner nouns (also in the counts, which held 387 `Sovietmečiu priklausė`), a lone instrumental at least as frequent as its nominatives (`Sovietmečiu`, `Tarpukariu`; not `pinigu`, `sesute`), a noun followed by an unknown word with no diacritic twin (`peržiūrėti komanda gcc`; `orgazma` is `orgazmą` without its ą); a nominative after a 3rd person verb only with a subject before it (`išleido leidykla`); a nominative after an infinitive or gerund not when the clause has a 3rd person verb or participle and no other subject (`ėmė kontroliuoti Britanija`; impersonal `reikia` is none); a new nominative only for a 3rd person verb with no other subject in the clause (`rūpinimasis gerove nukreipia`); no accusative/genitive when the clause has an object (`apgynė jį aukščiausiu įvertinimu`; not `jus`, also `jūs`); never a locative (`kine debiutuojantis`), durations and manner nouns (`savaite anksčiau`, `plačiąja prasme`, `tuo metu`), names mid-sentence and all caps (`San Paule`, `MANE`); a set phrase whose word pairs as written are more frequent than fixed (`laisva valia`, `įvairia tematika`) |
-| predicate adjective | `ji nedidele` → `nedidelė`, `mergaitė buvo (labai) nedidele`; a clause without a verb (copula left out): `kad žiema žymiai rimtesne` → `rimtesnė`, `Teisės žymiai svarbesnes negu …` → `svarbesnės`, `Mama didele.`; degree adverbs between (`žymiai`, `gerokai`, `daug`, `kiek`, `kur kas`, `šiek tiek`…: `žymiai`/`gerokai` are also datives, so the adverb test missed them); `už` after a comparative ends the clause (`Jie gerokai mažesnį už …` → `mažesni`); an unknown subject counts by its nominative twins and is ranked by its predicate (`ziema … rimtesnė` → `žiema`, not the 5× more frequent `žiemą`) | subject = jis/ji/jie/jos or a noun whose most frequent lemma is nominative (also gen sg / nom pl `teisės`, but then only with a copula or adverb before the adjective: `revoliucijos metines`, `vietovės topografines` are genitive + noun), not one with a particle/adverb reading (`labai gudrus`: labai is also labas); nouns and `jos` need a nominative copula (būti, atrodyti, likti, jaustis, also iš-/pasi-: `išlieka sąlygine`; not `tapo parapine`, not other prefixes: `atliko` is not `liko`) or a clause without a verb: none in it (`miestiečiai palaikė`) and either opened by a subordinator (kad, nes, jog, kai, jei, nors…) or with no verb earlier in the sentence (`Aš nupirkau raudoną, o sesė žalią`: the verb left out), not after ir/bei/arba (`elgsena ir gyvenimo būdas panašūs`); without a verb only the case may be wrong (`Daugelis sėslūs`, `Ašmenys labai aštrūs`) and the clause must end in punctuation (not a quote or bracket: `sieninę „Vandens lelijų“`) or a word starting the next part, not ir/bei/ar/arba (`pirmą ir vienintelį kartą`); the keyboard types on, so at the end of the text it waits (`Mama didele | knyga nupirko`), except a degree adverb + comparative (no false alarm in 3,080 such prefixes of 27M words); autocorrect's 3-word context (`partial`) never takes a clause as verbless: the sentence fixer sees the sentence; the adjective ends the clause; participles skipped |
-| genitive before a head noun | `miesto gyventoju skaičius` → `gyventojų`, `vietoves gyventojai` → `vietovės`, `branduoliniu ginklu sutartis` (modifiers too) | each from Wikipedia: not when both share a case and number as nouns (`pilotu bandytoju`, `naktiniu gyvenimu`, `kalba žodžiu rinkliava`; but `teises mokyklą`, and `Medžiokles plotas`, plotas also being a participle), head genitive-only, head a verb or adverb (`su broliu namo`); not lemma metas (`vienu metu`); not when the form is ≥⅓ as frequent as its genitive (`Sovietmečiu`, `laikotarpiu`); not after a verb, possessive, `šiuo`, or a governing preposition up to 3 words left (`į Kalavijuočių ordino žemes`), unless the preposition is right before and the head can take its case, also by a diacritic (`į teises mokykla` → `teisės`); an instrumental after a genitive or name only if its genitive is seen 5+ times (`vidaus reikalų` yes, `karo metu`, `Vyriausybės potvarkiu` no); after a conjunction too (`negu visuomenes saugumas` → `visuomenės`: conjunctions are particles, and the particle guard skipped every one), but not `kaip` (`kaip snaiges`: the case of what it is compared to), not a word that can be a verb (`nes rėžiu tiesą`), not after ir/bei/arba/ar/nei coordinating it with a noun of the same case up to 8 words back (`virtuve bei butu raštininkui`, `žemę tarp vandenų ir žvaigždes danguje`), not an instrumental before a genitive-only head (`o trejetu metų jaunesnis`); an instrumental governed by a copula form up to 3 words left (`yra ir aukščiausiu kalnu`, `yra apragėjusiu galu liežuvis`) |
-| context ranking of unknown words (reorders suggestions only) | both adjective and noun unknown: each keeps the candidates agreeing with the other's (`dalyvaujanciu saliu` → `dalyvaujančių`); an unknown pronoun/adjective after a modifier: its agreeing pronoun/adjective candidates (`visa sita` → `šita`, not the more frequent `šitą`; not when its likeliest candidate is a verb form: `nebereikalingi isaugus` stays `išaugus`); after a TRANSITIVE_VERBS verb (itself possibly unknown, by its candidates) accusative candidates first (`rado salyga` → `sąlygą`); genitive-before-noun for unknown words, all genitive candidates (`sienu klausimas` → `sienų`) | allowed candidates keep the suggester's order (`sienų`, not `šienų`); not when the adjective's candidates include a finite verb (`% sudare baltaodziai` → `sudarė`); no infinitive/verb in the object phrase (`turi buti`); compared with the rule for known words: an unknown head counts by its candidates, the head's diacritic twins count for the shared-case check (`zaidimu bendrove`), genitive chains allowed, no corpus-evidence guard for an instrumental after a genitive; any verb instead of TRANSITIVE_VERBS was worse (`sudaro dirbama zeme`) |
-| preposition that became a verb | `kabo virs stalo` → `virš` | only by added diacritics (`vidurį nakties` stays: a typed `į` is meant, not `vidury`); the phrase after it takes the preposition's case and the clause already has a verb before it (`Mama virs sriubos` = will boil) |
-| negation | `neturiu laiką` → `laiko`, `neturiu tą gražią knygą` → `tos gražios knygos` (a demonstrative before its noun goes with the phrase, the noun's gender first: `nemačiau tą filmą` → `to`); a typo after an adjective takes the agreeing genitive (`visų zodziou` → `žodžių`, not `žodžio`; also via the adjective's diacritic variants), `nemačiau jį` → `jo`, `nepataiso visu` → `visų` | durations/quantities (`nedirbau visą dieną`, `daugybę metų`), copulas, a one-word phrase with an adverb reading (`neatėjo laiku` = on time); `būdas`, `prasmė` as in valency (`tokiu būdu`); a question word right after the verb (`nežinau kokiu kanalu`); a phrase agreeing as written in the instrumental, locative or dative (`netikiu Dievu`, `nekalbėk tokiu tonu`, `tuo metu`: lemma `metas`) when `instrumental_kept`: the verb's counts after it, plain (`verb_keys(plain=True)`: `nesiėmiau` is `ėmė~`) and negated (`!paiso`, `!teko`: counted almost only negated), show one of the cases 1/30 as often as its accusative + genitive objects: kept; else a genitive twin of a word of the phrase seen next to the verb more often than the word as written (`neturiu jokiu klausimu`: `neturiu jokių` 113) or a verb with 20+ objects counted: a genitive (`nesuprantu pavadinimu`, `neturi vardu`); with fewer counts a twin 10× as frequent. The valency rule keeps the same phrases after a negated verb. Tuned on 1,426 decisions (17.5k lines, each correct and stripped), checked on 239 more; known false alarms: instrumentals of means after verbs that never show one (`nepasakėte telefonu`, `nemalk liežuviu`: `KNOWN_FALSE_ALARMS` in the tests) |
-| subject | `aš buvo` → `buvau`, `aš vakar buvo`, `jis jau einu`, `aš kalba` → `kalbu`, `tu yra` → `esi`, `aš nėra` → `nesu` (būti's own present) | pronoun + finite verb, up to 2 adverb/particle-only words between (not pronouns, connectives, prepositions, `ne`, `nė`, `tai`, `šiuo`, `tuo`); not a coordinated subject (`aš ir jis buvome`), not a pronoun after another one (`tu ji nužudysi`: an object) or after `kaip`/`negu` with a word before (`tokie kaip tu elgiasi`: compared; `Kaip tu gyvena?` is checked), not a possessive (`mes mano kieme`). Evidence (2026-11-04: 6,380 flags on 5.7M words of correct dialogue and dump text, nearly all false: `mes visi` → `visime`, `tu tik` → `tikime`; now 263): strong when the pronoun + a fix that is mostly a verb is seen 10× as often as the pair as written (`aš kalbu` 605, `aš kalba` unseen); a pair as written seen at least as often stays (`mes visi`, `aš jus`); otherwise the word must be mostly a verb (lemma ties are not: `aš gėlė`, `aš slaugė`) and, unless the evidence is strong, not have a nominative adjective/participle reading agreeing with the pronoun (a predicate with the copula left out: `mes verti`, `aš nepratusi`, `jie šventi`; `aš girdi` is caught by `aš girdžiu` 174). Lost against the old rule: forms whose fix pair is rare (`aš kasa`, `tu atlieka`, `tu grįžta`). An unknown word after the pronoun ranks verbs of that person first, in the suggester's order (`jis ziuri` → `žiūri`, not the jury `žiuri`, more frequent on Wikipedia; `jis elgesi` → `elgėsi`, alone `elgesį`; `jis grazino` → `grąžino`), but only a verb among the suggester's 5 and within `CONTEXT_GAP` (0.2) of its best cost: no rare form over a likely word (`ji pries` → `prieš`, not `priės`; `jis buves` → `buvęs`, not `būvės`) |
-| object (1st/2nd person verb; 3rd person transitive verb with its subject before it) | `mačiau namas` → `namą`, `matau dar viena klaida` → `vieną klaidą`, `Jonas mato namas`, `jis vakar nupirko nauja knyga`, `mačiau labai gražus namas` (adverbs between) | a lone nominative adjective or pronoun in the verb's number agrees with its subject (`kovojame vieni`, `atėjau vienas`); an accusative personal pronoun between is the object already (`myliu tave visa siela`); a finite verb right after the phrase has it as its subject (`manau ši perspektyva jums patinka`); an emphatic `pats`/`pati` empties the phrase unless a demonstrative precedes it (`ta pati problema` → `tą pačią problemą`); the noun must be able to be an object (`myliu visa širdimi`); a `-iausia` word before another modifier is the adverb (`turi pirmiausia didelę vertę`); a diacritic twin that only adds diacritics, its own lemma first, comes before a re-inflection (`mačiau seni` → `senį`, not `senus`; `šeima` → `šeimą`, never `seimą`); 3rd person: only TRANSITIVE_VERBS with a real prefix, not reflexive (`atsirado` = atsi+rado); the subject is jis/ji/jie or a noun whose most frequent lemma is nominative (`Jonas`, not the name Jona), not coordinated (`Jonas ir Petras`); no infinitive in the phrase (`turėtų būti suprantama`), no lone adverb (`atsirado kartu`); copulas, reflexives, verbs only if "mostly a verb" (not `metu`, `keli`, `tik`); nom/ins words only after TRANSITIVE_VERBS (matyti, rasti, turėti…; not motion `einu gatve` or instrument `rašau ranka`); skips `dar/jau/vėl/irgi/tik/net`; not clause words (`manau, kas…`). "Mostly a verb" skips a reading whose prefix the rules added when another reading with a shorter prefix spells the same prefixed lemma: `apsiuvu` (instrumental of apsiuvas) is ap+siuva only through the dictionary's apsiuva (never seen), not through the common siuva (`aukso spalvos apsiuvu žvaigždė` stays). After a transitive verb the phrase may hold participles and an instrumental-only word takes its accusative diacritic twin (`radau nukritusia sagute` → `nukritusią sagutę`) when the whole phrase is instrumental or the head is already accusative (keyboard order); same POS/number/gender (`tuo metu` ≠ `metų`); not `tapusią vienuole`. Phrases (here and after prepositions, negation…) step over `mano/tavo/savo/mūsų/jūsų` (`mačiau ta mano didele kavine` → `tą`, `didelę`, `kavinę`; not `jo`: `žino visas jo užnugaris yra`); a modifier whose number or gender can't match the noun is left to the pair rule (`mačiau dideli namą` → `didelį`, not `didelius`; `suradote viena kitą` stays) |
-| relative | `žodžių kuriu aš rašau` → `kurių`; case from the clause verb: `knyga, kuria skaičiau` → `kurią` | needs a following finite verb (`dainas kuriu pats` stays); not when `kuriu` is the verb kurti: an object pronoun or `ir` + verb follows (`kuriu tai, kas`, `kuriu ir rašau`); the case fix needs a non-negated, non-reflexive TRANSITIVE_VERBS verb within 2 words (a transitive reading counts even if not "mostly a verb": `skaičiau`/`skaičius`); not `plunksna, kuria rašau`, `kuria didžiuojuosi` |
-| comma | `sakė kad` → `, kad`; before `net`/`ypač` + connective (`veikia, net jeigu`); indirect question after QUESTION_VERBS when a verb follows (`matau, ką man rašo`, not `ką nors`, `ką tik`), before kuris-forms and preps + kuris; demonstrative + kas-word (`tai, kas reikalinga`, `viską, ką turiu`) | `bet kas`, `kai kurie`, `kas nors` (also typed without diacritics: `koki nors`), `nors ir`, names/initials, after another connective; a kuris-form that is the verb kurti (`kuria ir parduoda`, `kuria baldus`, `kuri kuria`, `kuria tai`; `kuria ir` at the end waits for the next word); `Tai kas …?` at a sentence start |
-| comma (section 8) | parenthetical `Deja, …`, `Beje`, `Pavyzdžiui`, `Vadinasi`, `Kita vertus`, `Be abejo`, `Mano nuomone`, `Ko gero` at sentence start; `jis, deja, …` / `beje` / `pavyzdžiui` inside (both sides); greeting + address `Labas, Jonai, kaip…`, `Ačiū, drauge`; `…, negu` + verb within 3 words; repeated `nei…, nei`, `arba…, arba`, `Ar…, ar`; postposed participial phrase `žmogus, stovintis prie lango, žiūri`; lists `obuolius, kriaušes ir slyvas` | `Žinoma` only before a pronoun/verb (`Žinoma tik viena rūšis`); not after a connective; `Laba diena`, `Sveiki draugai` (agreeing adjective); mid-sentence `ar` = "or"; participle: not a nominative past participle (predicate `Pavadinimas kilęs`), not a nominative with no other verb in the sentence (`Laumės mėgstančios`), not if a capitalised word or agreeing noun follows within 3 words (`žygiavusia Aleksandro kariauna`), not genitive-only agreement; list: three lowercase nouns with no genitive reading sharing case+number, not time words, not after a modifier (`tomis pačiomis spalvomis ir`) |
+| `docs/rules.md` | Every context rule: examples and each exception, with the false alarm it came from | Touching `grammar.py` / `grammar.rs`, or judging a flag |
+| `docs/architecture.md` | Lexicon, index, sound rules, prefixes, spoken layer, suggestions and their costs, w/q/x slips (item 7), lexicon fixes (item 12; more lexicon notes in the backlog) | Touching the analyzer, paradigms, suggester, `data/extra.txt` |
+| `docs/keyboard.md` | The fork and the keyboard side of the core: settings, scores and HeliBoard's normalisation, rare twins, sentence fixer, swipe decoder, language model, predictions and ghost, user model, tap log and touch model, data format v3, release builds and Play | Touching `fix.rs`, `lm.rs`, `gesture.rs`, `user.rs`, `counts.rs`, `export.py`, rare twins (`common_twin` in `__main__.py` / `checker.rs`, `RARE_TWIN_RATIO`), the JNI bridge or the fork |
+| `docs/desktop.md` | The Mac app (`rust/desktop`) and the Chrome extension | Touching either |
+| `docs/numbers.md` | Measurements per round of work, with what was tried and dropped (a rule's or feature's own figures are often with it in the other files: grep the term across `docs/`) | Before tuning a threshold or retrying an idea; to compare a new run |
+| `docs/backlog.md` | Open problems, ideas, things left on purpose and why, corpus sources | Picking the next task; before "fixing" a known gap |
+| `docs/history.md` | One line per landed round | Rarely; `git log` has the rest |
 
-"Mostly a verb": listed particles/adverbs (`W`) are never verbs; otherwise verb
-lemma frequency must beat other lemmas (`mačiau` yes, `metu` no). A rule-built
-prefix reading does not make an adjective a verb (`prastos` ≠ `pra+stos`).
+Keeping them current: a new rule or exception goes into `docs/rules.md`, its numbers into `docs/numbers.md`
+(at the top), what is left open into `docs/backlog.md`, one line into `docs/history.md`. This file changes
+only when a command, a working rule, the layout or a gotcha changes: keep it under ~28 KB.
 
-## Keyboard (Varnelė Klaviatūra, HeliBoard fork) design
+## Architecture in short
 
-- Renamed "Varnelė Klaviatūra": app ID `dev.imbrasas.varnele.keyboard` (`.debug` for debug
-  builds), provider authorities under the same ID, so it installs next to HeliBoard.
-  Internal packages stay `helium314.keyboard.*`. Lithuanian is enabled first on a fresh
-  install. Credits are in the fork's README and the About screen.
-- Fork defaults on: key borders, vibration, number row, emoji key, language switch key. Night theme `black`
-  (OLED), keyboard height 115% in portrait (unfolded and cover screen; landscape 100%), auto-correction
-  confidence 0.5 (upstream 0.24) for English and other languages; Lithuanian ignores the slider and keeps
-  0.24 (`Defaults.VARNELE_AUTO_CORRECT_CONFIDENCE`, used in `Suggest.shouldBeAutoCorrected`): Varnelė's
-  scores are calibrated for its threshold 0.188 (at 0.7+ its 0.05-target suggestions would autocorrect).
-- **Tap log** (`inputlogic/VarneleTapLog.kt`, setting "Record typing accuracy" `varnele_tap_log`, default
-  off, Varnelė screen, with Export / Delete; works in release builds): for measuring whether misses are
-  systematic before a touch model. A word's taps (WordComposer's pointers, keyboard coordinates) are labelled
-  with the word as kept (committed and not reverted before the next word or leaving the field), only when
-  its folded letters match the taps one to one and every tap is on a main-keyboard letter key (no gestures,
-  resumed words, popup letters). One row per tap: meant / hit / previous letter, position in the word, offset
-  from the meant key's centre in key widths/heights, position on the keyboard, key size, letter row (0 = top
-  letter row), keyboard size, language, corrected, landscape / folded / split / one-handed, screen dp. Rows
-  shuffled in batches of 200 before `files/varnele_taps.tsv` (16 MB cap); not in incognito, passwords, URLs.
-  Checked on the emulator with taps placed below the centres by the old key height: logged dy 0.57 / 0.40 /
-  0.23 per row, expected 0.55 / 0.39 / 0.24. The Material theme has no touch-position correction
-  (`themes-lxx-base.xml`: `touchPositionCorrectionData` @null; Holo has AOSP's 2011 per-row data).
-  **First log** (owner, 2026-11-05, English, 6,613 taps on the Fold7's cover screen): 5.3% of taps hit another
-  key; taps land below the drawn key (top row +0.18 key heights, ~1.4 mm), and keys near the middle fall short
-  towards the thumb reaching for them (`t`, `g`, `y` left by 0.14–0.22 key widths, `h`, `n`, `u` right): `t`→`r` 36,
-  `h`→`j` 31, `e`→`w` 22, `o`→`k`/`l` 30. HeliBoard's hit box already holds the gap below each key (half a gap
-  lower than the key drawn), which covers ~0.12 key heights of the low taps.
-- **Touch model** (`keyboard/VarneleTouchModel.kt`, setting "Adapt keys to my typing" `varnele_touch_model`, default
-  on, any language, plus "Forget how I tap"; Varnelė screen): learns from the tap log's labelled taps (the same
-  words, whether or not the log is on) each letter key's mean offset from its hit box's centre, in key pitches,
-  and `KeyDetector.detectHitKey` moves each letter key's hit box by it (a tap in two moved boxes goes to the
-  nearer centre; in none, the usual detection). A key is a place (letter row from the bottom, column in half
-  keys), so layouts of the same shape share it; per screen (orientation, size in dp, split, one-handed). A key's
-  mean is shrunk towards its half row's and row's (30 taps' weight), counts halve every 1,000 taps, nothing moves
-  before 100, shifts capped at 0.3 pitch, taps over 0.9 / 0.7 pitch off ignored. Stored as sums per place
-  (`files/varnele_touch.tsv`), no text. Replaying the first log in order, learning as it goes: keys missed
-  350 → 288 (112 now right, 50 now wrong); offsets per row alone: 352, per half row: 309. On the emulator, 108
-  taps 45 px low moved the boundary under `t` from y 1787 to 1812. A tap whose letter is the word's with or
-  without diacritics now counts as meant for the key hit (a German `ä` key was labelled `a`).
-- **Gboard layout on every screen**: `Settings.useTabletLayout()` is false, so tablets and the
-  Fold inner screen (≥600 dp, HeliBoard's "tablet") keep the phone layout (backspace next to `m`,
-  enter bottom right, no extra `, .` keys, full key width). Split mode is cut from it:
-  `⇧ z x c v | b n m ⌫` like Gboard (the tablet layout put `b` left). Split is on by default only
-  on a foldable that is open with smallest width ≥600 dp (`Defaults.splitKeyboardDefault`): Fold
-  open yes, Flip never (open it is phone-sized, closed only the cover screen). Upstream's
-  `isTablet` is false for sw768dp+ (metrics 2), so this uses `Settings.isWideScreen()`.
-  A typed space is moved behind `. , ; : ! ?` (`tašką .` → `tašką. `).
-- `dictionary/VarneleDictionary.kt`: main dictionary for locale `lt`, prepended
-  in `DictionaryFactory.getMainDictsForLocale`. Calls `Native.check(word, prevWords)`
-  (Rust `keyboard_word`). HeliBoard autocorrects when
-  `score/1e6 * (1 - editDistance/len)` ≥ threshold (~0.185) or the suggestion is
-  `KIND_WHITELIST`.
-  - valid typed word → returned with score 1.2M (never "corrected")
-  - context fix of a valid word: diacritic-only, the subject rule (`aš buvo` →
-    `buvau`, owner's choice) or the phrase rule (`viena nukritusią sagutė` → `nukritusi`,
-    owner's choice 2026-10-22: the same grammar autocorrects and steers predictions) → whitelisted,
-    1.3M (autocorrects); otherwise 1.1M (shown only). The sentence fixer applies subject fixes only
-    to the word just finished, so a backspace revert of an earlier word is not undone; phrase fixes
-    also to earlier words (`LETTER_RULES`), since the noun that shows the case comes last.
-  - unknown word: whitelisted if diacritic-only and clearly best (margin 0.08,
-    or context chose); autocorrect-appropriate if **typoCost ≤ 1.0**, where
-    typoCost is the edit cost ignoring diacritics (`zodzou` → `žodžių` = 0.8).
-    **Scores compensate HeliBoard's normalisation**, which counts every changed
-    letter including diacritics (`zodzou` → `žodžių` = 4 edits / 6 letters):
-    score = target × 1e6 / (1 − levenshtein/len), target 1.0 for diacritic-only,
-    0.9 − 0.4·typoCost for one typo, 0.05 otherwise; scores kept strictly decreasing.
-  - **rare twin** (`common_twin`, `common_neighbour` in Python and Rust; `check_text` gives rule `rare`, a
-    blue suggestion, `keyboard_word` a context fix): a valid word whose form and
-    lemma never occur in the frequency corpus, with a twin that only adds diacritics and whose
-    lemma does (`sakini` → `sakinį`). A capitalised word counts its
-    lowercase readings too (`Kuriu` is the name Kurys, but also `kuriu`, so it is not → `Kurių`), a capital
-    inside a sentence is a name and stays, a twin is never a name (`Eduarda`). A twin that is only
-    a participle or a vocative is never kept (`testuoju` no longer → `tęstuoju`). The rule
-    also covers never-seen 2–4 letter words without diacritics one neighbouring key from a word seen 50+
-    times (`gavi` → `gavo`, `duik` → `duok`; not `vašu`; `kak` no longer qualifies: the subtitles hold it). A typed diacritic is meant:
-    before 2026-10-30 a twin could also take one away, and the keyboard changed a correct `dantistė` to
-    `dantiste`. **key-shift** too is in `check_text` now, as suggestions, for an unknown word with nothing
-    within a typo.
-    A **seen** word gets the twin too when the twin's form is seen `RARE_TWIN_RATIO` (10) times as often
-    as the word's form and its whole lemma, by added diacritics only, not i/y (`veliau`, of a verb seen
-    79 times, → `vėliau` 48,849; also `viska`, `musu`, `sis`, `buk`, `rupi`; not `ligoje`, `lanke`,
-    `butu`, `ja`: their lemma is common), and lowercase or with no words before it in the sentence
-    (`Veliau`; a capital further on is a name). Comparing with the form alone also caught `ligoje`
-    → `lygoje`. Twins in different cases: the one giving the fewest grammar issues with the words before,
-    then the most frequent (`pavojingiausia žemės ūkio masina` → `mašina`, not `mašiną`).
-  - **the language model in typed autocorrect** (2026-11-08, Rust only, `keyboard_word_in`; `check_text` untouched):
-    an unknown word's corrections cost 0.3 × log10(P(w | two previous words, user model) / P(w)) less, as in swipe,
-    reordered only within their kind (a typo fix never overtakes a diacritic one: `ka` → `ką`, not `kad`; without
-    that guard Tatoeba lost 0.7 points), and rare twins the grammar leaves tied go by P(twin | previous words)
-    instead of frequency (`mano masina` → `mašina`, `Sita knyga` → `Šita knyga`: was `Šitą knygą`). keyboard_restore,
-    1,000 / 1,500 / 2,000 sentences, Wikipedia / subtitles / Tatoeba: restored 75.7 / 77.5 / 82.0 → 75.6 / 77.7 /
-    81.8%, whole sentences 40.6 / 53.5 / 62.3 → 40.7 / 53.9 / 62.1%, correct words changed 9 / 9 / 4 → 7 / 9 / 1; correct
-    text typed through the model (1,500 sentences each) 198 / 406 / 18 changed words → 198 / 407 / 18 (names and URLs
-    swapping one wrong guess for another). Weight 0.15 the same, 0.5 worse. No measurable cost (FST lookups).
-  - **a name stays a name** (2026-11-05): an unknown word with a capital inside a sentence (not after `:`, an
-    opening quote or a dash) is autocorrected, by autocorrect or the sentence fixer's last-word fix, only into a
-    twin adding diacritics that is a name or written 100+ times (`Siauliuose` → `Šiauliuose`, `Zemes` → `Žemės`),
-    never by a typo correction (`KeyboardWord::name`, `name_fixes`): of 6,319 such words in the test sets 3,317
-    were changed (`Boruta` → `Biruta`, `Black` → `Blank`, `Bresto` → `Bręsto`), now 38. HeliBoard's n-gram context
-    is empty right after a comma, colon or quote: the fork then passes the sentence so far (`sentenceSoFar`), else
-    `Labas, Boruta` looked like a sentence start. eval/keyboard_sim.py passes the sentence before the word (80
-    characters), as the keyboard's context; keyboard_restore 76.0 / 76.9 / 83.4% → 75.7 / 76.7 / 83.4%
-    (capitalised words with rare twins, `Kryziuocio`).
-  - suggestion ranking: a negated form with no frequency of its own borrows the plain
-    form's (`Neturetu` → `Neturėtų`); a suggestion differing from the input only by being a
-    capitalised name costs +0.5.
-  - **Varnelė settings screen** (fork, `settings/screens/VarneleScreen.kt`, main settings entry
-    "Varnelė" shown when the library loads): all the fork's own settings. Corrections: key-shift
-    (shown only with autocorrect on), **fix earlier words** (`varnele_fix_earlier`: the sentence
-    fixer's grammar fixes before the word just finished; that word is always fixed), **add missing
-    commas** (`varnele_commas`), **underline unknown words** (`varnele_underline`), formal;
-    Predictions: **suggest the next word too** (`varnele_ghost_next`: off, the ghost is cut to its
-    completion), learn, forget. All on by default except formal. **Formal Lithuanian**
-    (`varnele_formal`, default off). `SettingsValues` copies it into `Native.formal`, which every
-    `Native.check`/`Native.gesture` call passes to Rust: `keyboard_word(…, formal)` gives a
-    colloquial word its standard form as a context fix with rule `formal` (whitelisted, like
-    `subject`/`rare`: `VarneleDictionary.SURE_RULES`, also applied by the sentence fixer), and
-    `gesture(…, formal)` hands back a spoken candidate as its standard form, deduplicated
-    (`einam` → `einame`), so no colloquial form is ever suggested. Unknown words never got
-    spoken suggestions (the suggester only proposes dictionary forms). CLI: `--formal` on
-    `kb`, `swipe` and `serve`.
-  - **key-shift** (setting `varnele_key_shift`, default on, Varnelė screen; `suggest.py`/`suggest.rs`):
-    if the word is unknown and no correction is within one typo, search words where
-    every letter is the typed key or a neighbour (`fofrkua` → `didelis`, `ksbsd` →
-    `labas`); DFS over a folded stem-prefix set with a 200k-step budget, ranked by
-    lemma+form frequency then fewest shifted keys; top guess autocorrects.
-    0.4 ms per word after warm-up (tables built in warmUp).
-  - `Suggest.kt` (fork change): a whitelisted Varnelė suggestion always autocorrects.
-    Upstream lets the user-history predictions veto a fix when the typed word is valid,
-    and testing teaches it the uncorrected words (`nauja sakini` stayed).
-  - gesture typing (batch mode): Varnelė's own decoder (below), wired on branch
-    `paulius/varnele-swipe` of the fork: gestures are on for Lithuanian without Google's library
-    (`VarneleDictionary.gesturesFor`, also gating the settings screens); `MainKeyboardView.setKeyboard`
-    hands the letter keys' centres and the view offset to `VarneleDictionary.setGestureKeyboard`
-    (points are view coordinates, keys keyboard coordinates); in batch mode `getSuggestions` calls
-    `Native.gesture` (JNI `gestureNative`) with the path in key widths, then checks each candidate's
-    keys like a word typed without diacritics (`Native.check`: diacritic-only context fix or
-    suggestion), top 5 in Varnelė's order, the first is committed. Without the library
-    `BinaryDictionary.getSuggestions` declines gestures (the native gesture policy is null and would
-    crash), so user history and contacts don't take part in swipes. The sentence fixer also runs in
-    `InputLogic.onStartBatchInput` after the previous gesture's word is committed (no separator is
-    typed between gestures). The debug build logs the key centres (`gesture keys (view px)`) for
-    replaying swipes with `adb shell input motionevent DOWN/MOVE/UP`.
-- **Gesture decoder prototype** (`rust/core/src/gesture.rs`, Rust only like key-shift; no Python
-  twin, so not in parity). Input: finger path in key widths over `Layout` (QWERTY default: keys 1
-  wide, rows 1.4 high, `z` after a 1.5 wide shift). Candidates: `Data::walk_forms` walks the
-  folded stems like the key-shift DFS; each letter's key (folded `i` = `i` or `y` key) must be
-  within 1.0 of the path after the previous letter's match (earliest match, a doubled letter is
-  one key), first/last within 1.2 of the start/end, and the ideal path so far ≥ 0.6 × the finger
-  path so far − 1 (a skipped letter makes it short). Prefix chains as in the analyzer, walking
-  only entries that can take them (verbs, `ne`+N flag). Score: shape = 0.2 × mean distance of
-  corresponding resampled points (32) + 0.8 × DTW mean distance (DTW only for the 300 best),
-  cost = 4·shape² + the suggester's frequency score, +0.3 for a capitalised name with shift off,
-  +0.3 for a never-seen prefixed form (`įįvykdyte`). Spoken shortenings are candidates too: a
-  signature suffix with a COLLOQUIAL full ending whose tag passes the test also yields the short
-  ending (`einame` → `einam`, `valgyti` → `valgyt`; `Folded::spoken`, built once), scored by their
-  own frequency plus the lemma frequency of the formal twin; subtitles σ 0.3 keys top 1 / final word
-  81.8 / 74.4 → 82.7 / 75.0%, Tatoeba 85.6 / 79.3 → 85.4 / 79.2%, Wikipedia unchanged, same speed
-  (a strip-and-check per suffix in the walk instead doubled the 95th percentile). Output: the keys swiped (no diacritics), which
-  the keyboard then treats as a word typed without diacritics (autocorrect + sentence fixer pick
-  `prieš`, `dienų`). Nothing found → one retry with radii ×1.5 and a smaller budget.
-  Speed: prefix chains walk only entries the analyzer's prefix rules allow (`analyzer::allowed` with
-  no tag), verbal-prefix chains only verb stems (`Data::verb_stem_prefixes`), and the chains run on 4
-  threads, each with its own step budget (600k without a prefix, 150k per chain) so results don't
-  depend on timing. Requiring the ideal path ≥ 0.75 × the finger path − 1 (now 0.6) would halve the
-  time again for −0.3 points.
-  The lexical cost also subtracts 0.3 × log10 of the language model's P(word | context) / P(word).
-  Tried and dropped: a per-letter anchor distance (favours short words, 34% top-1), a "don't cut
-  past a sharp corner" prune (real corners are often > 1 key from the letter: recall 92 → 74%).
-- **A word inside a sentence** (2026-10-23, owner: going back to `kad ziwma zymiai rimtesne negu siaip`,
-  fixing `ziwma`, then tapping `rimtesne` offered no `rimtesnė`): `InputLogic.setVarneleContext` hands
-  `VarneleDictionary` the text after the word too (`textAfter`, 200 characters, also with the cursor inside
-  a touched word; read from the app once per cursor move or new field and kept while typing, since typing
-  at the cursor doesn't change it: the connection doesn't cache it, and asked on every keystroke it took
-  over a second on a loaded emulator and made HeliBoard mark the connection slow), and when the sentence goes on after it, `Native.check` gets the sentence before the word
-  and the rest of it up to its full stop (Rust `keyboard_word_in`, JNI `word(…, after, …)`, serve `kb`'s 4th
-  field, CLI `kb … --after TEXT`): the grammar sees a whole sentence (not `partial`), so a touched valid word
-  gets the sentence's fix (`rimtesne` → `rimtesnė`) and a word retyped mid-sentence is ranked by the words
-  after it (`ziema` → `žiema`, was the more frequent `žiemą`). A touched word in Lithuanian always asks
-  Varnelė (upstream showed only the word's SuggestionSpans when it had any: autocorrect's, the system spell
-  checker's); the span words come after Varnelė's (`setResumed`). Resumed words never autocorrect
-  (HeliBoard's `isResumed`), and the strip leaves out the typed word there, as upstream does for a touched
-  word without spans. Not covered: a touched word whose sentence already holds the wrong twin (`kad žiemą
-  žymiai rimtesne`), and the sentence fixer still fixes only the text before the cursor.
-- **The sentence fixer** (`SentenceFixer` in `rust/core/src/fix.rs`; `inputlogic/VarneleSentenceFixer.kt` only
-  hands it the text before the cursor and applies the edit), hooked at the end of
-  `InputLogic.handleSeparatorEvent` and `onPickSuggestionManually` (a picked suggestion
-  finishes a word too; the picked word itself is left as chosen): after each finished word, re-check the
-  current sentence and apply **only** diacritic-only grammar fixes, the phrase rule's re-inflections
-  (`tie grazus didele namai` → `gražūs dideli`) and missing commas, two passes, rewriting from the first changed character through
-  `RichInputConnection`. It first re-checks the word the separator just finished and
-  applies `VarneleDictionary.confidentFix` (the whitelisted kind), so punctuation
-  (`sakini?`) and learned words can't leave it unfixed. This is how later words fix earlier ones
-  (`visu … žodžių` → `visų`, `kuriu … rašau` → `kurių`, `, kurių`).
-  **The keyboard's own diacritics are not trusted like typed ones** (2026-10-23, owner: `kad ziema zymiai
-  rimtesne` got `žiemą`, the 5× more frequent twin, and then no `rimtesnė`): the fixer remembers, per
-  sentence, each word autocorrect or its own last-word fix changed only by diacritics (word index → the
-  form typed; `InputLogic.commitCurrentAutoCorrection` → `rememberAutocorrection` → JNI `fixRememberNative`, a
-  backspace undo → `fixUndoneNative`, an edited word is forgotten), and with "fix earlier words" on, before its
-  passes, calls `keyboard_soft(sentence, sentence with those words as typed)`: each of them among the last 6 words, not the one just finished, is checked as typed with
-  the others as they stand (all of them as typed made `pačių idomiausiu nuotykių` a sentence of unknown
-  words), and takes the grammar's first twin only when the twins it allows leave out its current spelling
-  (`salygine taika` allows `sąlyginė` and `sąlygine`: the autocorrected `sąlyginė` stays). `kad žiemą
-  žymiai rimtesne` → `žiema`, then `rimtesnė`; `kultūrinė ekspansija` is not fixed by it (the keyboard
-  already changed `ekspansija` to agree). 0.15 ms a sentence (Mac, through serve). A word autocorrected by
-  the fixer's last-word fix (not HeliBoard) can't be undone with backspace (HeliBoard committed it as typed).
-  **The whole sentence** (2026-11-05, owner: "not only the previous word or two but the whole sentence, into the
-  future too"): `SentenceFixer::apply_around(before, after, …)` also gets the text after the cursor (the fork reads
-  it fresh, 400 characters cut at a space; a cached copy went stale after a picked suggestion or a space-bar cursor
-  swipe), checks the sentence to its end and returns an `AroundEdit` (before: delete + insert; after: skip, delete,
-  insert, the cursor staying put; the fork selects that span, commits, puts the cursor back, and leaves it if the
-  app refuses the selection). The word just finished is decided with the rest of the sentence (`keyboard_word_in`),
-  an autocorrected word is re-decided once any word follows it, also after the cursor, and after the cursor only
-  findings that the word just finished brings are applied (the rest was there when those words were typed: a fix
-  the user undid stays undone). Typing `i ` before `didele kavine.` gives `į didelę kavinę.`; `ziema ` after `kad`
-  in `Tai svarbu, kad žymiai rimtesne negu šiaip.` gives `žiema … rimtesnė` (emulator). On 250 subtitle and 250
-  Wikipedia sentences with one word retyped without diacritics mid-sentence, with autocorrect: the word and the
-  sentence right 188 → 204 and 171 → 187. Serve: `fix\tBEFORE\tPICKED\tAFTER`. A sentence of 28 words takes ~7 ms a
-  word on the Mac with text after it (0.1–5 ms without). JNI `fixNative(before, after, base, …)`: the fork's
-  `Native.kt` must match.
-- **Red underline for unknown words** (`VarneleDictionary.markMisspelled`, called from
-  `InputLogic.commitChosenWord`): a committed word Varnelė does not know gets a
-  `SuggestionSpan` with `FLAG_MISSPELLED` and its corrections, so the text field draws the
-  underline itself, as Gboard does, whatever the system spell checker is. Only
-  `FLAG_MISSPELLED`: fields drop a span that also has `FLAG_EASY_CORRECT` (tested on the
-  Fold7; `FLAG_GRAMMAR_ERROR` alone draws blue, could mark grammar findings). Underlines
-  are lost when the field is refocused or the keyboard restarts, and the sentence fixer's
-  rewrite drops them for the rewritten text.
-- The system spell checker (`dev.imbrasas.varnele` app) gets no session when its language is
-  "automatic" and the phone language is not Lithuanian: Android matches the system locale.
-- `dev/imbrasas/varnele/Native.kt`: JNI class name must stay exactly this.
-  ProGuard keep rule added. Library missing → keyboard works without Varnelė.
-- Gradle task `cargoBuildVarnele` builds the Rust lib for 4 ABIs from
-  `../varnele` (or `-Pvarnele.dir=`) into `app/src/main/jniLibs` (git-ignored).
+- **Lexicon** = ispell-lt stems + class flags; our own paradigms generate every form (~10M). Index = stem +
+  shared ending signature, lookup tries every split; a diacritic-blind ("folded") index is built lazily.
+  Fixes and additions live in `data/extra.txt` (`-word/FLAGS` drops an entry).
+- **Lookup** adds sound rules at the stem/ending boundary, the prefix grammar (ne-/be-/te- + verbal prefixes +
+  `-si-`), the spoken register (`valgyt`, `buvom`, `mokykloj`) and productive word formation with blocking.
+- **Suggestions**: diacritic-blind lookup + one typo on folded text, ranked by weighted edit distance minus form
+  and lemma frequency. Text typed with no diacritics pays for them once, so frequency decides.
+- **Context rules** (`grammar.py` / `grammar.rs`): case fixes fire only when a diacritic-only twin satisfies them;
+  re-inflection is generated from the word's own entry. A line break ends a sentence.
+- **Python = compiler and reference, Rust = runtime.** `export` writes `data/varnele.bin`; Rust must stay
+  line-for-line equivalent. Any rule change goes into both, then `eval/parity.py` (100%).
+- Offsets are characters in Python/Rust; the JNI bridge converts to UTF-16.
 
-- **Language model** (`rust/core/src/lm.rs`, keyboard only): P(word | two previous words) from the
-  word triples and pairs of the Wikipedia dump and the conversational text (`eval/build_ngrams.py` → `data/bigrams.tsv`,
-  `data/trigrams.tsv` → varnele.bin: word counts tokenised like the keyboard, and per previous word (pair)
-  its total and distinct followers over all pairs (triples), then the pairs and triples seen 10+ times,
-  raw counts), absolute discounting (D 0.75): triples back off to pairs, pairs to word frequency; `<s>` =
-  sentence start, commas don't part the words (the counts run across them). Plus a paragraph cache: lemmas of the last 150 words, the form's share of its
-  lemma (`Vilnius` earlier → `Vilniaus`), 10% of the probability for swipe, 30% for predictions
-  scaled by words / (words + 300): a few words are no topic (`Aš vakar buvau` predicted `aš`, `vakar`).
-  `Analyzer::predict_words` ranks followers of the two previous words and of the previous word (20 candidates each), the paragraph's
-  words and frequent words by it. `Checker::keyboard_predict` (JNI `predictNative`, serve `predict`)
-  is what the keyboard shows: a name capitalised (`lietuvos` → `Lietuvos`), single letters other than
-  `į`/`o` and abbreviations (`m`, `pr`, `kun`: the counts drop numbers and full stops) left out, and a
-  word Varnelė doesn't know only if the context has it (`TSR`, as written there). Formal mode: a spoken
-  form is given as its standard form, once (`ein` → `einame`, never `einam`), as swipe does.
-- **Predictions in the keyboard** (fork branch `paulius/varnele-predict`): `InputLogic.getSuggestedWords`
-  hands the text before the word (the connection's 1024-character cache) to
-  `VarneleDictionary.textBefore`. Nothing typed: `getSuggestions` returns 5 predictions
-  (`KIND_PREDICTION`, Varnelė's order). Typing: `Suggest.addVarneleGhost` adds the **ghost**
-  (`Checker::keyboard_ghost`, JNI `ghostNative`, serve `ghost`): the word completed (`kod` → `kodėl`),
-  none when the word as typed is likelier than the completion (`tau`, not `tautos`), plus the next word
-  when P ≥ 0.6 (`GHOST_NEXT_P`; right 71–73% of the times the ghost is tapped, see Latest numbers), added after the autocorrect decision, so it never autocorrects: it goes in the strip's
-  centre, or next to it when the centre shows what space commits (an autocorrection, the typed word
-  with "center suggestion is text to enter"). `SuggestionStripLayoutHelper` greys the part after the
-  typed letters (`kod|ėl tu`); a tap commits it. Owner's choice (2026-10-22): strip first, inline ghost
-  text in the field later (it would live in the composing region, which the app sees: search fields
-  would query it). Varnelė's predictions are kept out of `shouldBeAutoCorrected`'s empty-word
-  comparison (other scale).
-- **User language model** (`rust/core/src/user.rs`, `Analyzer::user`, keyboard only; fork branch
-  `paulius/varnele-user-lm`, setting "Learn from my writing" `varnele_learn`, **default on**, plus
-  "Forget learned words", both on the Varnelė screen). Words and word pairs of the text *as it ends up*
-  (after autocorrect and the sentence fixer; HeliBoard's user history learns words as typed).
-  `VarneleUserLm.observe` hands Rust the text before the cursor after every finished word (separator,
-  picked suggestion, the next gesture), right after the sentence fixer; `UserLm::observe` learns a
-  sentence once the next one is begun, so a word backspaced and retyped is learned as it ends up, and the
-  last sentence on `commit`: the enter key's editor action (send), the app clearing the field
-  (`onUpdateSelection` to 0 with no text: a chat's send button), `onFinishInput`, a restarted field.
-  A sentence is learned once where it stands (key: its words and the three words before it; the last
-  1,000 keys), so a refocused field isn't counted twice; a send or a cleared field forgets the keys, so
-  `Labas.` in every message counts every time (a first version keyed on the words alone learned it once,
-  ever). A text cut at 1,024 characters skips its first piece of a sentence.
-  Not learned: incognito (also fields asking for no learning), passwords, URLs/e-mail, other languages.
-  Storage: `files/varnele_user.txt` (text, `1 word count [written]` / `2 prev word count`), loaded on the
-  thread that loads Varnelė's data (not at all for a keyboard not typing Lithuanian), saved when the
-  keyboard closes; at 10k words or 40k pairs every count halves and what drops below 0.4 goes (old and
-  rare first). Use: `p_context` mixes in P_user(w | prev) (absolute discounting D 0.5, backing off to the
-  user's word frequency) with share 0.5 · n / (n + 50), n = how often the user wrote `prev` before a word,
-  so predictions, the ghost and swipe ranking all get it; `predict_words` adds the user's followers of
-  `prev` and most frequent words as candidates; a word Varnelė doesn't know is predicted once the user
-  wrote it twice, as written (`Freiburg`). Off: neither learned nor used (the file stays until forgotten).
-  HeliBoard caches next-word suggestions per previous words (`Suggest.nextWordSuggestionsCache`); for
-  Varnelė's locale the fork skips that cache, else the strip never changed after the first time in a
-  field session (also hiding the paragraph context).
-  Tested on the emulator (2026-10-22): after `Mano drakonas valgo morkas.` was learned once `valgo` came
-  2nd after `drakonas`, after four times 1st; in a fresh text without it: `mano` first at a sentence
-  start, `drakonas` after `Mano`, `valgo` after it; kept across a keyboard restart; Forget deletes the
-  file and the strip is the corpus's again; switched off, the counts stay in the file but are not used.
-- **Grammar in predictions** (`Grammar::next_word` / `fits_next` / `refit_next` in `grammar.rs`, Rust
-  only, not in `check`, so not in parity; `Checker::grammar_rerank`): the last words before the cursor
-  can require a case. After a preposition (`prep_cases`, also typed without diacritics when unknown:
-  `i`) one of its cases; after an adjective (every reading A or P, a noun reading only of the same
-  lemma: `geras`; or a participle, as in the phrase rule: `nukritusią`; not definite forms, often
-  nouns: `pėsčiųjų tiltas`; not capitalised: `Vytauto Didžiojo universitete`; not kuris/question
-  words/possessives) a word agreeing with it or a genitive (`geras Lietuvos krepšininkas`); after
-  preposition + adjectives the readings in its cases. Adjectives that disagree (`viena nukritusią`,
-  `į didelę gražia`) get what the phrase rule would choose (`G::modifier_cost`: as they are 0, a
-  lost diacritic 1, re-inflected 2, the first word never re-inflected, unique cheapest), so the
-  prediction and the later fix agree (was: no requirement). Neither change moved predict_sim or
-  predict_grammar (identical on all three sets: such contexts are rare in finished text). Then the
-  language model's 30 best candidates: a word with a caseless reading is not judged (`per daug`, `apie
-  tai`, `su savo`); one that can't fit keeps 1% of its probability, a genitive after a preposition
-  that takes another case 30% (it may modify the object: `į Lietuvos sostinę`, `į šiaurės rytus`), and
-  its noun/adjective forms that fit join with their own probability (`eiti į` → `pietus, šiaurę,
-  rytus`, was `šiaurės` first). Predictions and the ghost both go through it. +0.1 ms per call.
-- **Data format v3**: freq, lemma_freq, the language model's word counts, its pairs (`"PREV WORD"` →
-  count, `"PREV "` → total << 32 | distinct) and triples (`"A B WORD"`, `"A B "`, the same; an optional last
-  table, read only when bytes are left, so older files still load) are finite-state transducers (`rust/core/src/counts.rs`,
-  `fst` crate), read in place: no hash map of 150k+ strings on the phone's heap. `export.py` pipes each
-  table through `varnele fst`, so the Rust binary must be built before exporting. Lossless: every
-  evaluation is identical to the v2 hash-map format. Sizes at words 10+ / pairs 10+: freq 1.1 MB,
-  lemma_freq 0.2 MB, LM words 1.1 MB, pairs 3.5 MB (310k), the lexicon ~4.9 MB; varnele.bin 10.9 MB
-  (v2 with words 2+ was 20.2 MB). Words 2+ instead of 10+ changed no result; pairs 5+ adds 3.5 MB for
-  +0.2 points swipe, +0.8 / +2.0 prediction. Triples 10+ (191k, after 75k word pairs) add 3.5 MB:
-  varnele.bin 13.0 → 16.5 MB; triples 20+ (78k) add 1.5 MB and keep ~¾ of the gain, 40+ (32k) 0.6 MB, ~½.
-  **Ranked lists** (last table, optional the same way; `Counts::ranked_lists`, built by `varnele fst-ranked`
-  from the three LM tables at export): for every pairs/triples head (`"<s> "`, `"ir "`, `"<s> aš "`) and
-  every folded beginning of 0–3 letters that 500+ of its followers have, the 50 most frequent (the words
-  table: the 100 most frequent words per beginning), keyed `HEAD + beginning + TAB + rank + word`. 321
-  lists, +0.27 MB (16.5 → 16.8 MB). Then **valency** (optional the same way): `"VERB\tCLASS\tafter|before\tCASE"`
-  → count, 40k rows seen 3+ times, +0.4 MB (17.2 MB). `Data::followers` reads a list when there is one and enough of it
-  passes the caller's filter, else lists the table (`Counts::top_folded`: a bounded top n, no string per key).
+## Context rules (index; the exceptions are in docs/rules.md unless a row says otherwise)
 
-## Desktop app (macOS prototype, `rust/desktop`)
+| Rule | Example |
+|---|---|
+| case (prepositions) | `prieš pora` → `porą`, `į teisės mokykla` → `mokyklą` |
+| distributive `po` | `po dvi sėdynės` → `sėdynes` |
+| quantity | `daug vaiku` → `vaikų`, `10 metu` → `metų` |
+| case (verbs, indefinites) | `ieškau raktu` → `raktų`, `ka nors` → `ką nors` |
+| agreement (pair) | `gražią kavine` → `kavinę`, `visa skrydi` → `visą skrydį`; neuter `visą tai` → `visa tai` |
+| phrase (2+ modifiers + noun, least cost) | `viena nukritusią sagutė` → `nukritusi` |
+| valency (counts in `data/valency.tsv`, last) | `padariau klaida` → `klaidą`, `Visa šita isterija mačiau` → `Visą šitą isteriją` |
+| predicate adjective | `ji nedidele` → `nedidelė`, `kad žiema žymiai rimtesne` → `rimtesnė` |
+| genitive before a head noun | `miesto gyventoju skaičius` → `gyventojų` |
+| context ranking of unknown words | `rado salyga` → `sąlygą` (reorders suggestions only) |
+| preposition that became a verb | `kabo virs stalo` → `virš` |
+| negation | `neturiu laiką` → `laiko`; keeps an instrumental the verb governs (`netikiu Dievu`) |
+| subject | `aš buvo` → `buvau`, by corpus pair evidence |
+| object | `mačiau namas` → `namą`, `Jonas mato namas` |
+| relative | `žodžių kuriu aš rašau` → `kurių`, `knyga, kuria skaičiau` → `kurią` |
+| comma | `sakė kad` → `, kad`; parentheticals, address, lists, participial phrases, `negu`, repeated connectives. Comma rules left out on purpose: docs/backlog.md, "Phone-testing list" |
+| rare (twin) | `sakini` → `sakinį`, `veliau` → `vėliau`: docs/keyboard.md ("rare twin"), the ratio sweep in docs/numbers.md |
+| slips, key-shift | `ziwma` → `žiema`: docs/architecture.md item 7; `ksbsd` → `labas`: docs/keyboard.md |
 
-Autocorrect in every text field, no input method: the app watches the keys and types its fixes, like
-Espanso; Grammarly and LanguageTool work the same way. Chosen over the spell-checker services (only apps
-that ask, no autocorrect in Chrome or Electron) and an input method (a new input source, weeks of work).
+## Working on a rule
 
-- `engine.rs`, no OS in it, for Windows too: keeps the sentence typed so far (its own copy; nothing reads
-  the field), and when whitespace, enter or tab finishes a token, fixes the word in it (`(sakini?` keeps
-  its punctuation; a token with anything but letters inside is left alone: `www.x.lt`, `a1`), then runs the
-  sentence fixer on the text so far (earlier words, commas, the app's own diacritics: `visą tai ateis` →
-  `visa`, `sakė, kad`): the engine's decisions, as on the keyboard, key-shift off. Backspace right after a fix
-  restores the word, keeps the space, and leaves that word alone until the app quits; an edit that would change
-  such a word is dropped. Not yet: predictions, the user model, underlines.
-- Other languages, since the desktop has one keyboard for all of them (owner: English stays exactly as
-  typed): **only on the Lithuanian layout** (menu: "On every keyboard layout"), and an **English guard**.
-  A word only English (the system dictionary, `NSSpellChecker`, 0.08 ms a word; Windows has `ISpellChecker`)
-  stops the fixing at once (`lean` > 0, up to `MAX_LEAN` 2); a word only Lithuanian (valid, or short of its
-  diacritics only) moves it back by 1; a word that is both says nothing; another app resets it. A word
-  that is both and got fixed (`is` -> `iš`, needed for Lithuanian typed without diacritics) is taken back
-  if the next word is only English (`is this` stays). On English prose (README, AGENTS.md, 5,186 words)
-  words changed 25.9% -> 0.1%; on 2,570 stripped subtitle lines 1.2% of the words differ from no guard,
-  mostly foreign names kept.
-- `mac.rs`: a `CGEventTap` on the main thread (Accessibility permission, asked for at start, a timer waits
-  for it). A tap holds the keys behind it, and `CGEventTapPostEvent` puts backspaces and text ahead of them,
-  so typing on can't overtake a fix. Only the differing end of a word is retyped (`diff`). Another app, a
-  click: forget the text. Arrows, shortcuts, dead keys, backspacing past the start: the next word is left
-  alone too (the cursor may be inside a word). A click doesn't do that (a click into an empty field is
-  more common), so a word finished after clicking into the middle of one is treated as whole. Secure
-  input (password fields) delivers no keys. Off by default in terminals and code editors (`APPS_OFF`).
-  ⌃⌥V switches it off and on. Settings in `~/Library/Application Support/Varnele/settings`. No text is
-  stored or logged.
-- `--selftest FILE` types into a window of its own with posted keys, through the real tap. Run it with
-  `open -n -a ~/Applications/Varnele.app --args --selftest FILE` (so it is the app that has the permission),
-  then `open -a ~/Applications/Varnele.app`: macOS doesn't let it take the focus from the front app, and it
-  waits for that. The window takes the keyboard for a few seconds; the engine carries over between its
-  cases, unlike `--sim`'s lines. Each line of FILE holds the text and the edits the app typed. Run on
-  2026-10-30 (the installed build still swaps `t` and `y` in its key table, fixed in the source: rebuilding
-  means granting the permission again): all fixes, the backspace undo and a fix taken back by the next word
-  as in `--sim`. Mid-word typos: `yhe` -> `The` is a one-key slip onto a name, not an English problem.
-- **Ad-hoc signed** (no signing identity on the Mac): macOS ties the Accessibility grant to the build, so
-  every rebuild needs `bundle.sh --reset` and a new grant. Sharing it needs a $99/year Developer ID and
-  notarization.
-- Windows: same `engine.rs`, a `WH_KEYBOARD_LL` hook, `SendInput`, `ISpellChecker`.
-- **Underlines in Chrome: a spell server doesn't work** (tried 2026-10-30, macOS 26, code removed). An
-  `NSSpellServer` service in `~/Library/Services` registers (`pbs -dump` lists it, its port is
-  `lt_LT (Varnele)_OpenStep`), but `NSSpellChecker`, which Chrome goes through, never reaches it:
-  `availableLanguages` holds only Apple's, `setLanguage` turns `lt_LT` and `lt_LT (Varnele)` into `lt`,
-  answered by AppleSpell (`maciau` -> `maliau`), a code Apple lacks (`ltg`) is refused, and neither
-  `NSPreferredSpellServerVendors` nor `NSPreferredSpellServerLanguage` changed that. Not tried: a Developer
-  ID signature, a fresh login. macOS has its own Lithuanian (`lt`, knows `visiškai`, `žodžius`); Chrome's
-  underlines come from the system's spelling language or its own `en-GB`. Next way in: a browser extension
-  (the core as WebAssembly, its own underlines, the whole field to read and change).
+1. Reproduce with `python3 -m varnele check` / `words`, and `rust/target/release/varnele kb` for the keyboard.
+2. Change Python and Rust together. Every observed false alarm or fix becomes a CORRECT / FLAGGED case in
+   `tests/test_grammar.py`.
+3. Measure both ways on the same lines: false alarms on correct text (the Wikipedia check above, the dialogue
+   test sets, a dump sample) **and** right/wrong fixes on that text stripped of diacritics. A guard that looks
+   good on correct text alone has cost as many right fixes as it removed false alarms (negation, 2026-11-04: 184 gone, 193 lost).
+4. `eval/parity.py`; `eval/restore.py --sentences 300` and `eval/keyboard_restore.py`, each also with
+   `--corpus corpus/conv/subtitles` and `--corpus corpus/conv/tatoeba`; swipe and predict sims if the language
+   model or counts changed (`--no-paragraph` for Tatoeba is theirs only).
+5. Record: the exception in `docs/rules.md`, the numbers in `docs/numbers.md`.
 
-## Browser extension
+Baselines, 300 sentences, Wikipedia / subtitles / Tatoeba (2026-11-05, docs/numbers.md; the 2026-11-08 changes
+moved them by +0.2 at most, so re-run before comparing): restore.py 72.1 / 74.1 / 79.5%, 0 correct words changed;
+keyboard_restore 75.7 / 76.7 / 83.4%, correct words changed 2 / 0 / 1. Wikipedia test flags 20, all real.
+Parity 100%; data file 17.2 MB; sentence of 12 words ~1.9 ms on the Mac.
 
-`extension/build.sh` builds `extension/varnele.wasm` (17.8 MB, git-ignored; `rustup target add
-wasm32-unknown-unknown` once), then chrome://extensions → Developer mode → Load unpacked → `extension/`.
-No store listing yet. Test: `eval/extension/test.mjs` (its header says how). Why an extension: macOS 26's
-`NSSpellChecker` never reaches a third-party spell server, and Chrome only offers its own dictionaries.
+## Keyboard in short (docs/keyboard.md has the rest)
 
-- `background.js`: the service worker holds the checker for all tabs; Chrome stops it when idle (60 MB
-  freed) and it loads again at the next check. Page to result, no debugger attached (Mac): first check
-  146 ms, warm 3 ms, after 40 s idle 178 ms. With a debugger the first check takes ~1 s (Playwright).
-- `content.js`: checks a field's paragraphs (cached by text) 250 ms after typing stops. Contenteditable:
-  CSS Highlight API, ranges over a text rebuilt with a line per block; the page's DOM is not touched, shadow
-  roots get the stylesheet adopted. Textarea and input: a transparent copy of the text in a closed
-  shadow root over the page, only while the field has the focus (so no drift, nothing over dropdowns; an
-  unfocused one shows no underlines). The word being typed isn't marked.
-- A fix goes through `execCommand("insertText")` with the word selected, so undo works and the page's
-  own code sees an ordinary edit: a controlled field and Lexical (Reddit's editor), also in a shadow root.
-- **Language** (`Tally` in `fix.rs`, through the worker): a line counts as Lithuanian when 70%+ of its words are
-  known or short only of diacritics (names don't count); 3+ words, or one with Lithuanian letters. A paragraph of
-  5+ words decides itself, a shorter one goes with the field. Lithuanian: Chrome's spellcheck goes off for that field (`spellcheck=false`,
-  its marks go too), Varnelė's on. Otherwise Chrome's stay. Subtitle lines kept 97.3–97.8% (stripped of
-  diacritics too), English lines let through 1.1–2.3% (at 60%: 5.6–6.3%).
-- Not covered: Google Docs (canvas); English words inside Lithuanian text are marked red. Autocorrect
-  stays with the Mac app; the extension only marks and offers.
-
-## Release builds and Google Play (keyboard)
-
-- CI: `.github/workflows/varnele-release.yml` in the fork, on push to `main` and manual
-  dispatch. Checks out this repo (main) next to HeliBoard, Python 3.12, Rust + 4 Android
-  targets, cargo-ndk, NDK 28.0.13004108; builds the **`nouserlib`** build type (the Play
-  build: no user-supplied gesture library, Play forbids loading outside code). Artifacts:
-  signed `.aab` (Play) and signed universal APK (phone testing). Upstream's two workflows
-  only trigger on dispatch/PR and never run on the fork (files kept for merges). While this
-  repo is private, CI checks it out with secret `VARNELE_DEPLOY_KEY` (read-only deploy key
-  on this repo; key pair `~/.keystores/varnele-deploy-key`).
-- Version: versionName **1.0**, versionCode **10000 + GitHub run number** (env
-  `VERSION_CODE`, 10000 locally). It must stay above upstream's codes (4300) because
-  HeliBoard's AppUpgrade runs every `oldVersion <= N` migration; after an upstream merge,
-  check new migrations with N < 10000, they won't run for our upgrades. Renaming the
-  workflow restarts the run number: raise the offset above the last uploaded code.
-- Signing: GitHub secrets on CremboC/Varnele-Keyboard `VARNELE_KEYSTORE_BASE64`,
-  `VARNELE_KEYSTORE_PASSWORD`, `VARNELE_KEY_ALIAS` (`upload`), `VARNELE_KEY_PASSWORD`.
-  Gradle reads `VARNELE_KEYSTORE_FILE` + the three others from the environment; without
-  them release builds are unsigned and debug builds are unaffected.
-- **Upload keystore: `~/.keystores/varnele-upload.jks`, passwords in
-  `~/.keystores/varnele-upload.env`** (outside both repos, never commit). Back both up
-  (password manager): losing the key means an upload-key reset through Play support.
-  SHA-256 AA:14:F6:1A:17:FF:0B:A7:66:31:CA:81:66:1D:43:FE:77:38:99:5E:D8:44:2F:47:90:B4:BD:AB:20:81:D4:41.
-- Local signed build: `source ~/.keystores/varnele-upload.env && ./gradlew assembleNouserlib
-  bundleNouserlib`; the APK installs as `dev.imbrasas.varnele.keyboard` next to `.debug`.
-
-## Latest numbers
-
-- **Known issues, worked through with an adversarial review each** (2026-11-05, 16 commits after 4fcf31a, local only).
-  Flags on 5.7M words of correct text (subtitle sample, dump sample, the test sets; unknown words not counted):
-  18,078 → 10,579, nearly all of the drop false alarms: the subject rule 6,380 → 263 (`mes visi` → `visime`), cross-line
-  adjacency 260, vocative/degree `per` and `kas … per` 991, `šiuo metu`, `pasimėgauti` ≠ `gauti`, bogus `-ys` plurals 37.
-  On 20k subtitle and 3k dump lines stripped of diacritics, right first fixes 1,262 → 1,308 and 2,708 → 2,723, wrong or
-  false 146 → 89 and 108 → 87. restore.py Wikipedia / subtitles / Tatoeba 71.9 / 73.7 / 79.3 → 72.1 / 74.1 / 79.5%
-  (whole sentences 32.3 / 45.7 / 55.3 → 33.0 / 46.7 / 55.7%). keyboard_restore 75.8 / 76.6 / 83.1 → 75.7 / 76.7 /
-  83.4% with the simulation now passing the sentence's own words, as the keyboard does (with the old context it
-  read 76.0 / 77.2 / 83.4%), correct words changed 2 / 4 / 8 → 2 / 0 / 1 (Tatoeba's 2,000-sentence run: 4, all `Sita
-  knyga` → `Šitą knygą`, see the rare-twin note). Names autocorrected inside sentences 3,317 → 38 of 6,319. The whole-
-  sentence fixer: a word retyped mid-sentence right 188 → 204 (subtitles) and 171 → 187 (Wikipedia) of 250.
-  Parity 100% throughout. Open from this round: `Sita knyga` (autocorrect agrees with its own guess), coordinated
-  objects, `Palauk kūdiki` (animacy), `Visos linijos radialines`, the gesture path's names (it checks keys in
-  lowercase).
-
-- **Bare reflexive entries, negation over instrumentals** (2026-11-04, from the third to fifth reviews of the valency
-  work: `jis didžiuoju kunigaikščiu tapo` → `didžiuoja`, `nesididžiuoju tuo darbu` → `darbų`). The loader reads ispell-lt's
-  689 bare R/O lines (Architecture, item 1): 429 reflexive-only verbs (plain forms only with `-si-`), 198 flags join
-  their verb entries; data/freq.tsv, lemma_freq.tsv, valency.tsv rebuilt. The negation rule keeps an instrumental the
-  verb governs (rules table); after `būti` the genitive-before-noun rule applies (`tai buvo garbes reikalas` → `garbės`:
-  `buvo` had hidden behind its particle reading). A phrase stops at a question word but not at `kažkur`, `kažkas`
-  (`Padariau kažkur klaida` → `klaidą`). Measure negation on the same lines both ways: the first guard looked good on
-  correct text (184 false alarms gone in 6.4M words) and lost 193 right fixes on 16.7k stripped lines (`nesi-` keys
-  with no counts, genitive-object verbs, only the noun judged, word frequency over the verb's counts, negated counts
-  ignored). Now, against 5b84348 (Rust), negation + valency on those 16.7k lines (subtitle and dump lines with a
-  negated verb, each correct and stripped): false alarms on correct text 193 → 24; stripped right 1,496 → 1,379, wrong
-  285 → 123; 801 `nepaisant` lines unchanged. Validation (1.9M stripped words): 32 right negation fixes lost, 56 wrong
-  gone, 52 new right fixes (`kurių` 18, valency 20, agreement 7, case 7), 1 new wrong. Correct text (4.6M subtitle
-  words + 1.8M of the dump): 722 unknown words gone (`Lažinuosi` 122, `Mėgaukis`, `šaipaisi`), 50 new commas before
-  indirect questions, all right (`aš žinojau, kas tai buvo`), 7 object false alarms gone (`buvo labai sunki`); all
-  rules: test 20 → 20, freq 87 → 87, subtitles 219 → 214, Tatoeba 48 → 47. restore.py, keyboard_restore.py unchanged
-  (Tatoeba keyboard whole sentences 62.0 → 62.3%, 9 → 8 correct words changed); restore.py doesn't count negation
-  fixes (`FIX_RULES`). Parity 100%. Left (`musu` → `musų` fixed 2026-11-05): `Braunas` reads as the spoken `braunasi`; `vidurį nakties` →
-  `vidury` in more sentences now that `Buvo` is a verb; key-shift and one-typo autocorrect can reach never-seen forms
-  of the new reflexive verbs (`Basteris` → `bastęsis`, `Hobitsai` → `Jovytasi`: ~30 in 6.4M words; a frequency floor
-  for autocorrect targets would touch every keyboard decision, so not done here); `nesikėsina tave nužudyti` →
-  `tavęs` is new (arguably right: negation reaches an infinitive's object).
-- **A phrase with no case** (2026-11-03, owner: `Galbūt reikia padidinti įprasta dydi?` stayed). The valency rule skipped
-  phrases that don't agree with themselves; now it takes one whose noun can only be a vocative (`lost_case`) when: a twin
-  of it in a case is `RARE_TWIN_RATIO` (10) times as frequent, counting a form missing from freq.tsv as seen `FREQ_MIN`
-  (10) times (`dydi` 0 / `dydį` 2,721; not `tėti` 10,747 / 880, `ligoni` – / 70, `šuneli` 56 / 43: the vocative
-  `sūneli` is no such twin); the modifiers agree with each other, can't be verbs other than participles and only gain
-  diacritics (not `nupirkti automobili` → `nupirktą`, `uždusinti kūdiki` → `uždūsintį`, `mažame nameli`); the case is 5×
-  the verb's most frequent case that is no object, `NOT_OBJECT_CASES` nom/dat/ins/loc (a genitive is one: `turite
-  laiko`; `ateiti`: acc 28, dat 14, so `Ateik šuneli` stays; `turi` 1st/2nd: acc 7,164, loc 1,222, so `Ar turite skėti?`
-  → `skėtį`); the verb is no genitive noun that may modify an address (`Pakrančių apsaugos sraigtasparni, …`, `laimės
-  kūdiki`). A phrase with no case also steps over `mano/tavo/savo/mūsų/jūsų` after the verb (`SPAN_POSSESSIVES`:
-  `Duok man tavo numeri` → `numerį`); for every phrase it was 55% right in a second review (`dalyvauja savo noru` →
-  `norų`, `Nekalbėk mano vardu`, `Žinau kur tavo mašina` → `mašiną`: the set-phrase guard never sees `savo noru`). The first version (any vocative-only noun, modifiers re-inflected, `have` 0) was broken by an
-  adversarial review: infinitives made participles (453 of 20k subtitle lines), addresses without a comma made objects
-  (27 of 278). Now (after both reviews): 11,686 subtitle lines with a noun's ogonek dropped 414 → 1,285 flags, the 871 new all right, none
-  lost; the 278 addresses with their comma dropped 5 flags, as before; correct text test / freq / subtitles / Tatoeba
-  unchanged, also 1.6M words of the dump; every 4th subtitle line of the training text (4.5M words) 19 new flags, all
-  real (`Paimsi truputi`, `prarasi savo ženkleli`, `Pradėsime rugsėji`). restore.py, keyboard_restore.py unchanged,
-  parity 100%. Left: `Palauk kūdiki` → `kūdikį` (an address; `palaukti` takes accusative durations, never seen without
-  a comma in 18M words; nothing in the data tells `kūdiki` from `numeri`, `truputi`: only animacy would).
-  Then: a phrase no longer steps over a question word (`Žinau kur mašina`, `Ar žinai kieno ta mašina`, `supranti kodėl
-  man gėda`: indirect questions), `didžiuotis` is a verb (data/extra.txt; ispell-lt had only bare `didžiuotis/R`,
-  `didžiuojasi/R`, `didžiavosi/O`, so `didžiuojuosi`, 739 times in the subtitles, was unknown and `Turėtum didžiuotis
-  tėčiu` → `tėčių`), and data/valency.tsv rebuilt with the phrase finder that steps over possessives (903k → 954k
-  counts, 35.7k → 36.8k rows: `turi savo namą` now counts). On the 4.5M-word subtitle sample, against the first
-  commit: 4 false alarms and 414 unknown `didžiuo-` forms gone, 2 real fixes lost (`Noriu puse iš anksto`, `Palauk
-  truputėli`), 2 new (`pasakė kvailyste`, a comma); correct text, restore.py, keyboard_restore.py unchanged, parity 100%.
-- **One engine** (2026-10-30, owner: rules belong in the engine). `rare` and key-shift in `check_text`, Python
-  and Rust, parity 100% (7,682 findings). Correct text (test / freq / subtitles / Tatoeba): 20 / 87 / 219 / 48 flags
-  → 20 / 88 / 224 / 48, the 6 new ones `viska`, `Viska`, `musų`, `bučiau`, `užplusta` (real errors), `papalis`. The
-  first version flagged 56: names and twins that took a typed diacritic away. restore.py Wikipedia / subtitles
-  / Tatoeba 70.2 / 71.8 / 77.9 → 71.9 / 73.7 / 79.3%, whole sentences 30.3 / 42.0 / 54.0 → 32.3 / 45.7 / 55.3%, 0
-  changed. keyboard_restore.py 76.3 / 76.9 / 83.2 → 75.7 / 76.8 / 83.2% with those guards (Wikipedia's are names,
-  stripped: the guards are what stops the keyboard changing correct ones), whole sentences 39.0 / 49.0 / 61.7 →
-  38.3 / 49.0 / 61.7%. Running the real fixer in the sim instead of its old copy: 75.8 / 76.6 / 83.1%, whole
-  sentences 38.3 / 49.0 / 62.0%, the same correct words changed: the copy lacked the last-word fix and sentence
-  ends (`ji emiau` → `ėmė`, the subject rule on the word just finished, is what the keyboard really does).
-
-- Wikipedia (150 articles, 65k words): 20 context flags, **all real errors**
-  (16 commas incl. `nariu, pasiekusiu tokį aukštą postą`, `kylanti grėsme`, `prastos kokybes`, `daugybę metu`,
-  `FIA Šiaurines Europos zonos`); unchanged by the Wikipedia-dump frequencies once `apsiuvu` was fixed.
-  The 600 freq articles: 84 flags (`kuri kuria`, `kurie kuria` no longer get a comma; `pasteliniu spalvų
-  deriniai`); 86 with the dump frequencies, the new ones not yet reviewed.
-- **Agreement across a phrase** (2026-10-22): new flags on Wikipedia, all real errors in the articles: test
-  20 → 20, freq 86 → 87 (`šiokia tokią kompensaciją`), 1.4M words of the dump (4 samples tuned on, 3
-  fresh ones checked after) +4 (`visoms jaučiančios būtybėms`, `tam tikrų religinės praktikų`,
-  `specialiais ryškias ženklais`, `Pirmuosiuose laisvose rinkimuose`); subtitles 218 → 217 (the object
-  rule's `suradote viena kitą` gone), Tatoeba 48. `eval/agreement.py` (552 phrases of test+freq; 84 of
-  subtitles+Tatoeba), fixed before → after, with the wrong fixes and flags on the phrase's other words:
-  the modifier before the noun in another case 13 → **384** (0 wrong; others changed 131 → 42, the
-  pair rule's), the first modifier in another case 1 → 64 (re-inflecting the first word is not
-  allowed: predicates), the first modifier without diacritics 5 → 25, dialogue 7 → 54 and 7 → 19.
-  restore.py unchanged (all diacritics stripped: no word shows the case). keyboard_restore.py: subtitles
-  74.0 / 44.0 → 74.2 / 44.3%, Tatoeba 81.5 / 58.0 → 81.7 / 58.7% with 10 → 9 correct words changed,
-  Wikipedia 74.0 / 36.0% unchanged, with phrase fixes autocorrected (`tie grazus didele namai` →
-  `gražūs dideli`, `ten stovi grazus nauja namas` → `naujas`, also on the emulator) and an unknown
-  modifier after a modifier ranked by agreement (`visa sita isterija` → `šita`; autocorrect took the
-  more frequent `šitą` and the rules then made the phrase accusative). Mid-typing, a phrase whose noun
-  could be a genitive with nothing typed after it waits (`apgultos užbaigta taikos | sutartimi`).
-- **Valency** (2026-10-22): on correct text (test, freq, 7 dump samples, subtitles, Tatoeba; ~1.7M words)
-  3 new flags: `iškilo problemėle` (a real error in the subtitles), `Bare auga` (a city), `Sesele
-  išgyveno`. Tuned on that text and on the stripped test sentences: at ratio 3, before the guards, 976
-  false alarms; ratio 10 / 20 / 30 / 50 with the guards: 14 / 8 / 3 / 1 false, 11 / 9 / 9 / 6 right fixes
-  of 11 (stripped text, 0 wrong). restore.py (now applying valency fixes): Wikipedia 70.0% unchanged,
-  subtitles 71.5 → 71.9%, Tatoeba 77.6 → 78.0%, whole sentences 41.7 → 42.0%, 53.3 → 54.0%, 0 changed.
-  keyboard_restore.py, after the phrase commit → with valency: Wikipedia 74.0 / 36.0 → 74.3 / 36.3%,
-  subtitles 74.2 / 44.3 → 74.9 / 45.3%, Tatoeba 81.7 / 58.7 → 82.3 / 59.7%, correct words changed 2 / 4 / 9
-  (unchanged). eval/agreement.py: within 2 of the phrase commit (case before the noun 384 → 382, second
-  modifier without diacritics 67 → 71). Sentence of 12 words 1.75 ms (Rust bench). On the emulator:
-  `visa sita isterija maciau vakar` → `Visą šitą isteriją mačiau vakar` (the sentence fixer, once
-  `mačiau` is typed), `ant stalo guli viena nukritusia sagute` → `nukritusi sagutė`, `kada baigsis visa
-  sita isterija` stays nominative.
-  Compound past and cleaner counts (2026-10-23, owner: `Visa šita istorija esu girdėjęs vakar` wasn't
-  fixed; the simple past `girdėjau` wasn't either: `girdėjo` had 10 nominatives before it, all `Puikiai
-  girdėjau` / `Vaikinai girdėjau` and 3rd person `girdi`). keyboard_restore: Wikipedia 74.3 → 74.6%,
-  subtitles 74.9 / 45.3 → 75.0 / 45.7%, Tatoeba 82.3 / 59.7% unchanged; restore.py subtitles 71.9 → 71.7%,
-  Tatoeba 78.0 → 77.9% (`stipria advokate Lik Redik`: names follow; `nedora orgazma`: orgazmas not in the
-  lexicon); correct text: `sužadėtuves` (a real error), `problemėle` (real), `Sesele`; parity 100%.
-- **Clauses without a verb, conjunctions, the keyboard's own diacritics** (2026-10-23, owner's phone tests:
-  `O cia neprivaloma nepaisant to, kad ziema zymiai rimtesne` got `žiemą`, undone, and no `rimtesnė`;
-  `Cia individualios teises zymiai svarbesnes negu visuomenes saugumas` kept `svarbesnes`, `visuomenes`).
-  Correct text, test / freq / subtitles / Tatoeba 20 / 87 / 219 / 48 flags unchanged; 9.7M words of the dump
-  (12 files + 4 samples): 1 new, a real error (`sistemų ir variantu autorius`), 3 lost, all old false alarms
-  (`ji atliko dekoratyvinę`, `yra apragėjusiu galu liežuvis`); the first version had 30 new there, each
-  now a guard in the rules table. restore.py: Wikipedia 70.0 → 70.2%, subtitles 71.7 → 71.8%, Tatoeba
-  77.9%, 0 changed. keyboard_restore.py, Wikipedia / subtitles / Tatoeba: before 74.6 / 75.0 / 82.3%
-  (whole sentences 36.3 / 45.7 / 59.7%); the grammar 74.8 / 75.0 / 82.3% (36.7 / 45.7 / 59.7%); with
-  `keyboard_soft` 74.9 / 75.0 / 82.4% (36.7 / 45.3 / 60.0%), correct words changed 2 / 4 / 9 throughout;
-  the soft pass changes 5 words for the better and 2 for the worse (`su kiaušiniu mišraine`, `surašymą
-  sudarę baltaodžiai`). Sentence of 12 words 1.9 ms (unchanged). Keyboard simulation and emulator: both
-  sentences come out right, also without the undo (`kad žiemą` → `žiema` once `rimtesne` is typed).
-  Left: `Visos linijos radialines` (a real error, but a genitive-or-plural subject right before the
-  adjective is mostly genitive + noun), the subtitle gain of the first version (the guards).
-- **`visa tai` and common twins of seen words** (2026-10-30, the owner typing `tačiau visą tai ateis vėliau` on the
-  Mac). `visą tai`: 309 different sentences in 48M words (test, freq, the dump, dialogue), ~8% of all
-  `visa tai`; 302 flagged, all real errors (read: the 26 before a noun or adjective, a sample of the rest), 7
-  left alone (`visą tai laiką`; `manai`, `valdai`, `krūva`, `netiesa` also read as a dative or accusative;
-  a text ending in `ištaisyti`; the unknown `priešaky`). Wikipedia flags 20 / 87 unchanged, restore.py
-  unchanged, parity 100% (also on those 314 lines, none of them in the parity articles).
-  Rare twin, keyboard_restore, ratio 7 / 10 / 20 / 30 vs before, Wikipedia / subtitles / Tatoeba: restored 74.9 / 75.0 /
-  82.4% → 76.3 / 76.9 / 83.2% (7, 10), 76.1 / 76.8 / 83.0% (20), 76.0 / 76.8 / 83.0% (30); whole sentences 36.7 /
-  45.3 / 60.0% → 39.0 / 49.0 / 61.7% (7, 10), 39.0 / 48.7 / 61.0% (20), 38.7 / 48.7 / 61.0% (30); correct
-  words changed 2 / 4 / 9 throughout (3 on Wikipedia before twins were chosen by the words before:
-  `pavojingiausia … mašiną`). 10 is kept for its margin: `ja` (instrumental of `ji`, correct) has ratio 5.5.
-  Correct text typed through the keyboard model (6,451 sentences of the three test sets): no new change, the
-  two differences are typos in the text (`viska`, `musų`). Of the words at ratio ≥ 10 the correct uses in 48M
-  words, ~70 tokens: `sis` after a hyphen (`10-sis`, if the keyboard splits there), `grizo`, `grizai`,
-  `grizus` (a grizzly, one film), `gris` (Pinot gris), `masina` (lures), `stabo`, `geliu`; the rest are missing
-  diacritics in the text, although the cleaning dropped lines typed without them. Swipe σ 0.3, Wikipedia:
-  final word right 73.6 → 74.1%, keys unchanged. `kb` on seen words, median 0.035 → 0.045 ms, 95% unchanged
-  (Mac, through serve). Left: `mano masina neveikia` → `mašiną` (nothing before chooses the case).
-- **Unknown word after a pronoun** (2026-10-30, `Maciau ji pries pora dienu` got `priės`; `ji` there stands for
-  `ją`): the rule took any verb of that person, in diacritic-cost order, whatever its cost. Measured on 664k
-  sentences with a pronoun + word, diacritics stripped (test, freq, both dialogue test sets, the dialogue training
-  text, which the frequencies are counted on), top suggestion against the original word at the rule's 107,971
-  firings: old rule 99,803 right, plain suggester 100,154, verbs in the suggester's order 100,642; with the gap
-  0 / 0.1 / 0.15 / **0.2** / 0.25 / 0.3 / 0.5 / 1.0: 100,461 / 100,995 / 101,057 / **101,053** / 101,068 / 101,001 /
-  100,928 / 100,726. A form-frequency ratio instead of the gap did no better (101,048 at 30×). Old against new
-  Rust, end to end: the top suggestion changed at 2,154 words, 1,396 now right, 145 right before (some are
-  errors in the text: `pažysti`), 613 neither (`sikt` → `šikti`, was `šiki`). Wikipedia flags, `restore.py
-  --sentences 300` and `keyboard_restore.py` identical on all three sets (the samples hold no such word), parity
-  100%, also on 20,000 stripped sentences. On 3,000 sentences each: subtitles whole sentences 44.5 → 44.6%,
-  keyboard words changed to another word 510 → 507, the rest identical.
-- Commas removed from the articles (`eval/commas.py`), new rules, right/wrong on test+freq:
-  participial phrase 91/10 (8 of the 10 are commas missing in the articles), lists 27/0,
-  parenthetical 31/0, address 2/0, negu 2/0, repeated connective 1/0. Old rules 2440/62
-  (the wrong ones are mostly article errors, as in the Wikipedia check).
-- vs Hunspell lt_LT: fewer false alarms on lowercase words (2,018 vs 2,483 tokens),
-  better diacritic fixes (#1 correct 56.7% vs 40.0%), worse on keyboard typos
-  (detect 89.3 vs 95.3%, #1 70.0 vs 76.0%).
-- Restoration typed word by word through the keyboard model (`eval/keyboard_restore.py`, same 300
-  sentences): 74.0% restored, 36.0% whole sentences right, 2 correct words changed (`ari` → `aria`,
-  `ekspansija` → `ekspansiją`) with the Wikipedia-dump frequencies; 72.5%, 34.3%, 3 with the 600 articles (71.8%, 32.7% before
-  the keyboard-order fixes `dalyvaujančių`, `teisės`, `Medžioklės`, `pažintinį`); the rare-twin
-  rule makes the keyboard beat the checker (`metu` → `metų`, `siu` → `šių`, `padare` → `padarė`). The
-  checker still gets 8 words the keyboard misses. Left on purpose: `žanru`, `papuošalu` after a genitive
-  (their genitives are not in the frequency corpus; dropping that guard flagged `rotroskopavimo metodu`,
-  `tradicijų puoselėjimu`, `menų kovotoju` on Wikipedia); `šlapynes dalis` (dalis is also acc pl);
-  `Daugybes mokslininkų … dėka` (acc pl + genitive is fine: `tūkstančius žmonių`; only `dėka` decides);
-  `Didžiausia įtaka turi` (object before the verb); `neįvykusi veiksmą`, `įgyta turtą` (participles with
-  objects). The keyboard changes `kultūrinė ekspansija` to `kultūrinę ekspansiją`: autocorrect picks
-  `kultūrinę` for `kulturine` on a frequency tie (0.008 vs 0.017) and the sentence fixer then makes
-  the noun agree; it cannot tell autocorrected diacritics from typed ones.
-- Restoration (all diacritics stripped, 300 sentences): 65.3% → 70.1% with
-  context rules, 0 correct words changed, with the Wikipedia-dump frequencies (63.1% → 68.8% with the
-  600 articles; 68.3% and 1 before the keyboard-order fixes; 67.7% before context ranking of unknown words, 66.1% before the genitive-before-noun rule; 59.7% → 62.8% before the flat diacritic cost); words valid without diacritics (29%) are the ceiling for a
-  checker; a most-frequent-spelling baseline gets 71.9%.
-- Rust: load 31 ms, correct word 0.001 ms, misspelling + suggestions ~0.9 ms,
-  sentence ~2.5 ms (Mac, data v3). Phone (Fold7, measured with the old 5.3 MB data): 0.05–0.8 ms valid
-  words, 6–17 ms unknown words with suggestions, data load ~110 ms. Data file 17.2 MB (v3, with the conversational counts, triples, ranked lists and valency).
-- Keyboard simulation: `kodel nepataiso visu zodzou kuriu as rasau?` →
-  `kodėl nepataiso visų žodžių, kurių aš rašau?`; `dabar meginu nauja sakini` →
-  `dabar mėginu naują sakinį`; Rust key-shift search 0.4 ms, sentence 1.5 ms (Mac).
-
-- Swipe simulation (`eval/swipe_sim.py`, 3,493 swiped known words of the 300 sentences; each key
-  missed by N(0, σ) in x, 1.2σ in y, corners cut by up to `cut` keys, Catmull-Rom curve, finger kept
-  on the keyboard): keys right top-1 / top-3 / final word with diacritics right:
-  σ 0.2: 87.1 / 96.4 / 77.2%; σ 0.3: 74.9 / 87.3 / 66.8%; σ 0.4: 52.3 / 63.9 / 46.8% (frequency
-  only). With the language model and the article text before each sentence as the paragraph,
-  σ 0.3: 77.0 / 88.1 / 68.5% (previous word alone 75.7 / 87.5 / 67.4%); with the Wikipedia-dump
-  frequencies and pairs: 82.6 / 90.3 / 74.0%. When the keys are right the diacritics are right 89%.
-  Decode on the Mac: median 2.4 ms, 95% 12 ms, max 113 ms (σ 0.3; 32 / 186 ms before the threads).
-  On the Fold7 (cover screen, synthetic swipes replayed over adb, σ 30 px ≈ 0.28 keys): 2–17 ms for
-  most words, `ne-` words 50–100 ms. Wrong words there are the simulation's near-identical paths:
-  `maciau` → `mažiau` (c/z neighbours), `grazu nama` → `graži namas`, `jis` → `jos`; the sentence
-  fixer adds `, kurių` between swipes.
-  The noise model is a guess: no real swipe traces yet.
-- Next-word prediction (`eval/predict_sim.py`, 3,997 words): the word is among the top 3 before
-  typing 16.2%, after its first letter 33.1% with the Wikipedia dump (31M words, 310k pairs seen 10+
-  times). With the 600 articles (167k words, 13.6k pairs seen twice): 12.9 / 26.3% (no paragraph:
-  12.4 / 22.7%; previous word only, with the paragraph's words as candidates: 12.5 / 21.5%). All test
-  sentences are Wikipedia: conversational text scores lower, see below.
-  The keyboard's predictions (`keyboard_predict`, cache ramp, conversational counts), before typing /
-  after one letter: Tatoeba 13.0 / 44.9 → **19.2 / 47.1%**, subtitles 12.0 / 31.5 → **13.0 / 32.9%**,
-  Wikipedia 16.5 / 32.0 → 15.7 / 30.4% (the filter drops `m` and names Varnelė doesn't know: `Reicho`,
-  `Freiburg`). 0.5 ms per call on the Mac after warm-up (0.6 with the grammar).
-  Grammar in predictions (`eval/predict_grammar.py`, judged by the Python analyzer): top-3 predictions
-  breaking the case after a preposition Wikipedia 43 → 3 of 627, subtitles 34 → 2 of 492, Tatoeba
-  18 → 0 of 396; after an adjective 17 → 9 of 819, 4 → 0, 4 → 1 (the check also judges definite
-  adjectives, which predictions leave alone); the word typed in the top 3 after a preposition 10.0 → 10.5%, 7.9 → 8.5%, 16.7%, after
-  an adjective 30.4%, 11.3%, 39.1 → 41.3%. Overall before typing / after one letter: subtitles 13.0 /
-  32.9 → 13.0 / 33.0%, Tatoeba and Wikipedia unchanged (prepositions and adjectives are ~10% of words).
-  Ghost (`predict_sim.py --ghost`, letters typed without diacritics): a shown ghost is the word being
-  typed 23.4% (Tatoeba), 16.5% (subtitles), 14.8% (Wikipedia) of the time; tapping the first right one
-  completes 75.8 / 60.1 / 63.4% of the words of 3+ letters and saves 21.8 / 14.9 / 20.1% of their
-  letters (23.2 / 16.3 / 14.7%, 75.3 / 59.7 / 62.8%, 21.7 / 14.7 / 19.9% before the grammar).
-  On the Fold7: predictions 1–8 ms, the ghost 1–10 ms (34 ms after one letter before the
-  frequent candidates came from the 2,000 most frequent words instead of every word with that letter;
-  the typed-word test is a dictionary lookup, `check` guessed compounds for `se`); the strip shows
-  `kod | kad | kod·ėl` (typed, autocorrection, ghost) and tapping the ghost commits `kodėl`.
-- **User model learned in order** (`predict_sim.py --learn`, `swipe_sim.py --learn` vs `--in-order`: the
-  sample in corpus order, all the test set's text before each sentence learned first, as if one user wrote
-  it all; the test sets are 40 films / unrelated sentences / 150 articles, so a real user, who repeats
-  their own names and phrases, should gain more), without → with:
-
-  | | OpenSubtitles | Tatoeba | Wikipedia |
-  |---|---|---|---|
-  | prediction top 3, before typing / after 1 letter | 13.0 / 32.9 → 13.2 / 33.4% | 19.2 / 47.1 → **20.9 / 48.5%** | 15.7 / 30.4 → **17.6 / 33.6%** |
-  | ghost right / words completed / letters saved | 16.3 / 59.7 / 14.7 → 16.5 / 60.3 / 15.2% | 23.2 / 75.3 / 21.7 → 23.6 / 76.1 / 22.4% | 14.7 / 62.8 / 19.9 → 15.8 / 65.2 / 22.5% |
-  | swipe σ 0.3 keys top 1 / final word (in order) | 83.3 / 75.5 → 83.4 / 75.7% | | 82.3 / 73.8 → 82.7 / 74.2% |
-
-  Shares 0.3–0.7 and ramps 10–100 all landed within ±0.3 points of these; a share for the user's word
-  frequency regardless of the previous word added nothing. No measurable cost in time.
-  **Word triples** (2026-10-22), before → after, subtitles / Tatoeba / Wikipedia: top 3 before typing
-  13.0 / 19.2 / 15.7 → **15.1 / 22.8 / 17.2%**, after one letter 32.9 / 47.1 / 30.4 → **34.1 / 48.7 / 31.6%**;
-  ghost completes 59.7 / 75.3 / 62.8 → 60.0 / 75.6 / 63.4% of the words, saves 14.7 / 21.7 / 19.9 →
-  15.2 / 22.7 / 20.9% of their letters; swipe σ 0.3 unchanged (keys top 1 82.7 / 85.4 / 82.1 →
-  82.6 / 85.5 / 82.1%, final word 75.0 / 79.2 / 73.4% both); same speed (predict median 1.6 ms, ghost
-  1.3 ms on the Mac, through serve). Triples 20+: 14.6 / 22.1 / 16.9% and 33.6 / 48.2 / 31.1%.
-  Again on top of the grammar re-ranking (main 873cca8), without → with triples: before typing
-  13.0 / 19.2 / 15.7 → 15.1 / 22.8 / 17.1%, after one letter 33.0 / 47.1 / 30.4 → 34.1 / 48.7 / 31.6%, ghost
-  letters saved 14.9 / 21.8 / 20.1 → 15.4 / 22.9 / 21.1%.
-  **The ghost's next word** (`predict_sim.py --ghost`, at the tap of the first right ghost; right = the
-  word that follows, also after a comma the sentence fixer adds, `maniau, kad`), with triples, share of
-  taps that get one / right, subtitles / Tatoeba / Wikipedia: P ≥ 0.8 0.4 / 2.2 / 2.6%, 83 / 90 / 85%;
-  0.7 1.4 / 3.1 / 4.4%, 75 / 85 / 74%; **0.6 2.5 / 4.8 / 6.4%, 71 / 72 / 73%**; 0.5 4.0 / 6.3 / 8.0%,
-  57 / 66 / 67%; 0.3 7.7 / 12.2 / 13.6%, 44 / 50 / 50%; 0.2 33 / 41 / 42% right. The wrong ones are mostly
-  the end of a sentence (`susipažinau su.`) or another word than the frequent one (`taip pat` vs `taip
-  atrodys`). Counted without the comma, `kad` after a verb looked wrong: 29 / 37 / 62% at 0.5.
-  On the emulator (2026-10-22): `Labas, kaip ` → `sekasi, laikaisi, tu` (the triple; `Kaip ` alone gives
-  `ir, tu, tai`), the ghost after `Gal e` is `eime` (was the name `Eime`), after `Tai buvo pirma k` `kartą`.
-  The same after the grammar re-ranking, which works with the triples: `Eiti į ` → `mokyklą, darbą, priekį`.
-  **Fast at a sentence start (2026-10-22):** predictions after `<s>` took 8 ms on the Mac (1.3–2.9 s on
-  the emulator), after `ir` 3 ms. Profiled: all of it was `Data::predict` listing every follower of the
-  previous word (41,330 after `<s>`, 14,198 after `ir`) from the pairs FST, a String each, sorting them
-  all to take 20; the grammar re-ranking, `check()` on candidates, the user model and the triples took
-  < 0.2 ms together. A bounded top-20 scan without the strings only got to 3 ms: the fst stream itself
-  costs ~0.08 µs a key. Fix: ranked lists made at export (see Data format v3), also for the frequent-word
-  fallback (`kas` after `Gal ka`: every ka- word listed and sorted, 0.9 ms). Through serve on the Mac,
-  median of 30 warm calls, before → after (predict N=5): `<s>` 8.2 → 0.05 ms, `Labas. ` 8.1 → 0.06,
-  `Ir ` 3.0 → 0.10, `Gal ` 0.18 → 0.13, `<s>` + `k` 0.62 → 0.04; ghost `Gal ka` 1.2 → 0.20 ms. 100
-  sentences with their paragraph, median / 95%: subtitles predict 0.93 / 9.0 → 0.62 / 2.1 ms, ghost
-  1.46 / 3.0 → 1.07 / 2.4 ms; Wikipedia predict 0.81 / 3.2 → 0.50 / 2.1 ms, ghost 1.31 / 2.9 → 0.95 /
-  2.3 ms. Every prediction identical (11,176 predict/ghost requests compared, `--raw-lm` too; predict_sim
-  `--ghost` on the three sets and swipe_sim on subtitles unchanged). What is left with a long paragraph
-  (1,500 characters): `lm_context` analysing its last 150 words, 0.3 ms, and `p_predict` for each of
-  its ~190 words as candidates, 0.6 ms (`analyze_exact` per word), done again for the ghost's next word.
-  On the emulator, warm predictions at a sentence start now take 1–5 ms (were 1.3–2.9 s); the
-  remaining 0.1–2 s outliers come with the emulator's own frames at 600–800 ms (Mac load 16), and the
-  same request a moment later takes 3 ms: emulator timings are only meaningful on an idle Mac.
-  The emulator's red underlines come from its system spell checker (Gboard, English), not Varnelė.
-- **Conversational counts** (W=1: subtitles and Tatoeba count like Wikipedia; `eval/training.py`
-  `conversational()`, lines of 4+ words once, cutoffs on raw counts so a pair seen once in a subtitle
-  never ships; data file 10.9 → 13.0 MB), on the three test sets, before → after:
-
-  | | OpenSubtitles | Tatoeba | Wikipedia |
-  |---|---|---|---|
-  | prediction top 3, before typing / after 1 letter | 8.2 / 24.2 → **12.0 / 31.5%** | 6.2 / 26.1 → **13.0 / 44.9%** | 16.2 / 33.1 → 16.5 / 32.0% |
-  | swipe σ 0.3: keys top 1 / final word | 75.0 / 68.6 → **81.8 / 74.4%** | 78.4 / 72.9 → **85.6 / 79.3%** | 82.5 / 73.9 → 82.1 / 73.4% |
-  | restore.py with context rules | 70.9 → 71.5%, 0 changed | 77.1 → 77.6%, 0 changed | 70.1 → 70.0%, 0 |
-  | keyboard_restore.py: restored, whole sentences | 73.9 / 45.0 → 74.0 / 44.0%, 4 changed | 81.3 / 58.0 → 81.5 / 58.0%, 10 changed | 74.0 / 36.0%, 2 (same) |
-
-  Wikipedia flags unchanged (20, all real). W=3 (dialogue counted three times): +0.3 points on
-  dialogue, −0.5 on Wikipedia, 13.4 MB; W=10 the same trade, larger. Before the cutoffs used raw
-  counts, W=3/W=10 shipped pairs seen once or twice in subtitles (16.7 / 59.9 MB).
-
-- **Conversational test sets** (`eval/extract_conv.py`, cleaned, held out, never counted;
-  Wikipedia-dump data before the conversational counts, 300 sentences each, Wikipedia figures from above in brackets):
-
-  | | OpenSubtitles (with dialogue before) | Tatoeba (`--no-paragraph`) | Wikipedia |
-  |---|---|---|---|
-  | prediction top 3, before typing / after 1 letter | 8.2 / 24.2% (2,668 words) | 6.2 / 26.1% | (16.2 / 33.1%) |
-  | swipe σ 0.3: keys top 1 / top 3 / final word | 75.0 / 89.2 / 68.6% | 78.4 / 91.1 / 72.9% | (82.5 / 90.3 / 73.9%) |
-  | restore.py: words only → context rules | 67.5 → 70.9%, 0 changed | 73.9 → 77.1%, 0 changed | (65.3 → 70.1%, 0) |
-  | keyboard_restore.py: restored, whole sentences | 73.9%, 45.0%, 4 changed | 81.3%, 58.0%, 10 changed | (74.0%, 36.0%, 2) |
-
-  Prediction before typing halves on dialogue: the pairs are encyclopedic. Restoration holds up
-  (chat sentences are short and simple). Before cleaning the checker "changed" 2 correct words per
-  set, all errors in the text itself (`į mokykla`); now 0. The keyboard's changes are its own false
-  alarms on dialogue (`Mes visi` → `visime`, `jis visai` → `visau`), see the corpus backlog item.
+- "Varnelė Klaviatūra", app ID `dev.imbrasas.varnele.keyboard` (`.debug` for debug builds); internal packages
+  stay `helium314.keyboard.*`. `dev/imbrasas/varnele/Native.kt`: the JNI class name must stay exactly this.
+- `VarneleDictionary.kt` is the main dictionary for `lt` and calls `Native.check` (Rust `keyboard_word`).
+  HeliBoard autocorrects when `score/1e6 × (1 − editDistance/len)` passes its threshold or the suggestion is
+  whitelisted; Varnelė's scores compensate that normalisation. Lithuanian ignores the confidence slider.
+- The sentence fixer (`SentenceFixer`, `fix.rs`) runs after every finished word: diacritic-only grammar fixes,
+  phrase re-inflections, commas, the keyboard's own diacritics re-decided, the whole sentence around the cursor.
+- Swipe (`gesture.rs`), the language model (`lm.rs`), predictions and the ghost, the user model (`user.rs`)
+  are Rust only, not in parity.
+- What autocorrects is the owner's choice: diacritic-only fixes, the subject and phrase rules, `rare`, `formal`
+  (`SURE_RULES`, `fix_level`); other re-inflections are shown only; a resumed word never autocorrects.
+  **A typed diacritic is meant** and never taken away; a capitalised unknown word inside a sentence is a name
+  and only gains diacritics.
+- Privacy: nothing typed is stored or logged (desktop); the user model and tap log skip incognito, password,
+  URL and e-mail fields. Debug logging must respect that.
+- Release: a push to the fork's `main` runs the release CI (signed `nouserlib` bundle for Play). Version codes,
+  signing, the upload keystore and the local signed build: "Release builds" in docs/keyboard.md.
 
 ## Gotchas (learned the hard way)
 
@@ -1046,198 +295,18 @@ No store listing yet. Test: `eval/extension/test.mjs` (its header says how). Why
   sentence trains it on the wrong spelling; that is why whitelisted Varnelė fixes skip
   the history comparison in `Suggest.shouldBeAutoCorrected`.
 
-## Ideas and open problems (backlog)
-
-- **Next: next-word prediction with ghost text** (owner's pick, 2026-10-22, after the swipe
-  prototype). Started: `lm.rs` (bigrams + paragraph lemma cache, see the keyboard design section),
-  used by swipe ranking and `predict_words`; the owner wants context from the whole sentence and
-  paragraph. Done: the full Wikipedia dump, conversational text, predictions and the ghost in the
-  strip, the grammar steering them (keyboard design section), trigrams. Next: phone-test the strip, inline ghost
-  text, more grammar in predictions (verb government: `laukiu` + genitive, objects after
-  TRANSITIVE_VERBS, numbers + genitive plural), a small neural model later. Build a language-model layer in the Rust core, not a separate system:
-  corpus bigrams/trigrams with backoff to unigram frequency (in `varnele.bin` or a sibling file)
-  plus a per-user overlay learned on the phone from the *final* text (done 2026-10-22: "User
-  language model" in the keyboard design; next: per-user trigrams if trigrams land, learning which
-  autocorrections the user reverts, a phone test over days of real use). Expose one
-  `P(word | context)` via JNI that next-word suggestions, ghost text (inline completion of the
-  current prefix + predicted next word, new UI in the fork), swipe ranking and tap autocorrect
-  all use; it also breaks frequency ties (`žmones`/`žmonės`). Predictions keep diacritics through
-  the analyzer. Needs a bigger, more conversational corpus than the 600 Wikipedia articles.
-- **Formal mode**: done (2026-10-22), see "Varnelė settings screen" in the keyboard design. Still
-  open: ranking with the standard frequency table below.
-- **Corpus for the right register**, best first: (1) the user's own final text, learned on the
-  phone (the overlay above); (2) OpenSubtitles Lithuanian (spoken dialogue; check the licence
-  before shipping derived counts); (3) web crawls CC-100 / OSCAR / Leipzig `lit_web` (huge, mixed
-  register; even a filtered slice is ~1000× the current 173k words); (4) forums and comments
-  (supermama.lt, r/lithuania), very informal but often typed without diacritics: restore with
-  Varnelė first or count folded forms only. Rebuild with `eval/build_freq.py`, measure with the
-  restoration and keyboard evals.
-- **Frequency tables split by register**: spoken forms counted under their own spelling and
-  linked to the standard lemma; formal mode ranks with the standard table, informal with the
-  mixed one, the user overlay on top of both. The n-gram model above uses the same split.
-
-- **Swipe and spoken forms** (fixed 2026-10-22; owner found `einam` → `rytinam` on the Fold7):
-  the walk now also yields spoken shortenings, see the gesture decoder above. Seen in the
-  subtitles: `nepamirškim`, `sakėm` keys right but the keyboard's check of the keys then gives
-  `nepamirškime`, `sakėme` (the suggester restores diacritics and the full ending at once, also
-  when not formal): a typed or swiped spoken form without diacritics can't stay spoken yet.
-- **Swipe, next steps** ((1) is done, phone-tested with replayed swipes; still to try with real
-  fingers): (1) wire it into the fork: enable gesture input for `lt` without
-  `JniUtils.sHaveGestureLib`, pass `ComposedData.mInputPointers` + key centres (divided by the key
-  width) from `VarneleDictionary.getSuggestions` in batch mode to a new `Native.gesture`, run the
-  top keys through `Native.check` for the diacritics; check the sentence fixer runs after a
-  gesture (no separator is typed). (2) Phone speed: the Mac 95th percentile is 27 ms, the phone is
-  ~5–10× slower, and HeliBoard asks again while the finger moves. (3) Record real traces on the
-  Fold7 to replace the noise model. (4) Ranking is the main loss (92% of words are among the
-  candidates, 75% first): short words on one row are the same line (`tuo`/`to`, `kaip`/`karo`,
-  `kiek`/`kurk`), only context separates them: the next-word prediction model above.
-
-- **Corpus beyond Wikipedia** (owner, 2026-10-22): Wikipedia is encyclopedic, third person, full of
-  dates/places/`m.`; a keyboard types chat and everyday prose (`aš`, `tu`, questions, spoken forms
-  `valgyt`, `buvom`). Sources checked 2026-10-22 (1 MB sample of each where possible; "1/2 p." =
-  share of tokens that are `aš tu man tau mane tave mes jūs mums jums mano tavo esu esi`…;
-  Wikipedia test articles: 0.07%, 0.2% questions):
-
-  | Source | Lithuanian data, URL | Size | Licence / terms | Register, noise |
-  |---|---|---|---|---|
-  | OpenSubtitles v2024 (OPUS) | object.pouta.csc.fi/OPUS-OpenSubtitles/v2024/mono/lt.txt.gz | 26M tokens, 4.8M lines, 4,536 films, 49 MB gz | No licence; OPUS asks for a link to opensubtitles.org. Subtitles are fan translations of copyrighted films. Precedent: wordfreq ships counts from it under CC BY-SA 4.0 "with attribution to OpenSubtitles" | Dialogue: 1/2 p. 7.4%, 18% questions, 3.8 words/line. 28% repeated lines (`Taip.`, `Ne.`), ~5% unknown tokens (foreign names, words split by line breaks: `Prisi`, `Ke`), 8% of 6+ word lines without diacritics |
-  | Tatoeba (OPUS v2026-07-08) | object.pouta.csc.fi/OPUS-Tatoeba/v2026-07-08/mono/lt.txt.gz | ~0.9M tokens, 1.7 MB gz | CC BY 2.0 FR (clear) | Short everyday sentences translated from English: 1/2 p. 12.4%, 15% questions, clean (0.7% unknown), but `Tomas`/`Marija` everywhere |
-  | Leipzig Corpora Collection | downloads.wortschatz-leipzig.de/corpora/ `lit_news_2020_1M`, `lit_news_2019_300K`, `lit-lt_web_2016_1M`, `lit_newscrawl_2011_1M`, `lit_wikipedia_2021_300K` (.tar.gz) | 1M sentences each, ~200 MB tgz each | Downloads CC BY (online services CC BY-NC); cite Goldhahn et al. 2012 | News and web, sentence-level, deduplicated; the packages also hold word and neighbour co-occurrence counts. Not conversational (not sampled: the sentence file comes after the co-occurrence files in the archive) |
-  | HPLT v3 | sentence-level via OPUS object.pouta.csc.fi/OPUS-HPLT/v3/mono/lt.txt.gz; documents huggingface.co/datasets/HPLT/HPLT3.0 (lit_Latn) | OPUS: 407M tokens, 1.1 GB gz; full: 20.4M documents, 36 GB | Packaging CC0; text belongs to the sites ("we do not own any of the text"), takedown process | Web: 1/2 p. 1.4%, 3% questions; cleanest crawl (0.5% repeated lines, 1.7% without diacritics), 4.7% unknown (English, names) |
-  | CC-100 | data.statmt.org/cc-100/lt.txt.xz | 3.6 GB xz | No IP claim on the preparation; Common Crawl terms of use | Web: 1/2 p. 1.1%, 17% repeated lines (boilerplate), 4.6% unknown incl. `href`, `document` |
-  | OSCAR 23.01 | huggingface.co/datasets/oscar-corpus/OSCAR-2301 (gated) | 1.67B words, 5.2M documents, 14.5 GB | Packaging CC0, text Common Crawl; **access suspended** on HF ("will not grant any access") | Web; not sampled |
-  | MaCoCu | macocu.eu | **No Lithuanian** (under-resourced EU and candidate-country languages only) | | |
-  | VDU Dabartinės lietuvių kalbos tekstynas | tekstynas.vdu.lt (search only); word-form list hdl.handle.net/20.500.11821/8 (CLARIN-LT) | 141M words (62% periodicals); list 1.85M forms | Texts not downloadable; list under CLARIN-LT PUB EULA (open access) | Edited press and fiction; single word forms only, no pairs: adds nothing over the Wikipedia dump for a keyboard |
-
-  **Recommendation.** (1) Word pairs and form frequencies for the keyboard: **OpenSubtitles v2024**
-  plus Tatoeba, weighted above Wikipedia; it is the only large dialogue source and has 100× the
-  1st/2nd person rate. Licence is a grey zone like everyone's (wordfreq does the same): ship only
-  counts, drop pairs seen in fewer than ~3 films so no line can be read back, credit OpenSubtitles.org
-  and OPUS in the About screen. Deduplicate repeated lines per film before counting. (2) More
-  general breadth than Wikipedia, if wanted: HPLT v3 via OPUS (cleanest web text, sentence files,
-  1.1 GB), or Leipzig `lit_news_2020_1M` where a clear CC BY matters more than size. Skip CC-100
-  (boilerplate), OSCAR (access closed), MaCoCu (no lt), VDU (no text, no pairs). (3) Held-out test
-  sets, done (`eval/extract_conv.py`, baseline under "Latest numbers"): 40 stretches of 500 subtitle
-  lines spread over the file (3,455 usable sentences) and 2,000 Tatoeba sentences (533 usable), both
-  downloaded to corpus/raw/. **Count from `corpus/conv/train/*.txt` only** (17.9M + 0.7M words): it
-  is cleaned and already leaves out the held-out lines and every line equal to a held-out line of
-  4+ words (a film's other uploads repeat its lines); `heldout.tsv` lists both.
-  Cleaning (`eval/clean_conv.py`) before any use, repairs only where the original word is unknown
-  and the repair is known: Baltic text decoded as cp1252 (5.5k words: `Ðtai èia` → `Štai čia`,
-  `jüs` → `jūs`), OCR I/l (11k: `kodėI`, `lš` → `Iš`). Drops 2.2% of subtitle lines: typed without
-  diacritics (44k, plus 31k valid-looking lines among them), not Lithuanian (8k), other encodings
-  and Cyrillic (6k), credits (3k); 0.3% of Tatoeba (learners' `sedėti`, `tūrėti`). Varnelė's own
-  corrections are **not** applied: on dialogue the context rules have false alarms (subject rule
-  `Aš jus įvesiu` → `jusiu`, `Mes visi` → `visime`; case after `per`: `per toli` → `tolį`,
-  `per didelė rizika`; `ką gali` → `galį`; `Kiek tu` → `tų`), suggestions guess (`salsa` → `sala`),
-  and the test sets would grade Varnelė against itself. Those false alarms are worth fixing in
-  the rules: a keyboard sees this register all day.
-  Done 2026-10-22 (owner: attribution is enough): subtitles and Tatoeba counted with Wikipedia at
-  weight 1, see "Conversational counts" under Latest numbers; credits in README.md and the
-  keyboard's About screen. Still open: the keyboard's false alarms on dialogue (4 and 10 correct
-  words changed in the test sets), HPLT/Leipzig for more breadth.
-
-### Phone-testing list of 2026-10-19: done, and what was left on purpose
-
-Done (rules in the table above, tests in tests/test_grammar.py): relative case from the
-verb (`kuria skaičiau` → `kurią`), postposed participial phrases, parenthetical words,
-greeting + address, lists, `nei/arba/ar` repeated, `negu` + clause, subject with adverbs
-between, `Radau nukritusia sagute`. `ne tik …, bet ir` and `ne …, o …` were already
-covered by the clause-starter rule (`bet`, `o`).
-
-Left deliberately:
-- **Sentence-initial participial phrases** (`Grįžęs namo, jis …`): under the current
-  VLKK rules separating an adverbial participle phrase is optional, and Wikipedia mostly
-  doesn't (prototype: 7 commas in the articles vs 23 without). An auto-inserted comma
-  would be a style choice, not a fix.
-- **`atrodo`, `aišku`, `pagaliau`**: also plain verbs/adverbs (`jis atrodo pavargęs`);
-  **`galbūt`, `turbūt`, `tikriausiai`** are not set off at all in Lithuanian; **`be to`**
-  is also "without it" (`be to negalima`).
-- **`ir … ir`, `tai … tai`**: `Ir tai buvo gerai ir naudinga` (sentence `ir` + ordinary
-  `ir`), and `tai` is mostly a pronoun; `nei` alone is comparative (`geriau nei aš`) and
-  `kaip` has too many uses for a comma-before-clause rule.
-- **Vocative without a greeting** (`Kaip sekasi Jonai?`): vocatives are mostly also
-  nominative plural (`Jonai`, `draugai`), and `drauge` is also "together".
-- **3rd-person noun subjects** (`Jonas esu`): `Mama einu namo` is a missing comma after
-  an address, not a wrong verb.
-- Only the word after the greeting is checked (`Laba diena Jonai` gets no comma).
-
-- Rare twins in different cases when the grammar doesn't decide: the verb right next to the word decides by its
-  valency counts on that side (`Masina stovi kieme`, `Mano masina neveikia` → `mašina`; `vairuoja masina` →
-  `mašiną`; `Grammar.verb_fit`, 2026-11-05), else frequency (`Masina kieme`: both offered, the keyboard takes
-  `Mašiną`); the verb's count must be 10+ and 3× the other twins' (`Grįžau masina` stays undecided), an infinitive's
-  or gerund's "before" counts don't count (they are the main clause's subject: `Masina vairuoti sunku`). Since 2026-11-08 the language model breaks the remaining ties (`Mano masina` → `mašina`, `Sita knyga` → `Šita`; see
-  the keyboard design). Was not reached before: a verb further away (`Sita knyga buvo išversta` got `Šitą knygą`: autocorrect
-  takes `Šitą` for the unknown `Sita` by frequency, then makes `knyga` agree with its own guess when it commits it;
-  the sentence fixer's soft re-decision comes too late. The 4 correct Tatoeba words the keyboard changes in 2,000
-  sentences are all this. A fix needs autocorrect's context to show the keyboard's guesses as typed: the JNI `word`
-  call would need the fixer's soft words; tried in the fixer alone, it changed nothing).
-- **Statistics for diacritic twins: tried 2026-10-21, not shipped.** A class-bigram model
-  (POS+case labels, top function words lexicalised, one EM step) trained on corpus/freq.
-  Choosing between same-lemma twins that only add diacritics: at a 100:1 likelihood ratio
-  it restored 54 twins (4 wrong) in 300 stripped sentences but changed 9 words in the 65k
-  correct test words; at 10:1, 118/8 and 86 changes. Most of its correct-text changes are
-  `karo metu` and acc/nom choices needing the verb. As a re-ranker of unknown words'
-  diacritic candidates it moved #1 from 1005 to 1024 of 1267. Not worth a new table in
-  varnele.bin; retry with a much bigger corpus (full Wikipedia dump plus conversational text).
-- Restoration misses after context ranking (300 test sentences): 396 words valid without
-  diacritics and left alone, 62 unknown words with the right form ranked lower. Many of those
-  heads are rare valid words in stripped text (`daliu` = adjective dalus), which the keyboard's
-  rare-twin rule fixes first; the checker does not have that rule.
-- The keyboard applies only diacritic-only fixes, so re-inflections from the object rule
-  (`Jonas mato namas` → `namą`) are shown but never autocorrected; `nauja knyga` → `naują knygą` is.
-- Verify on the phone (owner's tests so far found real gaps every time): the
-  score compensation for `zodzou`, rare twins, key-shift autocorrect.
-
-- **Verb transitivity**: a small hand list (TRANSITIVE_VERBS) exists; a corpus-derived
-  one would cover more. Still open: `Radau nukritusia sagute` (participles end the
-  phrase, and `sagute` is instrumental-only so it needs the acc diacritic variant).
-- Agreement across a whole phrase: done (2026-10-22, see the rules table; autocorrected on the
-  keyboard). A phrase that agrees with itself in the wrong case gets it from its verb: the valency rule
-  (done 2026-10-22, see the rules table), which the sentence fixer applies when the verb arrives
-  (diacritic fixes; the phrase rule then re-inflects: `guli viena nukritusia sagute` → `nukritusi
-  sagutė` on the emulator). Open: coordinated objects are left alone (`rinko tautosaka ir etnografine
-  medžiaga`), 3rd person verbs and infinitives need ratio 30 (`pasakyti tiesa` is 11×: missed), the
-  phrase before the verb only at a clause start (`BLB apylinke veikia`: missed), a capitalised word at a
-  sentence start (`Bare auga`, a city: gone with the name guard), compound tenses whose fix needs more than
-  diacritics (`Nesu girdėjęs tokia istorija` → `tokios istorijos`). The negation and object rules take a compound
-  past as the participle's verb in the auxiliary's person and negation (2026-11-05: `nesu praradusi viltį` →
-  `vilties`), not when the participle agrees with the next word (`esi suaugęs vyras`: 18 false alarms on 5.7M
-  words without that guard), negation then only by an accusative (`nesu jojusi drambliu` stays). The pair rule's old `pirmasis mūrinis pastatas` → `mūrinys`
-  is gone (2026-11-05): every `-ys` noun got the plural i-stem paradigm meant for `durys/MK`, `ašmenys/VK`
-  (`mūrinis` an accusative plural of `mūrinys`, `petys`, `arklis`); now only nouns with M (feminine) or V
-  (masculine) do, and no singular one. 37 bogus flags on 5.7M words of correct text gone.
-  Seen while building it, older rules: negation stops at a pronoun object (`Neturiu tą gražią knygą`
-  fixes only `tą`); the object rule takes `pirmiausia` as an object (`Filmai turi pirmiausia didelę
-  vertę` → `pirmiausią`).
-- Lexicon: `didelis` declined like `-inis` (`dideliai`, and `dideli` unknown); now like `-esnis`
-  (`dideli`, `dideliems`). Other `-is` adjectives are `-inis`/`-ytis` and right (`mediniai`, `mažyčiai`).
-- Word-pair counts (now in the language model) for the checker's ambiguous diacritic choices
-  (`žmones`/`žmonės`): only swipe ranking and predictions use them so far.
-- ispell-lt has no plain reflexive-only verbs (džiaugtis, juoktis, elgtis, domėtis;
-  only apsidžiaugti etc. in lietuviu.ivpk). Added to data/extra.txt; others may be
-  missing too: check 1sg `-uosi` forms of common ones.
-- data/extra.txt drops `bereikal` (`-bereikal`) and adds `bereikalo`.
-- Idea: `net ne vienos/vieno/vienas` + noun almost always means `nė vienos` (not a single);
-  plain `ne vienas` ("more than one") is valid, so only `net ne` + a vienas form is a signal.
-- ispell-lt lists some pronouns as nouns too (`šita/D`, `kita/D`, `tokia/ND`), which hides
-  them from agreement. `-word/FLAGS` in data/extra.txt drops such an entry.
 - Lemma frequencies: a listed particle/preposition reading (tag W) takes the whole count
   of its form, else `iš` made the verb `ižti` "common" (1175) and `neisiu` was "fixed"
   to `neišiu` by the rare-twin rule. Names share lowercased lemma keys with verbs
   (`Klausė`/`klausė`), so a capitalised suggestion for lowercase input costs +0.3.
+  After a lexicon change that moves readings the tables were rebuilt (`build_freq.py`, `build_valency.py`, export):
+  only where `corpus/wiki/text` and `corpus/conv/train` exist, else `eval/training.py` silently counts on the 600
+  articles and overwrites the tracked tables. Check the row counts in the diff.
 - The keyboard inserts a comma only once the next word is typed (`pirk bet` → `bet ką`).
   Commas *after* a word (`Deja, jis`) are issues on the following word, so they wait one
   more word: `Deja jis.` at the end of a message stays without the comma.
 - Rules that need the first fix to see the second: `labas, jonai kaip` (gap may be a comma),
   `radau nukritusia sagutę` (autocorrect fixes the last word first). Test both orders.
-- Reviewed en.wikipedia Lithuanian_grammar (2026-10-20). Added from it: numbers + genitive plural,
-  genitive-governing verbs. Not added: `arti` + genitive (also the verb "to plough"), dual
-  agreement (optional in modern use), word order/aspect (tendencies), neuter predicates
-  (`buvo vėsu`). The article has no usable sections on comma rules or verb government beyond
-  what is above; a Lithuanian source (VLKK rules) would be the next step.
-- `ziuri` on its own now suggests `žiūri` first (with the dump: `žiūri` 185 times, the jury `žiuri`
-  421, the ranking's lemma frequency decides); with the 600 articles it was `žiuri`.
 - `adb install` waits forever when wireless adb has dropped: reconnect first
   (`adb mdns services`, then `adb connect HOST:PORT`). The same happens when the phone
   auto-locks on screen timeout. (Prefer the emulator, see Commands.) Run `eval/phone_ready.sh` before every phone step (and between
@@ -1266,102 +335,3 @@ Left deliberately:
   the emulator's default) `Paprasčiausiuosiuose vienkiemiuose` is red under Varnelė Klaviatūra too. The fork's
   own spell checker service is still HeliBoard's, not Varnelė. Testers need to switch the system one off or
   select the `dev.imbrasas.varnele` app's.
-- Lexicon gaps: loanwords and names (`klipas`, `singlas`); induce stems from a corpus by finding multiple
-  forms of a guessed paradigm. Done: spoken `eime` ("let's go", no ending shortening: `SPOKEN_WORDS` in
-  analyzer.py/analyzer.rs, colloquial for `eikime`; predictions gave its name reading `Eime`), slang
-  `bičas`/`biče` (data/extra.txt). The name rule capitalises little else in the subtitle test set: of 2,953
-  capitalised predictions shown, 29 are words the subtitles write lowercase, English (`Oh`, `You`, `Of`,
-  `Ho`, as written in the context) and `Bičas`. Frequent lowercase subtitle words still unknown:
-  `nesijaudink` (822), `nesijaudinu`: done 2026-11-05, `-si-` after `ne-`/`nebe-` is allowed for a verb with a
-  reflexive flag (R, O) and N, after `tebe-` with R/O and X, after `be-` so only for participles and gerunds (`besijaudinantis`, not `besijaudink`), S or not (`_allowed` / `analyzer::allowed`): 664
-  tokens in half the 4.5M-word subtitle sample stop being unknown, all real (`nesikandžioja`, `nesikraustyti`); `didžiuojuosi` done (2026-11-04, data/extra.txt: other verbs listed in ispell-lt only
-  as bare `word/R` entries may lack a paradigm the same way);
-  spoken vocatives `drauguži`, `brolau`, `berniuk`, `mergyt`, `vyruti`, `brangute`; `bliamba`, `vistiek`, `nėr`.
-- Keyboard: completions for half-typed words (now we show corrections);
-  speed up unknown-word suggestions (6–17 ms on phone); interplay of the
-  sentence fixer with HeliBoard's backspace-reverts-autocorrect is untested.
-- Typo detection/ranking still behind Hunspell; keyboard-adjacency weights could
-  be tuned on real typing data.
-- iOS later: the Rust core is portable; keyboard extensions have tight memory limits.
-
-## History (commits on varnele/main)
-
-1. Rule-based checker, ispell-lt stems, evaluation vs Hunspell
-2. Context rules: prepositions, agreement, quantities, commas
-3. Verb rules: negation genitive, subject-verb person, objects
-4. Rust runtime + Android spell-checker app (parity 100%)
-5. participle agreement, negation via diacritics, relative pronoun, typo
-   candidates as context variants, keyboard typo cost, AGENTS.md
-6. keyboard: rare-twin rule, key-shift search (+ HeliBoard setting), score
-   compensation for HeliBoard's normalisation
-7. keyboard: fixes survive punctuation and user history (HeliBoard fork)
-8. reflexive-only verbs, i/y cost, case requirements prefer candidates agreeing with the adjective
-9. transitive objects, indirect-question commas, flat diacritic cost, pronoun-noun cleanup
-10. phone list: parenthetical/address/list/participial-phrase/negu/repeated-connective commas,
-    relative case from the verb, subject over adverbs, instrumental objects; eval/commas.py
-11. `link` + genitive; `viena kitą` skip narrowed; keyboard rename, fork on GitHub (notes)
-12. kurti vs kuris (`kuria ir parduoda`, `Kuriu tai, kas`), `tai, kas` commas, `neatėjo laiku`,
-    `jis ziuri` → `žiūri`
-13. `koki nors` (no comma, `kokį`), numbers + genitive plural, genitive verbs
-14. genitive before a head noun, 3rd person objects with adverbs between, predicate
-    adjectives, agreement fix direction, `virs` → `virš`
-15. context ranking of unknown words: on 1500 stripped sentences the top suggestion for
-    unknown words is wrong 246 times instead of 272 (26 better, 0 worse)
-16. keyboard order: adjective before genitives (`dalyvaujančių`), genitive between a preposition
-    and its object (`į teises mokykla` → `teisės mokyklą`), case+number for the one-phrase check,
-    -tinas participles take no accusative
-17. gesture (swipe) decoder prototype in Rust (`gesture.rs`, `varnele swipe`, serve `gesture`), eval/swipe_sim.py
-18. language model: corpus bigrams + paragraph lemma cache (`lm.rs`, data version 2), in swipe ranking
-    and `predict_words`; eval/build_ngrams.py, eval/predict_sim.py
-19. frequencies and word pairs from the full Wikipedia dump (eval/extract_wiki.py, eval/training.py; the
-    `metais.` double count fixed), count tables as FSTs (`counts.rs`, data version 3, 10.9 MB),
-    "mostly a verb" ignores rule-built prefixes shadowed by a dictionary verb (`apsiuvu`)
-20. swipe in the keyboard (JNI `gestureNative`, threaded prefix chains), eval/phone_ready.sh; conversational
-    test sets and cleaning (eval/extract_conv.py, eval/clean_conv.py); subtitles and Tatoeba counted with
-    Wikipedia (W=1, cutoffs on raw counts, 13.0 MB), credits for the frequency sources
-21. next-word predictions and the ghost in the keyboard strip (`keyboard_predict`, `keyboard_ghost`, JNI
-    `predictNative`/`ghostNative`, serve `ghost`, `predict_sim.py --ghost`); paragraph cache faded in by length
-22. user language model learned on the phone from the final text (`user.rs`, JNI `user*Native`, serve
-    `learn`/`forget`, `--learn` in predict_sim.py and swipe_sim.py)
-23. grammar in predictions: case after prepositions, agreement after adjectives (`grammar_rerank`,
-    eval/predict_grammar.py)
-24. word triples in the language model (data/trigrams.tsv, 16.5 MB), the ghost's next word at P ≥ 0.6 (serve
-    `ghostnext`), `eime`, `bičas`
-25. ranked follower lists made at export (`fst-ranked`, 16.8 MB): predictions at a sentence start 8 → 0.05 ms
-    on the Mac, after `ir` 3 → 0.1 ms, the same predictions
-26. agreement across a phrase (least-cost case/number/gender, eval/agreement.py), phrases across
-    `mano/tavo/savo`, the object rule leaves number/gender errors to the pair rule, `dideli`; on the
-    keyboard the phrase rule autocorrects (fork `paulius/varnele-phrase`), predictions use its costs,
-    an unknown modifier is ranked by agreement (`visa šita`)
-27. verb valency counted on the training text (eval/build_valency.py, data/valency.tsv, 17.2 MB) and the
-    valency rule; the phrase rule never changes a typed diacritic; emulator crash dialog skipped
-28. valency: compound past (`esu girdėjęs`), ambiguous person counts as 3rd, name / adverbial-instrumental /
-    unknown-term guards shared with the counts, 1st/2nd person ratio 5 and minimum 10
-29. predicate adjectives in clauses without a verb, degree adverbs, `teisės` as a subject, unknown subjects
-    ranked by their predicate; the genitive-before-noun rule after conjunctions; copulas without other
-    prefixes; the keyboard re-decides its own diacritics (`keyboard_soft`, fork `paulius/varnele-soft-words`)
-30. a word inside a sentence is checked with the rest of it (`keyboard_word_in`, JNI `word(…, after, …)`): a
-    touched word gets the sentence's fix (`rimtesne` → `rimtesnė`), a retyped one is ranked by the words after
-    it; finger slips onto w/q/x are typos (`ziwma` → `žiema`)
-31. w/q/x slips: an extra key press (`ziewma` → `žiema`), a capital at a sentence start (`Gwrai` → `Gerai`)
-32. demo videos (eval/demo_videos.py, eval/emulator_touch.py), `kiškiakopūsteliauti`, `kiškiakopūstlapiauti`,
-    local `main` and `origin/main` kept on one commit
-33. the neuter `visa tai`; a seen word takes a diacritic twin 10× as frequent as its form and lemma (`veliau`
-    → `vėliau`), twins chosen by the words before
-34. an unknown word after a pronoun: a verb of that person only near the best suggestion (`ji pries` → `prieš`)
-35. desktop autocorrect, macOS prototype (`rust/desktop`): an event tap watches the keys, `engine.rs` fixes each
-    finished word, only on the Lithuanian layout, an English guard, a self-test; a spell server doesn't work
-36. Chrome extension: the core as WebAssembly, underlines and a card of suggestions in every text field
-37. one engine: `rare` and key-shift in `check_text`, autocorrect and the sentence fixer in `fix.rs` (the fork, the Mac
-    app and the sim call it, the Mac gets earlier words and commas), a typed diacritic stays, the language tally
-38. valency for a phrase with no case: a vocative-only noun far rarer than its twin (`įprasta dydi` → `įprastą dydį`)
-39. valency: question words end the phrase (`Žinau kur mašina`), `didžiuotis` a verb, counts rebuilt
-40. ispell-lt's bare R/O lines read as verbs (reflexive-only flag `Z`: `didžiuojuosi`, no `didžiuoju` "I am proud";
-    no particle reading for `buvo`, `saugo`), negation keeps an instrumental the verb governs (`netikiu Dievu`)
-41. known issues with a review each: the subject rule by corpus pairs (`aš kalba`) and likely verbs, būti's present; a
-    line break ends adjacency; degree `per` and `kas … per`; `šis` declined; object/negation/agreement guards; twins
-    ordered like suggestions (`musu` → `mūsų`); the whole sentence around the cursor in the sentence fixer (fork too);
-    the verb next to a rare word chooses its case; `ne-si-` without S; names stay names in autocorrect (fork: context
-    after a comma); compound past; `verb_of`; plural-only `-ys` nouns; `tas knygas` under negation
-42. the distributive `po` + numeral (`po dvi sėdynes`); `du`, `trys`, `abu` declined as numerals; the language model in
-    typed autocorrect (`mano masina` → `mašina`); both words of a pair whose noun has no case (`visa skrydi` → `visą skrydį`)

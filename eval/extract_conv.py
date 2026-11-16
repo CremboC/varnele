@@ -1,7 +1,7 @@
 """Conversational text: held-out test sets and the cleaned rest for counting.
 
 The restore, predict and swipe evaluations use Wikipedia articles; a keyboard types chat. This
-reads the OPUS monolingual files (see AGENTS.md "Corpus beyond Wikipedia"):
+reads the OPUS monolingual files (see docs/backlog.md "Corpus beyond Wikipedia"):
 
     corpus/raw/opensubtitles/lt-v2024.txt.gz   object.pouta.csc.fi/OPUS-OpenSubtitles/v2024/mono/lt.txt.gz
     corpus/raw/tatoeba/lt-v2026-07-08.txt.gz   object.pouta.csc.fi/OPUS-Tatoeba/v2026-07-08/mono/lt.txt.gz
